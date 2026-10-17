@@ -10,17 +10,24 @@ import {
   PairSuccess,
   parseMessage,
   PORT_RANGE,
+  proofInput,
   ServerMessage,
-  serverMessage
+  serverMessage,
+  UnpairChallengeRequest,
+  UnpairChallengeResponse,
+  UnpairRequest
 } from './protocol';
 
 const token = 'a'.repeat(64);
+const nonce = 'b'.repeat(64);
+const proof = 'c'.repeat(64);
 const raw = (value: unknown) => JSON.stringify(value);
 
 describe('client messages', () => {
-  it('accepts auth, ping and pong', () => {
+  it('accepts hello, auth, ping and pong', () => {
     for (const msg of [
-      clientMessage('1', 'auth', { token }),
+      clientMessage('0', 'hello', { nonce }),
+      clientMessage('1', 'auth', { proof }),
       clientMessage('2', 'ping', {}),
       clientMessage('3', 'pong', {})
     ]) {
@@ -33,19 +40,24 @@ describe('client messages', () => {
     ['a bare string', raw('auth')],
     ['an unknown type', raw({ v: 1, id: '1', type: 'write', payload: {} })],
     ['a server-only type', raw({ v: 1, id: '1', type: 'auth_ok', payload: {} })],
-    ['a wrong version', raw({ v: 2, id: '1', type: 'ping', payload: {} })],
-    ['a missing id', raw({ v: 1, type: 'ping', payload: {} })],
-    ['an empty id', raw({ v: 1, id: '', type: 'ping', payload: {} })],
-    ['an overlong id', raw({ v: 1, id: 'x'.repeat(65), type: 'ping', payload: {} })],
-    ['a missing payload', raw({ v: 1, id: '1', type: 'ping' })],
-    ['extra envelope keys', raw({ v: 1, id: '1', type: 'ping', payload: {}, x: 1 })],
-    ['extra payload keys', raw({ v: 1, id: '1', type: 'ping', payload: { x: 1 } })],
-    ['a short token', raw({ v: 1, id: '1', type: 'auth', payload: { token: 'abc' } })],
+    ['the Phase 2 version', raw({ v: 1, id: '1', type: 'ping', payload: {} })],
+    ['a missing id', raw({ v: 2, type: 'ping', payload: {} })],
+    ['an empty id', raw({ v: 2, id: '', type: 'ping', payload: {} })],
+    ['an overlong id', raw({ v: 2, id: 'x'.repeat(65), type: 'ping', payload: {} })],
+    ['a missing payload', raw({ v: 2, id: '1', type: 'ping' })],
+    ['extra envelope keys', raw({ v: 2, id: '1', type: 'ping', payload: {}, x: 1 })],
+    ['extra payload keys', raw({ v: 2, id: '1', type: 'ping', payload: { x: 1 } })],
+    ['a bearer token in auth', raw({ v: 2, id: '1', type: 'auth', payload: { token } })],
+    ['a short proof', raw({ v: 2, id: '1', type: 'auth', payload: { proof: 'abc' } })],
     [
-      'an uppercase token',
-      raw({ v: 1, id: '1', type: 'auth', payload: { token: 'A'.repeat(64) } })
+      'an uppercase proof',
+      raw({ v: 2, id: '1', type: 'auth', payload: { proof: 'A'.repeat(64) } })
     ],
-    ['a numeric token', raw({ v: 1, id: '1', type: 'auth', payload: { token: 1 } })]
+    ['a numeric nonce', raw({ v: 2, id: '1', type: 'hello', payload: { nonce: 1 } })],
+    [
+      'a server-only challenge',
+      raw({ v: 2, id: '1', type: 'challenge', payload: { proof, serverNonce: nonce } })
+    ]
   ])('rejects %s', (_label, input) => {
     expect(parseMessage(ClientMessage, input)).toBeNull();
   });
@@ -54,8 +66,10 @@ describe('client messages', () => {
 describe('server messages', () => {
   it('accepts every server type', () => {
     for (const msg of [
+      serverMessage('0', 'challenge', { proof, serverNonce: nonce }),
       serverMessage('1', 'auth_ok', {}),
-      serverMessage('2', 'auth_error', { reason: 'invalid_token' }),
+      serverMessage('2', 'auth_error', { reason: 'invalid_proof' }),
+      serverMessage('2', 'auth_error', { reason: 'replayed_nonce' }),
       serverMessage('3', 'ping', {}),
       serverMessage('4', 'pong', {}),
       serverMessage('5', 'status', { version: '0.1.0' }),
@@ -69,9 +83,10 @@ describe('server messages', () => {
     ['an unknown auth_error reason', { type: 'auth_error', payload: { reason: 'nope' } }],
     ['an unknown error code', { type: 'error', payload: { code: 'x', message: '' } }],
     ['a status without version', { type: 'status', payload: {} }],
-    ['a client-only type', { type: 'auth', payload: { token } }]
+    ['a client-only type', { type: 'auth', payload: { proof } }],
+    ['a challenge without a nonce', { type: 'challenge', payload: { proof } }]
   ])('rejects %s', (_label, partial) => {
-    expect(parseMessage(ServerMessage, raw({ v: 1, id: '1', ...partial }))).toBeNull();
+    expect(parseMessage(ServerMessage, raw({ v: 2, id: '1', ...partial }))).toBeNull();
   });
 });
 
@@ -91,9 +106,29 @@ describe('HTTP bodies', () => {
     expect(PairFailure.safeParse({ error: 'other' }).success).toBe(false);
   });
 
+  it('validates the unpair proof exchange', () => {
+    expect(UnpairChallengeRequest.safeParse({ nonce }).success).toBe(true);
+    expect(UnpairChallengeResponse.safeParse({ proof, serverNonce: nonce }).success).toBe(true);
+    expect(UnpairRequest.safeParse({ serverNonce: nonce, proof }).success).toBe(true);
+    expect(UnpairRequest.safeParse({ token }).success).toBe(false);
+    expect(UnpairRequest.safeParse({ serverNonce: nonce, proof, token }).success).toBe(false);
+  });
+
   it('validates health', () => {
     expect(HealthResponse.safeParse({ name: 'bridge', version: '0.1.0' }).success).toBe(true);
     expect(HealthResponse.safeParse({ name: 'other', version: '0.1.0' }).success).toBe(false);
+  });
+});
+
+describe('proofInput', () => {
+  it('separates role, purpose and port', () => {
+    const inputs = [
+      proofInput('server', 'ws', 1, nonce),
+      proofInput('client', 'ws', 1, nonce),
+      proofInput('server', 'unpair', 1, nonce),
+      proofInput('server', 'ws', 2, nonce)
+    ];
+    expect(new Set(inputs).size).toBe(inputs.length);
   });
 });
 

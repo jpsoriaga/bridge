@@ -7,23 +7,35 @@ import {
   PairSuccess,
   parseMessage,
   ServerMessage,
+  UnpairChallengeResponse,
   type ClientMessage,
   type ConnectionStatus
 } from '@bridge/shared';
 import type { PairResult } from '../messages';
 import { Reconnector } from './backoff';
+import { randomNonce, sha256Hex, signProof, verifyProof } from './proof';
 
 export const PING_INTERVAL_MS = 20_000;
 /** No message from the desktop for this long and the socket is treated as dead. */
 export const STALE_AFTER_MS = 50_000;
+/** hello → challenge → auth → auth_ok must finish within this. */
+export const HANDSHAKE_TIMEOUT_MS = 5_000;
 const HEALTH_TIMEOUT_MS = 800;
 const PAIR_TIMEOUT_MS = 5_000;
 
 export interface ConnectionStorage {
-  getToken(): Promise<string | null>;
-  setToken(token: string | null): Promise<void>;
+  /** SHA-256 of the pairing token, hex. The token itself is never stored. */
+  getTokenHash(): Promise<string | null>;
+  setTokenHash(hash: string | null): Promise<void>;
+  /** The port of the last server that proved it holds the key. Tried first. */
   getPort(): Promise<number | null>;
   setPort(port: number): Promise<void>;
+}
+
+/** A periodic wake-up (chrome.alarms) so a stopped worker still reconnects. */
+export interface ReconnectAlarm {
+  set(): void;
+  clear(): void;
 }
 
 export interface ConnectionDeps {
@@ -31,24 +43,41 @@ export interface ConnectionDeps {
   fetch: typeof fetch;
   createSocket: (url: string) => WebSocket;
   randomId: () => string;
+  alarm: ReconnectAlarm;
   now?: () => number;
 }
+
+type Handshake =
+  | { kind: 'ok'; socket: WebSocket }
+  /** The server's proof was wrong: not our app. Never try this port again this session. */
+  | { kind: 'impostor' }
+  /** The server proved itself, then refused our proof: our key is no longer valid. */
+  | { kind: 'revoked' }
+  /** Closed, timed out or unpaired before proving anything. */
+  | { kind: 'refused' };
 
 const base = (port: number) => `127.0.0.1:${port}`;
 
 /**
- * The service worker's single link to the desktop app: finds it on loopback, pairs,
- * authenticates in the first message, pings, and reconnects with backoff.
+ * The service worker's single link to the desktop app. It finds the app on loopback,
+ * pairs, runs the mutual challenge (see PLAN.md, "Socket auth"), pings, and reconnects
+ * with backoff plus a 1-minute alarm.
  */
 export class Connection {
   private status: ConnectionStatus = 'connecting';
   private readonly listeners = new Set<(status: ConnectionStatus) => void>();
   private readonly reconnector = new Reconnector(() => void this.connect());
   private readonly now: () => number;
+  /** Ports whose server failed the challenge. Cleared by an explicit retry or pairing. */
+  private readonly impostors = new Set<number>();
   private socket: WebSocket | null = null;
   private inFlight: Promise<void> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | undefined;
   private lastMessageAt = 0;
+  /** Bumped by pair/unpair so an attempt that was already running gives up its result. */
+  private generation = 0;
+  private paired = false;
+  private alarmSet = false;
 
   constructor(private readonly deps: ConnectionDeps) {
     this.now = deps.now ?? Date.now;
@@ -76,11 +105,13 @@ export class Connection {
   retry(): Promise<void> {
     this.reconnector.cancel();
     this.reconnector.reset();
+    this.impostors.clear();
     return this.connect();
   }
 
   async pair(code: string): Promise<PairResult> {
-    const port = await this.discover();
+    // Nothing can prove itself before pairing, so this takes the first Bridge that answers.
+    const port = await this.findApp();
     if (port === null) {
       this.setStatus('app-not-running');
       return { ok: false, error: 'app-not-running' };
@@ -102,8 +133,11 @@ export class Connection {
 
     const success = response.ok ? PairSuccess.safeParse(body) : null;
     if (success?.success) {
-      await this.deps.storage.setToken(success.data.token);
+      // Keep only the hash. It is the HMAC key; the token is dropped here.
+      await this.deps.storage.setTokenHash(await sha256Hex(success.data.token));
       await this.deps.storage.setPort(port);
+      this.setPaired(true);
+      this.generation += 1;
       this.dropSocket();
       await this.retry();
       return { ok: true };
@@ -119,46 +153,108 @@ export class Connection {
     return { ok: false, error: 'failed' };
   }
 
-  /** Revokes the token on the desktop (best effort) and forgets it here. */
+  /** Revokes the pairing on the desktop (best effort) and forgets the key here. */
   async unpair(): Promise<void> {
-    const token = await this.deps.storage.getToken();
-    const port = await this.deps.storage.getPort();
+    const [key, port] = await Promise.all([
+      this.deps.storage.getTokenHash(),
+      this.deps.storage.getPort()
+    ]);
+    this.generation += 1;
     this.reconnector.cancel();
     this.dropSocket();
-    if (token && port !== null) {
+    if (key && port !== null) {
       try {
-        await this.deps.fetch(`http://${base(port)}/unpair`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-          body: '{}',
-          signal: AbortSignal.timeout(PAIR_TIMEOUT_MS)
-        });
+        await this.revokeRemotely(port, key);
       } catch {
-        // App not running. The desktop still holds the hash until it unpairs or re-pairs.
+        // App not running. The desktop keeps the key until it unpairs or pairs again.
       }
     }
-    await this.deps.storage.setToken(null);
+    await this.deps.storage.setTokenHash(null);
+    this.setPaired(false);
     this.setStatus('not-paired');
   }
 
-  private async attempt(): Promise<void> {
-    const [token, port] = await Promise.all([this.deps.storage.getToken(), this.discover()]);
-    if (port === null) {
-      this.setStatus('app-not-running');
-      this.reconnector.schedule();
-      return;
-    }
-    if (!token) {
-      // Nothing to connect with. Pairing calls retry() once it has a token.
-      this.setStatus('not-paired');
-      return;
-    }
-    this.setStatus('connecting');
-    this.open(port, token);
+  private async revokeRemotely(port: number, key: string): Promise<void> {
+    const post = (path: string, body: unknown) =>
+      this.deps.fetch(`http://${base(port)}${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(PAIR_TIMEOUT_MS)
+      });
+    const nonce = randomNonce();
+    const challenge = UnpairChallengeResponse.safeParse(
+      await (await post('/unpair/challenge', { nonce })).json()
+    );
+    if (!challenge.success) return;
+    const { proof, serverNonce } = challenge.data;
+    // Don't hand our proof to something that can't prove it's the app.
+    if (!(await verifyProof(key, proof, 'server', 'unpair', port, nonce))) return;
+    await post('/unpair', {
+      serverNonce,
+      proof: await signProof(key, 'client', 'unpair', port, serverNonce)
+    });
   }
 
-  /** Finds the desktop on loopback. Tries the last good port first, then the whole range. */
-  private async discover(): Promise<number | null> {
+  private async attempt(): Promise<void> {
+    const generation = this.generation;
+    const key = await this.deps.storage.getTokenHash();
+    this.setPaired(key !== null);
+
+    if (!key) {
+      // Still look for the app, so the panel can say whether to open it before pairing.
+      const port = await this.findApp();
+      if (port === null) {
+        this.setStatus('app-not-running');
+        this.reconnector.schedule();
+      } else {
+        // Nothing to connect with. Pairing calls retry() once it has a key.
+        this.setStatus('not-paired');
+      }
+      return;
+    }
+
+    let sawApp = false;
+    const tryPort = async (port: number): Promise<boolean> => {
+      if (this.impostors.has(port)) return false;
+      if (!(await this.probe(port))) return false;
+      sawApp = true;
+      this.setStatus('connecting');
+      const result = await this.handshake(port, key);
+      if (generation !== this.generation) {
+        if (result.kind === 'ok') result.socket.close(1000, 'superseded');
+        return true;
+      }
+      switch (result.kind) {
+        case 'ok':
+          this.adopt(result.socket, port);
+          return true;
+        case 'revoked':
+          await this.forgetKey();
+          return true;
+        case 'impostor':
+          this.impostors.add(port);
+          return false;
+        case 'refused':
+          return false;
+      }
+    };
+
+    // The pinned port first. Only if it fails, the rest of the range, in order.
+    const pinned = await this.deps.storage.getPort();
+    if (pinned !== null && (await tryPort(pinned))) return;
+    for (const port of candidatePorts()) {
+      if (port !== pinned && (await tryPort(port))) return;
+    }
+
+    if (generation !== this.generation) return;
+    // A Bridge answered /health but none passed the challenge (or it isn't paired).
+    this.setStatus(sawApp ? 'error' : 'app-not-running');
+    this.reconnector.schedule();
+  }
+
+  /** First port in the range whose /health answers as Bridge, pinned port first. */
+  private async findApp(): Promise<number | null> {
     const saved = await this.deps.storage.getPort();
     const ports = [...new Set([...(saved === null ? [] : [saved]), ...candidatePorts()])];
     const results = await Promise.all(ports.map((port) => this.probe(port)));
@@ -176,39 +272,76 @@ export class Connection {
     }
   }
 
-  private open(port: number, token: string): void {
-    // The token goes in the first message, never in the URL.
-    const socket = this.deps.createSocket(`ws://${base(port)}/ws`);
-    this.socket = socket;
-    let opened = false;
-    let authed = false;
+  /**
+   * hello(nonce) → challenge(proof, serverNonce) → auth(proof) → auth_ok.
+   * The server proves it holds the key before we prove anything, so an impostor learns
+   * nothing it could replay.
+   */
+  private handshake(port: number, key: string): Promise<Handshake> {
+    return new Promise((resolve) => {
+      const socket = this.deps.createSocket(`ws://${base(port)}/ws`);
+      const nonce = randomNonce();
+      let serverVerified = false;
+      let done = false;
 
-    socket.onopen = () => {
-      opened = true;
-      this.lastMessageAt = this.now();
-      this.send(socket, clientMessage(this.deps.randomId(), 'auth', { token }));
-    };
+      const finish = (result: Handshake) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        socket.onopen = socket.onmessage = socket.onclose = null;
+        if (result.kind !== 'ok') socket.close(1000, 'handshake failed');
+        resolve(result);
+      };
+      const timer = setTimeout(() => finish({ kind: 'refused' }), HANDSHAKE_TIMEOUT_MS);
+
+      socket.onopen = () =>
+        this.send(socket, clientMessage(this.deps.randomId(), 'hello', { nonce }));
+
+      socket.onmessage = async (event: MessageEvent) => {
+        if (typeof event.data !== 'string') return;
+        const message = parseMessage(ServerMessage, event.data);
+        if (!message) return;
+        if (message.type === 'challenge' && !serverVerified) {
+          const { proof, serverNonce } = message.payload;
+          if (!(await verifyProof(key, proof, 'server', 'ws', port, nonce))) {
+            finish({ kind: 'impostor' });
+            return;
+          }
+          serverVerified = true;
+          const ours = await signProof(key, 'client', 'ws', port, serverNonce);
+          this.send(socket, clientMessage(this.deps.randomId(), 'auth', { proof: ours }));
+        } else if (message.type === 'auth_ok' && serverVerified) {
+          finish({ kind: 'ok', socket });
+        }
+        // auth_error is followed by a close, handled below.
+      };
+
+      socket.onclose = (event: CloseEvent) => {
+        // Only a server that proved it holds our key can tell us the key is dead.
+        const revoked = serverVerified && event.code === CloseCode.unauthorized;
+        finish({ kind: revoked ? 'revoked' : 'refused' });
+      };
+    });
+  }
+
+  /** Takes over an authenticated socket. */
+  private adopt(socket: WebSocket, port: number): void {
+    this.socket = socket;
+    this.lastMessageAt = this.now();
+    this.reconnector.reset();
+    void this.deps.storage.setPort(port);
+    this.setStatus('connected');
+    this.startPing(socket);
 
     socket.onmessage = (event: MessageEvent) => {
       if (typeof event.data !== 'string') return;
       const message = parseMessage(ServerMessage, event.data);
       if (!message) return;
       this.lastMessageAt = this.now();
-      switch (message.type) {
-        case 'auth_ok':
-          authed = true;
-          this.reconnector.reset();
-          void this.deps.storage.setPort(port);
-          this.setStatus('connected');
-          this.startPing(socket);
-          break;
-        case 'ping':
-          this.send(socket, clientMessage(this.deps.randomId(), 'pong', {}));
-          break;
-        default:
-          // auth_error is followed by a close; status, pong and error need no action yet.
-          break;
+      if (message.type === 'ping') {
+        this.send(socket, clientMessage(this.deps.randomId(), 'pong', {}));
       }
+      // status, pong and error need no action yet.
     };
 
     socket.onclose = (event: CloseEvent) => {
@@ -216,15 +349,19 @@ export class Connection {
       this.socket = null;
       this.stopPing();
       if (event.code === CloseCode.unauthorized) {
-        // Revoked, replaced by another pairing, or never valid.
-        void this.deps.storage.setToken(null);
-        this.setStatus('not-paired');
+        // Revoked or replaced by another pairing. This server already proved itself.
+        void this.forgetKey();
         return;
       }
-      // Reachable over HTTP but the socket never opened: the desktop refused us.
-      this.setStatus(opened || authed ? 'connecting' : 'error');
+      this.setStatus('connecting');
       this.reconnector.schedule();
     };
+  }
+
+  private async forgetKey(): Promise<void> {
+    await this.deps.storage.setTokenHash(null);
+    this.setPaired(false);
+    this.setStatus('not-paired');
   }
 
   private send(socket: WebSocket, message: ClientMessage): void {
@@ -256,9 +393,25 @@ export class Connection {
     socket?.close(1000, 'client closing');
   }
 
+  private setPaired(paired: boolean): void {
+    this.paired = paired;
+    this.syncAlarm();
+  }
+
+  /** The alarm runs only while paired and not connected. */
+  private syncAlarm(): void {
+    const want = this.paired && this.status !== 'connected';
+    if (want === this.alarmSet) return;
+    this.alarmSet = want;
+    if (want) this.deps.alarm.set();
+    else this.deps.alarm.clear();
+  }
+
   private setStatus(status: ConnectionStatus): void {
-    if (status === this.status) return;
+    const changed = status !== this.status;
     this.status = status;
+    this.syncAlarm();
+    if (!changed) return;
     for (const listener of this.listeners) listener(status);
   }
 }

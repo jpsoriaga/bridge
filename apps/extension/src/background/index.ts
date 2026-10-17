@@ -4,7 +4,8 @@ import {
   WorkerRequest,
   type StatusUpdate
 } from '../messages';
-import { Connection, type ConnectionStorage } from './connection';
+import { Connection, type ConnectionStorage, type ReconnectAlarm } from './connection';
+import { sha256Hex } from './proof';
 
 // Clicking the toolbar icon opens the side panel.
 chrome.runtime.onInstalled.addListener(() => {
@@ -12,13 +13,21 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 const storage: ConnectionStorage = {
-  async getToken() {
-    const { token } = await chrome.storage.local.get('token');
-    return typeof token === 'string' ? token : null;
+  async getTokenHash() {
+    const { tokenHash, token } = await chrome.storage.local.get(['tokenHash', 'token']);
+    if (typeof tokenHash === 'string') return tokenHash;
+    // Phase 2 stored the raw token. Swap it for its hash once, then forget it.
+    if (typeof token === 'string') {
+      const hash = await sha256Hex(token);
+      await chrome.storage.local.set({ tokenHash: hash });
+      await chrome.storage.local.remove('token');
+      return hash;
+    }
+    return null;
   },
-  async setToken(token) {
-    if (token === null) await chrome.storage.local.remove('token');
-    else await chrome.storage.local.set({ token });
+  async setTokenHash(tokenHash) {
+    if (tokenHash === null) await chrome.storage.local.remove(['tokenHash', 'token']);
+    else await chrome.storage.local.set({ tokenHash });
   },
   async getPort() {
     const { port } = await chrome.storage.local.get('port');
@@ -29,13 +38,34 @@ const storage: ConnectionStorage = {
   }
 };
 
+// A stopped worker has no timers. The alarm wakes it once a minute to reconnect, and only
+// runs while paired and disconnected.
+const RECONNECT_ALARM = 'reconnect';
+const alarm: ReconnectAlarm = {
+  set() {
+    // create() would restart an existing alarm's period, so only create it once.
+    void chrome.alarms.get(RECONNECT_ALARM).then((existing) => {
+      if (!existing) void chrome.alarms.create(RECONNECT_ALARM, { periodInMinutes: 1 });
+    });
+  },
+  clear() {
+    void chrome.alarms.clear(RECONNECT_ALARM);
+  }
+};
+
 // The connection lives here, not in the content script, so chatgpt.com's CSP and
 // local-network rules never apply and the Origin is chrome-extension://<id>.
 const connection = new Connection({
   storage,
   fetch: (input, init) => fetch(input, init),
   createSocket: (url) => new WebSocket(url),
-  randomId: () => crypto.randomUUID()
+  randomId: () => crypto.randomUUID(),
+  alarm
+});
+
+// Registered at the top level so the alarm can wake a stopped worker.
+chrome.alarms.onAlarm.addListener(({ name }) => {
+  if (name === RECONNECT_ALARM) void connection.connect();
 });
 
 const extensionPage = chrome.runtime.getURL('');

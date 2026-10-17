@@ -1,8 +1,11 @@
-import { createHash, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
-import { PAIRING_CODE_LENGTH, PairingCode, Token } from '@bridge/shared';
+import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
+import { PAIRING_CODE_LENGTH, PairingCode, Proof, proofInput } from '@bridge/shared';
 import { PAIRING_CODE_TTL_MS, PAIRING_LOCKOUT_MS, PAIRING_MAX_FAILURES } from './config';
 
-/** Persists the SHA-256 hash of the current token. The token itself is never stored. */
+/**
+ * Persists the SHA-256 hash of the current token, which is the HMAC key for every proof.
+ * The token itself is never stored.
+ */
 export interface TokenHashStore {
   load(): Buffer | null;
   save(hash: Buffer | null): void;
@@ -26,10 +29,13 @@ export interface PairingOptions {
   lockoutMs?: number;
 }
 
+export type ProofPurpose = Parameters<typeof proofInput>[1];
+
 const sha256 = (value: string) => createHash('sha256').update(value, 'utf8').digest();
+const hmac = (key: Buffer, input: string) => createHmac('sha256', key).update(input).digest();
 
 /**
- * One-time codes, the single paired token, and the `/pair` lockout.
+ * One-time codes, the single paired key, its proofs, and the `/pair` lockout.
  * Pure Node so it can be tested without Electron.
  */
 export class Pairing {
@@ -105,9 +111,17 @@ export class Pairing {
     return { ok: true, token };
   }
 
-  verifyToken(candidate: unknown): boolean {
-    if (this.tokenHash === null || !Token.safeParse(candidate).success) return false;
-    return timingSafeEqual(sha256(candidate as string), this.tokenHash);
+  /** HMAC over the client's nonce, proving this app holds the key. Null when unpaired. */
+  serverProof(purpose: ProofPurpose, port: number, nonce: string): string | null {
+    if (this.tokenHash === null) return null;
+    return hmac(this.tokenHash, proofInput('server', purpose, port, nonce)).toString('hex');
+  }
+
+  /** Checks the client's HMAC over a nonce this app issued. Constant time. */
+  verifyClientProof(purpose: ProofPurpose, port: number, nonce: string, proof: unknown): boolean {
+    if (this.tokenHash === null || !Proof.safeParse(proof).success) return false;
+    const expected = hmac(this.tokenHash, proofInput('client', purpose, port, nonce));
+    return timingSafeEqual(Buffer.from(proof as string, 'hex'), expected);
   }
 
   unpair(): void {

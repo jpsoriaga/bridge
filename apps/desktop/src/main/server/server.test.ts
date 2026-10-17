@@ -1,6 +1,13 @@
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
-import { BRIDGE_EXTENSION_ID, CloseCode, parseMessage, ServerMessage } from '@bridge/shared';
+import {
+  BRIDGE_EXTENSION_ID,
+  CloseCode,
+  parseMessage,
+  proofInput,
+  ServerMessage
+} from '@bridge/shared';
 import { AUTH_TIMEOUT_MS, MAX_WS_PAYLOAD_BYTES } from './config';
 import { memoryTokenStore, Pairing } from './pairing';
 import { createBridgeServer, type BridgeServer } from './server';
@@ -11,6 +18,7 @@ let clock: number;
 let pairing: Pairing;
 let server: BridgeServer;
 let host: string;
+let port: number;
 
 beforeEach(async () => {
   clock = 1_000_000;
@@ -21,7 +29,7 @@ beforeEach(async () => {
     authTimeoutMs: 150,
     rateLimit: { messages: 20, windowMs: 10_000 }
   });
-  const port = await server.listen([0]);
+  port = await server.listen([0]);
   host = `127.0.0.1:${port}`;
 });
 
@@ -38,12 +46,20 @@ function post(url: string, body: unknown, headers: Record<string, string> = {}) 
   });
 }
 
+/** Pairs and returns the key the extension keeps: the token's SHA-256, hex. */
 async function pair(): Promise<string> {
   const { code } = pairing.startPairing();
   const res = await post('/pair', { code });
   expect(res.statusCode).toBe(200);
-  return (res.json() as { token: string }).token;
+  const { token } = res.json() as { token: string };
+  return createHash('sha256').update(token).digest('hex');
 }
+
+const nonce = () => randomBytes(32).toString('hex');
+const sign = (key: string, ...args: Parameters<typeof proofInput>) =>
+  createHmac('sha256', Buffer.from(key, 'hex'))
+    .update(proofInput(...args))
+    .digest('hex');
 
 interface Client {
   ws: WebSocket;
@@ -90,13 +106,39 @@ function connect(options: { origin?: string; host?: string } = {}): Promise<Clie
   });
 }
 
-const auth = (token: string) => ({ v: 1, id: 'a1', type: 'auth', payload: { token } });
+const hello = (n: string) => ({ v: 2, id: 'h1', type: 'hello', payload: { nonce: n } });
+const auth = (proof: string) => ({ v: 2, id: 'a1', type: 'auth', payload: { proof } });
+const ping = (id = 'p1') => ({ v: 2, id, type: 'ping', payload: {} });
 
-async function authedClient(token: string): Promise<Client> {
+/** Sends hello and returns the server's challenge after checking its proof. */
+async function challenge(client: Client, key: string, n = nonce()) {
+  client.sendJson(hello(n));
+  const message = await client.next();
+  if (message.type !== 'challenge') throw new Error(`expected challenge, got ${message.type}`);
+  expect(message.payload.proof).toBe(sign(key, 'server', 'ws', port, n));
+  return message.payload;
+}
+
+async function authedClient(key: string): Promise<Client> {
   const client = await connect();
-  client.sendJson(auth(token));
+  const { serverNonce } = await challenge(client, key);
+  client.sendJson(auth(sign(key, 'client', 'ws', port, serverNonce)));
   expect((await client.next()).type).toBe('auth_ok');
   return client;
+}
+
+/** The extension's two-step unpair. Returns the final status code. */
+async function unpairWith(key: string): Promise<number> {
+  const n = nonce();
+  const first = await post('/unpair/challenge', { nonce: n });
+  if (first.statusCode !== 200) return first.statusCode;
+  const { proof, serverNonce } = first.json() as { proof: string; serverNonce: string };
+  expect(proof).toBe(sign(key, 'server', 'unpair', port, n));
+  const res = await post('/unpair', {
+    serverNonce,
+    proof: sign(key, 'client', 'unpair', port, serverNonce)
+  });
+  return res.statusCode;
 }
 
 describe('host check', () => {
@@ -162,7 +204,7 @@ describe('POST /pair', () => {
   it('exchanges a valid code for a token', async () => {
     const token = await pair();
     expect(token).toMatch(/^[0-9a-f]{64}$/);
-    expect(pairing.verifyToken(token)).toBe(true);
+    expect(pairing.isPaired).toBe(true);
     expect(pairing.pendingCode).toBeNull();
   });
 
@@ -220,86 +262,196 @@ describe('POST /pair', () => {
     const client = await authedClient(first);
     const second = await pair();
     expect((await client.closed).code).toBe(CloseCode.unauthorized);
-    expect(pairing.verifyToken(first)).toBe(false);
-    expect(pairing.verifyToken(second)).toBe(true);
+    await expect(authedClient(first)).rejects.toThrow();
+    (await authedClient(second)).ws.close();
   });
 });
 
 describe('POST /unpair', () => {
-  it('requires the token', async () => {
-    await pair();
-    expect((await post('/unpair', {})).statusCode).toBe(401);
-    const bogus = { authorization: `Bearer ${'0'.repeat(64)}` };
-    expect((await post('/unpair', {}, bogus)).statusCode).toBe(401);
+  it('requires a valid proof, never a bearer token', async () => {
+    const key = await pair();
+    const bearer = { authorization: `Bearer ${'0'.repeat(64)}` };
+    expect((await post('/unpair', {}, bearer)).statusCode).toBe(400);
+    expect(await unpairWith('f'.repeat(64)).catch(() => 'bad server proof')).toBe(
+      'bad server proof'
+    );
+    // A made-up server nonce is refused even with a correct proof over it.
+    const forged = nonce();
+    const res = await post('/unpair', {
+      serverNonce: forged,
+      proof: sign(key, 'client', 'unpair', port, forged)
+    });
+    expect(res.statusCode).toBe(401);
     expect(pairing.isPaired).toBe(true);
   });
 
-  it('revokes the token and closes the socket', async () => {
-    const token = await pair();
-    const client = await authedClient(token);
-    const res = await post('/unpair', {}, { authorization: `Bearer ${token}` });
-    expect(res.statusCode).toBe(204);
+  it('refuses a socket proof for unpairing', async () => {
+    const key = await pair();
+    const { serverNonce } = (await post('/unpair/challenge', { nonce: nonce() })).json() as {
+      serverNonce: string;
+    };
+    const res = await post('/unpair', {
+      serverNonce,
+      proof: sign(key, 'client', 'ws', port, serverNonce)
+    });
+    expect(res.statusCode).toBe(401);
+    expect(pairing.isPaired).toBe(true);
+  });
+
+  it('uses each server nonce once', async () => {
+    const key = await pair();
+    const { serverNonce } = (await post('/unpair/challenge', { nonce: nonce() })).json() as {
+      serverNonce: string;
+    };
+    const wrong = await post('/unpair', { serverNonce, proof: 'a'.repeat(64) });
+    expect(wrong.statusCode).toBe(401);
+    const retry = await post('/unpair', {
+      serverNonce,
+      proof: sign(key, 'client', 'unpair', port, serverNonce)
+    });
+    expect(retry.statusCode).toBe(401);
+    expect(pairing.isPaired).toBe(true);
+  });
+
+  it('rejects a replayed client nonce', async () => {
+    await pair();
+    const n = nonce();
+    expect((await post('/unpair/challenge', { nonce: n })).statusCode).toBe(200);
+    expect((await post('/unpair/challenge', { nonce: n })).statusCode).toBe(409);
+  });
+
+  it('says not_paired when there is nothing to revoke', async () => {
+    const res = await post('/unpair/challenge', { nonce: nonce() });
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toEqual({ error: 'not_paired' });
+  });
+
+  it('revokes the key and closes the socket', async () => {
+    const key = await pair();
+    const client = await authedClient(key);
+    expect(await unpairWith(key)).toBe(204);
     expect((await client.closed).code).toBe(CloseCode.unauthorized);
     expect(pairing.isPaired).toBe(false);
-    expect(pairing.verifyToken(token)).toBe(false);
   });
 });
 
 describe('WebSocket auth', () => {
-  it('accepts a valid token and answers pings', async () => {
-    const token = await pair();
-    const client = await authedClient(token);
+  it('proves itself, accepts a valid proof and answers pings', async () => {
+    const key = await pair();
+    const client = await authedClient(key);
     expect(await client.next()).toMatchObject({ type: 'status', payload: { version: '9.9.9' } });
     expect(server.connected).toBe(true);
 
-    client.sendJson({ v: 1, id: 'p1', type: 'ping', payload: {} });
+    client.sendJson(ping());
     expect((await client.next()).type).toBe('pong');
     client.ws.close();
     await client.closed;
   });
 
-  it('rejects a missing token', async () => {
+  it('never needs the token on the socket', async () => {
+    const key = await pair();
+    const client = await connect();
+    client.sendJson({ v: 2, id: 'a1', type: 'auth', payload: { token: key } });
+    expect(await client.next()).toMatchObject({ payload: { reason: 'expected_hello' } });
+    expect((await client.closed).code).toBe(CloseCode.protocolError);
+  });
+
+  it('requires hello first', async () => {
     await pair();
     const client = await connect();
-    client.sendJson({ v: 1, id: 'p1', type: 'ping', payload: {} });
+    client.sendJson(ping());
+    expect(await client.next()).toMatchObject({ payload: { reason: 'expected_hello' } });
+    expect((await client.closed).code).toBe(CloseCode.protocolError);
+  });
+
+  it('requires auth after the challenge', async () => {
+    const key = await pair();
+    const client = await connect();
+    await challenge(client, key);
+    client.sendJson(ping());
     expect(await client.next()).toMatchObject({ payload: { reason: 'expected_auth' } });
     expect((await client.closed).code).toBe(CloseCode.protocolError);
   });
 
-  it('rejects an invalid token', async () => {
-    await pair();
+  it('rejects a wrong client proof', async () => {
+    const key = await pair();
     const client = await connect();
-    client.sendJson(auth('f'.repeat(64)));
-    expect(await client.next()).toMatchObject({ payload: { reason: 'invalid_token' } });
+    const { serverNonce } = await challenge(client, key);
+    client.sendJson(auth(sign('f'.repeat(64), 'client', 'ws', port, serverNonce)));
+    expect(await client.next()).toMatchObject({ payload: { reason: 'invalid_proof' } });
     expect((await client.closed).code).toBe(CloseCode.unauthorized);
     expect(server.connected).toBe(false);
   });
 
-  it('rejects any token when not paired', async () => {
+  it('rejects a reflected server proof as the client proof', async () => {
+    const key = await pair();
     const client = await connect();
-    client.sendJson(auth('f'.repeat(64)));
+    const { serverNonce } = await challenge(client, key);
+    client.sendJson(auth(sign(key, 'server', 'ws', port, serverNonce)));
     expect((await client.closed).code).toBe(CloseCode.unauthorized);
   });
 
-  it('closes if auth arrives after the timeout', async () => {
-    expect(AUTH_TIMEOUT_MS).toBe(5_000);
-    const token = await pair();
+  it('rejects a proof bound to another port', async () => {
+    const key = await pair();
     const client = await connect();
+    const { serverNonce } = await challenge(client, key);
+    client.sendJson(auth(sign(key, 'client', 'ws', port + 1, serverNonce)));
+    expect((await client.closed).code).toBe(CloseCode.unauthorized);
+  });
+
+  it('rejects a replayed hello nonce', async () => {
+    const key = await pair();
+    const n = nonce();
+    const first = await connect();
+    await challenge(first, key, n);
+    first.ws.close();
+
+    const second = await connect();
+    second.sendJson(hello(n));
+    expect(await second.next()).toMatchObject({ payload: { reason: 'replayed_nonce' } });
+    expect((await second.closed).code).toBe(CloseCode.protocolError);
+  });
+
+  it('rejects a proof replayed from an earlier socket', async () => {
+    const key = await pair();
+    const first = await connect();
+    const { serverNonce } = await challenge(first, key);
+    const proof = sign(key, 'client', 'ws', port, serverNonce);
+    first.sendJson(auth(proof));
+    expect((await first.next()).type).toBe('auth_ok');
+
+    const second = await connect();
+    await challenge(second, key);
+    second.sendJson(auth(proof));
+    expect((await second.closed).code).toBe(CloseCode.unauthorized);
+    first.ws.close();
+  });
+
+  it('says not_paired when there is no key', async () => {
+    const client = await connect();
+    client.sendJson(hello(nonce()));
+    expect(await client.next()).toMatchObject({ payload: { reason: 'not_paired' } });
+    expect((await client.closed).code).toBe(CloseCode.unauthorized);
+  });
+
+  it('closes if the handshake does not finish in time', async () => {
+    expect(AUTH_TIMEOUT_MS).toBe(5_000);
+    const key = await pair();
+    const client = await connect();
+    await challenge(client, key);
     const { code } = await client.closed;
     expect(code).toBe(CloseCode.authTimeout);
     expect(client.messages).toMatchObject([{ payload: { reason: 'timeout' } }]);
-    // Too late: the socket is gone.
-    expect(() => client.sendJson(auth(token))).not.toThrow();
     expect(server.connected).toBe(false);
   });
 
-  it('rejects a revoked token after unpairing from the app', async () => {
-    const token = await pair();
-    const client = await authedClient(token);
+  it('rejects a revoked key after unpairing from the app', async () => {
+    const key = await pair();
+    const client = await authedClient(key);
     server.unpair();
     expect((await client.closed).code).toBe(CloseCode.unauthorized);
     const again = await connect();
-    again.sendJson(auth(token));
+    again.sendJson(hello(nonce()));
     expect((await again.closed).code).toBe(CloseCode.unauthorized);
   });
 
@@ -311,7 +463,7 @@ describe('WebSocket auth', () => {
       type: 'error',
       payload: { code: 'invalid_message' }
     });
-    client.sendJson({ v: 1, id: 'p1', type: 'ping', payload: {} });
+    client.sendJson(ping());
     expect((await client.next()).type).toBe('pong');
     client.ws.close();
     await client.closed;
@@ -325,7 +477,7 @@ describe('WebSocket auth', () => {
 
   it('closes when a client floods messages', async () => {
     const client = await authedClient(await pair());
-    for (let i = 0; i < 25; i++) client.sendJson({ v: 1, id: `p${i}`, type: 'ping', payload: {} });
+    for (let i = 0; i < 25; i++) client.sendJson(ping(`p${i}`));
     expect((await client.closed).code).toBe(CloseCode.rateLimited);
   });
 });

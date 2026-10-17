@@ -24,8 +24,8 @@ export default defineManifest({
   key: EXTENSION_PUBLIC_KEY,
   icons,
   // Only what is used today. The content script match below is the extension's only
-  // access to any website.
-  permissions: ['storage', 'sidePanel'],
+  // access to any website. `alarms` wakes the stopped worker to reconnect (PLAN.md).
+  permissions: ['storage', 'sidePanel', 'alarms'],
   // Loopback only, for the service worker's fetch to the desktop's /health, /pair and
   // /unpair. The desktop sends no CORS headers, so without this the worker can't read
   // the responses. The WebSocket itself doesn't need it. See PLAN.md.

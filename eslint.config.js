@@ -24,5 +24,14 @@ export default tseslint.config(
   {
     files: ['apps/extension/src/**/*.{ts,tsx}'],
     languageOptions: { globals: { ...globals.webextensions } }
+  },
+  {
+    // Manual Playwright scripts (e2e/README.md). `chrome` appears inside page callbacks.
+    files: ['e2e/**/*.cjs'],
+    languageOptions: {
+      sourceType: 'commonjs',
+      globals: { ...globals.node, ...globals.browser, ...globals.webextensions }
+    },
+    rules: { '@typescript-eslint/no-require-imports': 'off' }
   }
 );

@@ -17,7 +17,13 @@ export const BODY_LIMIT_BYTES = 1024;
 /** Largest WebSocket frame. Raise when file contents start flowing (Phase 4). */
 export const MAX_WS_PAYLOAD_BYTES = 16 * 1024;
 
+/** The whole handshake (hello → challenge → auth) must finish within this. */
 export const AUTH_TIMEOUT_MS = 5_000;
+/** Client nonces are remembered this long, so a replayed hello is refused. */
+export const NONCE_TTL_MS = 10 * 60_000;
+export const NONCE_LEDGER_MAX = 1024;
+/** A server nonce from `/unpair/challenge` must be redeemed within this. */
+export const UNPAIR_CHALLENGE_TTL_MS = 30_000;
 /** The extension pings every 20s. Three missed pings and the socket is dropped. */
 export const IDLE_TIMEOUT_MS = 60_000;
 

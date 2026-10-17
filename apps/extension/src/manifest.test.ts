@@ -16,9 +16,9 @@ function extensionIdFromKey(key: string): string {
 }
 
 describe('manifest', () => {
-  it('requests exactly storage and sidePanel', async () => {
+  it('requests exactly storage, sidePanel and alarms', async () => {
     const manifest = await loadManifest();
-    expect(manifest.permissions).toEqual(['storage', 'sidePanel']);
+    expect(manifest.permissions).toEqual(['storage', 'sidePanel', 'alarms']);
   });
 
   it('runs content scripts on chatgpt.com only', async () => {

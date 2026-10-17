@@ -5,3 +5,4 @@ out
 release
 archive
 pnpm-lock.yaml
+e2e/package-lock.json

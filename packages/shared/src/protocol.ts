@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 /** Bumped when a message shape changes incompatibly. Both sides reject other versions. */
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 /** The desktop listens on the first free port in `DEFAULT_PORT .. DEFAULT_PORT + PORT_RANGE - 1`. */
 export const DEFAULT_PORT = 47821;
@@ -19,8 +19,30 @@ export const BRIDGE_EXTENSION_ID = 'golkpkmancgpgkpfjggoimedcogghhip';
 
 export const PAIRING_CODE_LENGTH = 6;
 export const PairingCode = z.string().regex(/^\d{6}$/);
-/** 32 random bytes, hex encoded. */
-export const Token = z.string().regex(/^[0-9a-f]{64}$/);
+const hex32 = z.string().regex(/^[0-9a-f]{64}$/);
+/** 32 random bytes, hex encoded. Only ever sent once, in the `/pair` response. */
+export const Token = hex32;
+/** SHA-256 of the token, hex. Both sides keep this; it is the HMAC key for every proof. */
+export const TokenHash = hex32;
+/** 32 random bytes, hex. Single use. */
+export const Nonce = hex32;
+/** HMAC-SHA256, hex. See `proofInput`. */
+export const Proof = hex32;
+
+/**
+ * The bytes each side signs with HMAC-SHA256(tokenHash, ·). The role and purpose keep a
+ * proof from one step being reflected into another, and the port binds it to the socket
+ * the client actually dialled, so a process on another port can't relay a real server's
+ * proofs. The token itself never crosses the wire after pairing.
+ */
+export function proofInput(
+  role: 'server' | 'client',
+  purpose: 'ws' | 'unpair',
+  port: number,
+  nonce: string
+): string {
+  return `bridge/v${PROTOCOL_VERSION}/${role}/${purpose}/${port}/${nonce}`;
+}
 
 // HTTP
 
@@ -42,6 +64,12 @@ export const PairFailure = z.strictObject({
 });
 export type PairFailure = z.infer<typeof PairFailure>;
 
+/** Step 1 of `/unpair`: the client's nonce. The server answers with its proof and a nonce. */
+export const UnpairChallengeRequest = z.strictObject({ nonce: Nonce });
+export const UnpairChallengeResponse = z.strictObject({ proof: Proof, serverNonce: Nonce });
+/** Step 2 of `/unpair`: the client's proof over the server's nonce. */
+export const UnpairRequest = z.strictObject({ serverNonce: Nonce, proof: Proof });
+
 // WebSocket. Every message is an envelope `{ v, id, type, payload }`.
 
 const messageId = z.string().min(1).max(64);
@@ -56,11 +84,26 @@ function message<T extends string, P extends z.ZodType>(type: T, payload: P) {
   });
 }
 
-export const AuthMessage = message('auth', z.strictObject({ token: Token }));
+// Handshake: hello → challenge → auth → auth_ok. See PLAN.md, "Socket auth".
+export const HelloMessage = message('hello', z.strictObject({ nonce: Nonce }));
+export const ChallengeMessage = message(
+  'challenge',
+  z.strictObject({ proof: Proof, serverNonce: Nonce })
+);
+export const AuthMessage = message('auth', z.strictObject({ proof: Proof }));
 export const AuthOkMessage = message('auth_ok', empty);
 export const AuthErrorMessage = message(
   'auth_error',
-  z.strictObject({ reason: z.enum(['invalid_token', 'timeout', 'expected_auth']) })
+  z.strictObject({
+    reason: z.enum([
+      'invalid_proof',
+      'not_paired',
+      'replayed_nonce',
+      'timeout',
+      'expected_hello',
+      'expected_auth'
+    ])
+  })
 );
 export const PingMessage = message('ping', empty);
 export const PongMessage = message('pong', empty);
@@ -74,11 +117,17 @@ export const ErrorMessage = message(
 );
 
 /** Extension → desktop. */
-export const ClientMessage = z.discriminatedUnion('type', [AuthMessage, PingMessage, PongMessage]);
+export const ClientMessage = z.discriminatedUnion('type', [
+  HelloMessage,
+  AuthMessage,
+  PingMessage,
+  PongMessage
+]);
 export type ClientMessage = z.infer<typeof ClientMessage>;
 
 /** Desktop → extension. */
 export const ServerMessage = z.discriminatedUnion('type', [
+  ChallengeMessage,
   AuthOkMessage,
   AuthErrorMessage,
   PingMessage,
@@ -123,7 +172,10 @@ export function parseMessage<S extends z.ZodType>(schema: S, raw: string): z.inf
 /** WebSocket close codes the desktop uses. 4xxx are application-defined. */
 export const CloseCode = {
   authTimeout: 4000,
-  /** Bad token, or the pairing was revoked. The extension forgets its token. */
+  /**
+   * Bad proof, not paired, or the pairing was revoked. The extension forgets its key only
+   * if the server had already proved itself on this socket.
+   */
   unauthorized: 4001,
   protocolError: 4002,
   idle: 4003,

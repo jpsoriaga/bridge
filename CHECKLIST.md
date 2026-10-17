@@ -55,6 +55,17 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [x] Tests: wrong Host, wrong Origin, missing or invalid token, late auth, expired or reused code, rate limit, oversized messages, happy path, unpair revokes
 - [x] Tests: reconnect backoff timing (fake timers), connection manager, manifest permissions and key → ID
 
+### Phase 2 follow-ups
+
+- [x] Mutual challenge-response (`hello` → `challenge` → `auth`), HMAC over the token hash bound to role, purpose and port. Protocol v2. The token is never sent after `/pair`
+- [x] Extension stores only `tokenHash` (migrates a Phase 2 `token` once). Wrong server proof closes and that port isn't retried
+- [x] `/unpair` uses the same proof flow (`/unpair/challenge` then `/unpair`), no bearer token
+- [x] Constant-time compares on both sides. Client nonces single use (10 min ledger); server nonces single use
+- [x] Port pinning: last verified port first, scan 47821–47830 only if it fails, re-pin to the verified server
+- [x] `alarms` permission: 1-minute `reconnect` alarm while paired and disconnected, cleared once connected. Manifest test updated
+- [x] Playwright scripts saved in `e2e/` with a README (manual, not in CI)
+- [x] Tests: wrong server proof rejected, replayed nonce (hello, unpair, auth proof, server challenge) rejected, port pinning, alarm set/clear
+
 ## Phase 3: Reading the chat
 
 - [ ] `MutationObserver` on the conversation container. Selectors isolated in one module

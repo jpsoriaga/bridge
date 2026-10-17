@@ -69,11 +69,13 @@ You pair once. After that the extension reconnects on its own whenever both are 
 3. Open the Bridge side panel in Chrome (the toolbar icon), type the code and click **Pair**.
 4. Both status pills turn to **Connected**.
 
-To unpair, click **Unpair** in either the app or the side panel. That revokes the token, and the other side shows **Not paired**. Pairing again from the app also replaces the old token.
+To unpair, click **Unpair** in either the app or the side panel. That revokes the pairing, and the other side shows **Not paired**. Pairing again from the app also replaces the old one.
+
+After pairing, neither side sends the token again. They prove to each other that they hold its hash with an HMAC challenge, the app first, so a program pretending to be Bridge on one of its ports learns nothing. The extension remembers which port the real app was on and tries that one first.
 
 After 5 wrong codes, pairing is locked for 60 seconds and the current code is cancelled. Start a new code once the lock ends.
 
-If the side panel says **App not running**, open the desktop app. The extension keeps retrying (up to every 30 seconds) and retries immediately when you open the side panel.
+If the side panel says **App not running**, open the desktop app. The extension keeps retrying (up to every 30 seconds, and at least once a minute even after Chrome suspends it) and retries immediately when you open the side panel.
 
 ## Project structure
 
@@ -108,11 +110,13 @@ archive/prototype/  earlier server/pairing prototype, kept for reference (not bu
 | `pnpm package:mac`  | Build a macOS dmg/zip with electron-builder         |
 | `pnpm package:win`  | Build a Windows installer with electron-builder     |
 
+Manual end-to-end scripts (Playwright, not in CI) live in [`e2e/`](e2e/README.md).
+
 ## Troubleshooting
 
 - **`Cannot read properties of undefined (reading 'whenReady')` on `pnpm dev`**: your shell has `ELECTRON_RUN_AS_NODE=1` set. Some editor-integrated tools set it, so Electron starts as plain Node. Run `unset ELECTRON_RUN_AS_NODE` first.
 - **Desktop says "Server error"**: something else is using every port from 47821 to 47830. Free one and restart Bridge.
-- **Side panel stays on "Can't reach Bridge"**: the app answered but refused the socket. That usually means the extension ID doesn't match. Check that the extension was loaded from `apps/extension/dist` and that the ID on `chrome://extensions` is the one above.
+- **Side panel stays on "Can't reach Bridge"**: the app answered but the handshake failed. If you unpaired in the app while Chrome was closed, click **Unpair** in the side panel and pair again. Otherwise the extension ID may not match: check that the extension was loaded from `apps/extension/dist` and that the ID on `chrome://extensions` is the one above.
 
 ## Docs
 

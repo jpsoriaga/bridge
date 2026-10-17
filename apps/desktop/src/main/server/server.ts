@@ -7,6 +7,8 @@ import {
   ClientMessage,
   CloseCode,
   PairRequest,
+  UnpairChallengeRequest,
+  UnpairRequest,
   parseMessage,
   serverMessage,
   type HealthResponse,
@@ -21,8 +23,12 @@ import {
   HOST,
   IDLE_TIMEOUT_MS,
   MAX_WS_PAYLOAD_BYTES,
-  RATE_LIMIT
+  NONCE_LEDGER_MAX,
+  NONCE_TTL_MS,
+  RATE_LIMIT,
+  UNPAIR_CHALLENGE_TTL_MS
 } from './config';
+import { IssuedNonces, newNonce, NonceLedger } from './nonces';
 import type { Pairing } from './pairing';
 
 export interface BridgeServerOptions {
@@ -33,10 +39,13 @@ export interface BridgeServerOptions {
   allowedOrigins?: ReadonlySet<string>;
   authTimeoutMs?: number;
   idleTimeoutMs?: number;
+  now?: () => number;
   rateLimit?: { messages: number; windowMs: number };
 }
 
 export type BridgeServer = ReturnType<typeof createBridgeServer>;
+
+type AuthFailure = Extract<ServerMessage, { type: 'auth_error' }>['payload']['reason'];
 
 function toText(data: RawData): string {
   if (Array.isArray(data)) return Buffer.concat(data).toString('utf8');
@@ -64,11 +73,15 @@ export function createBridgeServer(options: BridgeServerOptions) {
     allowedOrigins = ALLOWED_ORIGINS,
     authTimeoutMs = AUTH_TIMEOUT_MS,
     idleTimeoutMs = IDLE_TIMEOUT_MS,
-    rateLimit = RATE_LIMIT
+    rateLimit = RATE_LIMIT,
+    now = Date.now
   } = options;
 
   let port: number | null = null;
   const sessions = new Set<WebSocket>();
+  // Client nonces from hello and /unpair/challenge, so neither can be replayed.
+  const clientNonces = new NonceLedger(NONCE_TTL_MS, NONCE_LEDGER_MAX, now);
+  const unpairNonces = new IssuedNonces(UNPAIR_CHALLENGE_TTL_MS, 16, now);
 
   const app = Fastify({ logger: false, bodyLimit: BODY_LIMIT_BYTES, forceCloseConnections: true });
   // JSON only. A text/plain POST is a "simple" cross-origin request; refusing it means
@@ -77,7 +90,8 @@ export function createBridgeServer(options: BridgeServerOptions) {
 
   void app.register(fastifyWebsocket, { options: { maxPayload: MAX_WS_PAYLOAD_BYTES } });
 
-  // DNS rebinding guard: a rebinding page sends its own hostname in Host.
+  // DNS rebinding guard: a rebinding page sends its own hostname in Host. Every handler
+  // runs after this check, so `port` is set inside them (hence the `port!` below).
   app.addHook('onRequest', async (request, reply) => {
     if (port === null || request.headers.host !== `${HOST}:${port}`) {
       return reply.code(421).send({ error: 'bad_host' });
@@ -131,17 +145,38 @@ export function createBridgeServer(options: BridgeServerOptions) {
     return reply.code(401).send({ error: 'invalid_code' } satisfies PairFailure);
   });
 
+  // Unpairing is two calls so the token never travels: the app proves itself over the
+  // client's nonce, then the client proves itself over the app's.
+  app.post('/unpair/challenge', { onRequest: requireExtensionOrigin }, async (request, reply) => {
+    const body = UnpairChallengeRequest.safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ error: 'invalid_request' });
+    if (!clientNonces.claim(body.data.nonce)) {
+      return reply.code(409).send({ error: 'replayed_nonce' });
+    }
+    const proof = pairing.serverProof('unpair', port!, body.data.nonce);
+    if (proof === null) return reply.code(401).send({ error: 'not_paired' });
+    return { proof, serverNonce: unpairNonces.issue() };
+  });
+
   app.post('/unpair', { onRequest: requireExtensionOrigin }, async (request, reply) => {
-    const header = request.headers.authorization;
-    const token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : undefined;
-    if (!pairing.verifyToken(token)) return reply.code(401).send({ error: 'unauthorized' });
+    const body = UnpairRequest.safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ error: 'invalid_request' });
+    const { serverNonce, proof } = body.data;
+    if (
+      !unpairNonces.redeem(serverNonce) ||
+      !pairing.verifyClientProof('unpair', port!, serverNonce, proof)
+    ) {
+      return reply.code(401).send({ error: 'unauthorized' });
+    }
     revoke();
     return reply.code(204).send();
   });
 
   void app.register(async (scope) => {
     scope.get('/ws', { websocket: true, onRequest: requireExtensionOrigin }, (socket) => {
-      let authed = false;
+      // hello → challenge → auth. `serverNonce` lives only on this socket, so it is used once.
+      let stage: 'hello' | 'auth' | 'authed' = 'hello';
+      let serverNonce = '';
       let windowStart = Date.now();
       let windowCount = 0;
 
@@ -179,19 +214,32 @@ export function createBridgeServer(options: BridgeServerOptions) {
 
         const message = isBinary ? null : parseMessage(ClientMessage, toText(data));
 
-        if (!authed) {
+        const fail = (reason: AuthFailure, code: number) => {
           clearTimeout(authTimer);
-          if (message?.type !== 'auth') {
-            send(serverMessage(randomUUID(), 'auth_error', { reason: 'expected_auth' }));
-            socket.close(CloseCode.protocolError, 'expected auth');
-            return;
+          send(serverMessage(randomUUID(), 'auth_error', { reason }));
+          socket.close(code, reason);
+        };
+
+        if (stage === 'hello') {
+          if (message?.type !== 'hello') return fail('expected_hello', CloseCode.protocolError);
+          if (!clientNonces.claim(message.payload.nonce)) {
+            return fail('replayed_nonce', CloseCode.protocolError);
           }
-          if (!pairing.verifyToken(message.payload.token)) {
-            send(serverMessage(randomUUID(), 'auth_error', { reason: 'invalid_token' }));
-            socket.close(CloseCode.unauthorized, 'invalid token');
-            return;
+          const proof = pairing.serverProof('ws', port!, message.payload.nonce);
+          if (proof === null) return fail('not_paired', CloseCode.unauthorized);
+          serverNonce = newNonce();
+          stage = 'auth';
+          send(serverMessage(randomUUID(), 'challenge', { proof, serverNonce }));
+          return;
+        }
+
+        if (stage === 'auth') {
+          if (message?.type !== 'auth') return fail('expected_auth', CloseCode.protocolError);
+          if (!pairing.verifyClientProof('ws', port!, serverNonce, message.payload.proof)) {
+            return fail('invalid_proof', CloseCode.unauthorized);
           }
-          authed = true;
+          clearTimeout(authTimer);
+          stage = 'authed';
           sessions.add(socket);
           resetIdle();
           send(serverMessage(randomUUID(), 'auth_ok', {}));

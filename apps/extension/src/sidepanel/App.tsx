@@ -144,15 +144,31 @@ function Body({ status }: { status: ConnectionStatus }) {
               ? 'The Bridge app refused the connection.'
               : 'Open the Bridge app on this computer to connect.'}
           </p>
-          <p className="hint">Bridge keeps trying in the background.</p>
-          <button
-            type="button"
-            className="btn action"
-            disabled={busy}
-            onClick={() => act({ type: 'retry' })}
-          >
-            Try again
-          </button>
+          <p className="hint">
+            {status === 'error'
+              ? 'If you unpaired in the app, unpair here too and pair again.'
+              : 'Bridge keeps trying in the background.'}
+          </p>
+          <div className="actions">
+            <button
+              type="button"
+              className="btn"
+              disabled={busy}
+              onClick={() => act({ type: 'retry' })}
+            >
+              Try again
+            </button>
+            {status === 'error' && (
+              <button
+                type="button"
+                className="btn btn-danger"
+                disabled={busy}
+                onClick={() => act({ type: 'unpair' })}
+              >
+                Unpair
+              </button>
+            )}
+          </div>
         </section>
       );
   }
