@@ -4,7 +4,13 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { parseChat } from '@bridge/shared';
 import { messageToText } from './adapter';
-import { assistantMessages, checkLayout, isMessageComplete, messageIdOf } from './selectors';
+import {
+  assistantMessages,
+  checkLayout,
+  isMessageComplete,
+  messageIdOf,
+  userMessageCount
+} from './selectors';
 
 const FIXTURES = join(__dirname, '../../../fixtures/chatgpt');
 
@@ -134,5 +140,40 @@ describe('checkLayout', () => {
       .querySelectorAll('[data-message-author-role]')
       .forEach((m) => m.removeAttribute('data-message-author-role'));
     expect(checkLayout()).toBe('unknown');
+  });
+});
+
+describe('the newer layout (DIL renderer)', () => {
+  it('finds assistant replies, their ids, and which have finished', () => {
+    load('dil-renderer.html');
+    const messages = assistantMessages(document);
+    expect(messages).toHaveLength(2);
+    expect(messageIdOf(messages[0]!, 0)).toBe('8bc7f95c-33b4-40f6-986b-c80e20711fac');
+    expect(messageIdOf(messages[1]!, 1)).toBe('9cd8a06d-44c5-41a7-a97c-d91e21822fbd');
+    expect(isMessageComplete(messages[0]!)).toBe(true);
+    expect(isMessageComplete(messages[1]!)).toBe(false);
+  });
+
+  it('reads FILE, READ and RUN markers, and a code block without <pre>', () => {
+    load('dil-renderer.html');
+    const { edits, reads, runs, codeBlocks } = parseOnly();
+    expect(edits).toEqual([
+      {
+        path: 'src/App.tsx',
+        content: 'export default function App() {\n  return <h1>Hello Bridge</h1>;\n}\n',
+        suspectedPartial: false,
+        fence: 0
+      }
+    ]);
+    expect(reads).toEqual(['package.json']);
+    expect(runs).toEqual(['npm run build']);
+    // The card goes after the code block's top-level block, inside the message body.
+    expect(codeBlocks[0]?.getAttribute('data-markdown-copy')).toBe('contents');
+  });
+
+  it('counts user turns, never parses them, and reads the layout as ok', () => {
+    load('dil-renderer.html');
+    expect(userMessageCount()).toBe(1);
+    expect(checkLayout()).toBe('ok');
   });
 });

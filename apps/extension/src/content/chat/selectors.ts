@@ -1,32 +1,55 @@
 // Every assumption about chatgpt.com's markup lives here. The page changes without notice,
 // so each lookup has fallbacks, and `checkLayout` reports when the key ones stop matching.
+//
+// Two layouts are known. The newer one (seen October 2026, "DIL" renderer) marks turns with
+// `data-turn-key`, messages with `data-chatgpt-search-unit-key="…:assistant"`, the body with
+// `data-markdown-text-style="assistant-message"` and a finished turn with
+// `data-talvt-turn-state="complete"`. The older one used `data-message-author-role`,
+// `article[data-testid^="conversation-turn-"]` and `.markdown`. Fixtures for both are in
+// fixtures/chatgpt.
 
 export const SELECTORS = {
   /** Wraps every turn. Observed for changes. */
   conversation: ['main', '[role="main"]'],
   /** One assistant message. Only these are parsed, never user messages. */
-  assistantMessage: ['[data-message-author-role="assistant"]'],
+  assistantMessage: [
+    '[data-message-author-role="assistant"]',
+    '[data-chatgpt-search-unit-key$=":assistant"]'
+  ],
   /** Any message, to tell "no messages yet" from "can't find messages". */
-  anyMessage: ['[data-message-author-role]'],
+  anyMessage: ['[data-message-author-role]', '[data-chatgpt-search-unit-key]'],
   /** One user message. Full auto counts these to see that its send went through. */
-  userMessage: ['[data-message-author-role="user"]'],
+  userMessage: [
+    '[data-message-author-role="user"]',
+    '[data-user-message-bubble]',
+    '[data-chatgpt-search-unit-key$=":user"]'
+  ],
   /** One turn (a user or assistant message plus its action buttons). */
   turn: [
+    '[data-turn-key]',
     'article[data-testid^="conversation-turn-"]',
     '[data-testid^="conversation-turn-"]',
     'article'
   ],
   /** The rendered markdown inside a message. */
-  markdown: ['.markdown', '[class*="markdown"]'],
+  markdown: ['[data-markdown-text-style="assistant-message"]', '.markdown', '[class*="markdown"]'],
   /** Present on a message while it streams. */
   streaming: ['.result-streaming', '[data-is-streaming="true"]', '.streaming-animation'],
   /** The page's stop button, shown while any reply streams. */
-  stopButton: ['[data-testid="stop-button"]', 'button[aria-label="Stop streaming"]'],
-  /** Copy / thumbs buttons under a finished reply. */
+  stopButton: [
+    '[data-testid="stop-button"]',
+    'button[aria-label="Stop streaming"]',
+    'button[aria-label="Stop generating"]',
+    'button[aria-label="Stop response"]'
+  ],
+  /** Copy / thumbs / regenerate buttons under a finished reply. */
   turnActions: [
     '[data-testid="copy-turn-action-button"]',
     '[data-testid="good-response-turn-action-button"]',
     '[data-testid="voice-play-turn-action-button"]',
+    'button[aria-label="Regenerate response"]',
+    'button[aria-label="Rate response"]',
+    'button[aria-label="Read aloud"]',
     'button[aria-label="Copy"]'
   ],
   /** The ProseMirror composer, or the older textarea. */
@@ -42,6 +65,9 @@ export const SELECTORS = {
     '[data-testid="send-button"]',
     'button#composer-submit-button',
     'button[aria-label="Send prompt"]',
+    'button[aria-label="Send message"]',
+    'button[aria-label="Send"]',
+    '[data-composer-layout] button[aria-label^="Send"]',
     'form button[type="submit"]'
   ],
   /**
@@ -64,6 +90,10 @@ export const ERROR_TEXT =
 
 /** The message element's own id attribute. Falls back to the position on the page. */
 export const MESSAGE_ID_ATTRIBUTE = 'data-message-id';
+/** Where the newer layout keeps the id: on the message's inner block. */
+const NESTED_ID_ATTRIBUTES = ['data-chatgpt-selection-message-id', 'data-dil-message-id'];
+/** The newer layout's turn state: `complete` once a reply has finished. */
+export const TURN_STATE_ATTRIBUTE = 'data-talvt-turn-state';
 
 /** Marks Bridge's own injected hosts so the adapter and observer skip them. */
 export const BRIDGE_HOST_ATTRIBUTE = 'data-bridge-host';
@@ -107,8 +137,15 @@ export function assistantMessages(root: ParentNode): Element[] {
 
 /** The message's id, or its position among assistant messages if it has none. */
 export function messageIdOf(message: Element, index: number): string {
-  const id = message.getAttribute(MESSAGE_ID_ATTRIBUTE);
-  return id && /^[\w-]{1,128}$/.test(id) ? id : `pos-${index}`;
+  const valid = (id: string | null | undefined): id is string =>
+    typeof id === 'string' && /^[\w-]{1,128}$/.test(id);
+  const own = message.getAttribute(MESSAGE_ID_ATTRIBUTE);
+  if (valid(own)) return own;
+  for (const attribute of NESTED_ID_ATTRIBUTES) {
+    const nested = message.querySelector(`[${attribute}]`)?.getAttribute(attribute);
+    if (valid(nested)) return nested;
+  }
+  return `pos-${index}`;
 }
 
 /** The element to walk for a message's text: its markdown body, or the message itself. */
@@ -123,6 +160,9 @@ export function messageBody(message: Element): Element {
  */
 export function isMessageComplete(message: Element, doc: Document = document): boolean {
   if (closest(message, SELECTORS.streaming) || first(message, SELECTORS.streaming)) return false;
+  // The newer layout says so outright on the turn.
+  const state = message.closest(`[${TURN_STATE_ATTRIBUTE}]`)?.getAttribute(TURN_STATE_ATTRIBUTE);
+  if (state) return state === 'complete';
   const turn = closest(message, SELECTORS.turn);
   if (turn && first(turn, SELECTORS.turnActions)) return true;
   if (first(doc, SELECTORS.turnActions)) return false;

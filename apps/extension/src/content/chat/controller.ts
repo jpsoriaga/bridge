@@ -228,6 +228,21 @@ export class ChatController {
           .split('\n')
           .filter((line) => line.includes('@@'))
           .slice(0, 10),
+        body: describe(messageBody(last)),
+        codeBlocks: [...last.querySelectorAll('pre, code')]
+          .filter((el) => el.tagName === 'PRE' || (el.textContent ?? '').includes('\n'))
+          .slice(0, 5)
+          .map((el) => {
+            const chain: string[] = [];
+            for (
+              let p: Element | null = el;
+              p && p !== last && chain.length < 6;
+              p = p.parentElement
+            ) {
+              chain.push(shapeOf(p));
+            }
+            return { lines: (el.textContent ?? '').split('\n').length, chain };
+          }),
         parsed: {
           edits: parsed.edits.map((e) => e.path),
           reads: parsed.reads,
