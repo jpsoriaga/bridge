@@ -154,7 +154,7 @@ describe('the newer layout (DIL renderer)', () => {
     expect(isMessageComplete(messages[1]!)).toBe(false);
   });
 
-  it('reads FILE, READ and RUN markers, and a code block without <pre>', () => {
+  it('reads FILE, READ and RUN markers, skipping the code block header', () => {
     load('dil-renderer.html');
     const { edits, reads, runs, codeBlocks } = parseOnly();
     expect(edits).toEqual([
@@ -167,8 +167,8 @@ describe('the newer layout (DIL renderer)', () => {
     ]);
     expect(reads).toEqual(['package.json']);
     expect(runs).toEqual(['npm run build']);
-    // The card goes after the code block's top-level block, inside the message body.
-    expect(codeBlocks[0]?.getAttribute('data-markdown-copy')).toBe('contents');
+    // The card goes after the whole code block, not inside its scrolling viewer.
+    expect(codeBlocks[0]?.getAttribute('data-code-block')).toBe('true');
   });
 
   it('counts user turns, never parses them, and reads the layout as ok', () => {

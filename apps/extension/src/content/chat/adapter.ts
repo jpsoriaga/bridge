@@ -5,8 +5,8 @@ export interface MessageText {
   /** The message as markdown-ish text, ready for `parseChat`. */
   text: string;
   /**
-   * Every code block in order: each `<pre>`, or for a block rendered without one, the
-   * top-level block holding its multi-line `<code>`. `ParsedEdit.fence` indexes into this.
+   * Every code block in order, where its card goes: the layout's code block wrapper
+   * (`[data-code-block]`) if it has one, else the `<pre>`. `ParsedEdit.fence` indexes into this.
    */
   codeBlocks: Element[];
 }
@@ -38,6 +38,11 @@ const BLOCK = new Set([
   'summary',
   'figure'
 ]);
+
+/** Marks what the page's own Copy leaves out (`exclude`): headers, buttons. */
+const COPY_ATTRIBUTE = 'data-markdown-copy';
+/** The newer layout's code block wrapper, around its header and its `<pre>`. */
+const CODE_BLOCK = '[data-code-block]';
 
 /** A line of prose that would read as a fence. Escaped so only real code blocks count. */
 const FENCE_LIKE = /^\s*(?:`{3,}|~{3,})/;
@@ -95,36 +100,7 @@ function codeBlock(pre: Element): string[] {
     : [fence + language, ...content.split('\n'), fence];
 }
 
-function codeText(code: Element): string[] {
-  let content = code.textContent ?? '';
-  if (content.endsWith('\n')) content = content.slice(0, -1);
-  const language = /(?:^|\s)language-([\w+#.-]{1,32})/.exec(code.className)?.[1] ?? '';
-  const fence = pickFence(content);
-  return [fence + language, ...content.split('\n'), fence];
-}
-
-/** Longest label text that may sit beside a code block's <code> (language, Copy). */
-const CODE_LABEL_CHARS = 40;
-
-/** `block`'s only multi-line <code>, if everything else in it is a short label. */
-function soleCodeBlock(block: Element): Element | null {
-  if (block.querySelector('pre')) return null;
-  const codes = [...block.querySelectorAll('code')].filter((c) =>
-    (c.textContent ?? '').includes('\n')
-  );
-  if (codes.length !== 1) return null;
-  const rest = (block.textContent ?? '').replace(codes[0]!.textContent ?? '', '');
-  return rest.trim().length <= CODE_LABEL_CHARS && !rest.includes('@@') ? codes[0]! : null;
-}
-
-/** The ancestor of `node` that sits directly in `root`: where a card goes after it. */
-function topBlock(node: Element, root: Element): Element {
-  let el = node;
-  while (el.parentElement && el.parentElement !== root) el = el.parentElement;
-  return el.parentElement === root ? el : node;
-}
-
-function walk(node: Node, out: Writer, codeBlocks: Element[], root: Element): void {
+function walk(node: Node, out: Writer, codeBlocks: Element[]): void {
   if (node.nodeType === Node.TEXT_NODE) {
     out.text(node.textContent ?? '');
     return;
@@ -132,23 +108,21 @@ function walk(node: Node, out: Writer, codeBlocks: Element[], root: Element): vo
   if (!(node instanceof Element)) return;
   const tag = node.localName;
   if (SKIP.has(tag) || node.hasAttribute(BRIDGE_HOST_ATTRIBUTE)) return;
+  // The page's own chrome inside a message (a code block's "TypeScript" header and
+  // buttons), which its Copy leaves out too. Read, it would split a marker from its fence.
+  if (node.getAttribute(COPY_ATTRIBUTE) === 'exclude') return;
 
-  const children = () => node.childNodes.forEach((child) => walk(child, out, codeBlocks, root));
+  const children = () => node.childNodes.forEach((child) => walk(child, out, codeBlocks));
   switch (tag) {
     case 'pre':
-      codeBlocks.push(node);
+      // The card goes after the whole code block, not inside its scrolling viewer.
+      codeBlocks.push(node.closest(CODE_BLOCK) ?? node);
       out.raw(codeBlock(node));
       return;
     case 'br':
       out.newline();
       return;
     case 'code':
-      // A code block some layouts render without <pre>: it spans lines.
-      if ((node.textContent ?? '').includes('\n')) {
-        codeBlocks.push(topBlock(node, root));
-        out.raw(codeText(node));
-        return;
-      }
       // Inline code. Kept in backticks so the parser sees `@@FILE path@@` as written.
       out.text(`\`${node.textContent ?? ''}\``);
       return;
@@ -179,14 +153,6 @@ function walk(node: Node, out: Writer, codeBlocks: Element[], root: Element): vo
       return;
   }
   if (BLOCK.has(tag)) {
-    // A code block without <pre>: a block holding one multi-line <code> and a short label
-    // ("tsx", "Copy") next to it. Read the code only, as a <pre> would be.
-    const code = node === root ? null : soleCodeBlock(node);
-    if (code) {
-      codeBlocks.push(topBlock(node, root));
-      out.raw(codeText(code));
-      return;
-    }
     out.block();
     children();
     out.block();
@@ -203,7 +169,6 @@ function walk(node: Node, out: Writer, codeBlocks: Element[], root: Element): vo
 export function messageToText(message: Element): MessageText {
   const out = new Writer();
   const codeBlocks: Element[] = [];
-  const body = messageBody(message);
-  walk(body, out, codeBlocks, body);
+  walk(messageBody(message), out, codeBlocks);
   return { text: out.done(), codeBlocks };
 }
