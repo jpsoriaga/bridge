@@ -17,6 +17,8 @@ import { Logo } from './Logo';
 import { request } from './request';
 import { SessionSection } from './SessionSection';
 
+const NO_CHAT: ChatPanelState = { tab: null, session: null };
+
 const STATUS_LABELS: Record<ConnectionStatus, string> = {
   'app-not-running': 'App not running',
   'not-paired': 'Not paired',
@@ -227,7 +229,14 @@ export function App() {
       </header>
 
       <main className="panel-body">
-        {update && <Body status={update.status} project={update.project} chat={update.chat} />}
+        {update && (
+          <Body
+            status={update.status}
+            project={update.project}
+            // A worker from an older build sends no chat state. Show "no chat" instead of crashing.
+            chat={update.chat ?? NO_CHAT}
+          />
+        )}
       </main>
     </div>
   );
