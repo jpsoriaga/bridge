@@ -1,27 +1,32 @@
 {
-  "name": "bridge-monorepo",
+  "name": "bridge",
   "version": "0.1.0",
   "private": true,
-  "description": "Production monorepo for Bridge — Desktop Electron App and Chrome Extension with Shared TypeScript Package",
+  "type": "module",
+  "description": "Lets a chat in the browser propose file edits that a local desktop app applies to your project.",
   "scripts": {
-    "dev": "pnpm --filter @bridge/desktop dev",
-    "dev:desktop": "pnpm --filter @bridge/desktop dev",
-    "dev:extension": "pnpm --filter @bridge/extension dev",
-    "build": "pnpm --filter @bridge/shared build && pnpm --filter @bridge/desktop build && pnpm --filter @bridge/extension build",
-    "build:shared": "pnpm --filter @bridge/shared build",
-    "build:desktop": "pnpm --filter @bridge/desktop build",
-    "build:extension": "pnpm --filter @bridge/extension build",
-    "typecheck": "pnpm -r run typecheck",
+    "dev": "pnpm --parallel --filter @bridge/desktop --filter @bridge/extension dev",
+    "build": "pnpm -r build",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
     "package:mac": "pnpm --filter @bridge/desktop package:mac",
-    "package:win": "pnpm --filter @bridge/desktop package:win",
-    "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/*/dist apps/*/out packages/*/dist"
+    "package:win": "pnpm --filter @bridge/desktop package:win"
   },
   "packageManager": "pnpm@9.15.4",
   "engines": {
-    "node": ">=20.0.0",
-    "pnpm": ">=9.0.0"
+    "node": ">=24.0.0",
+    "pnpm": ">=9.15.4"
   },
   "devDependencies": {
-    "typescript": "^5.7.3"
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.13.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.13.0",
+    "prettier": "^3.9.10",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.71.2"
   }
 }

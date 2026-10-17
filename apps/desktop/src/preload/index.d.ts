@@ -1,8 +1,8 @@
-import type { BridgeElectronApi } from './index';
+import type { BridgeApi } from './api';
 
 declare global {
   interface Window {
-    bridgeApi: BridgeElectronApi;
+    bridge: BridgeApi;
   }
 }
 

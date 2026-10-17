@@ -6,6 +6,7 @@ node_modules/
 dist/
 out/
 build/
+release/
 .crx/
 
 # Logs
@@ -16,9 +17,7 @@ pnpm-debug.log*
 *.log
 
 # Environment and secrets
-.env
-.env.local
-.env.*.local
+.env*
 *.pem
 *.key
 pairing-secret.json

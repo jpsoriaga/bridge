@@ -1,104 +1,103 @@
 # Bridge
 
-> Production-grade developer tool for synchronizing AI-generated code blocks directly into local workspaces with zero friction and strict security.
+<img src="packages/shared/assets/logo.svg" width="48" alt="" />
 
----
+Bridge lets the ChatGPT web chat edit a project on your computer. The chat writes whole files in a simple `@@FILE` format. Bridge shows each one as a diff card right in the conversation and writes it to your project when you say so, or automatically with undo.
 
-## Overview
+It runs entirely on your machine. The desktop app listens only on `127.0.0.1`, and nothing is sent anywhere else.
 
-**Bridge** connects your browser AI conversations (ChatGPT, Claude, Gemini, etc.) directly to your local codebase. It eliminates manual copying, pasting, and saving of multiple files by parsing structured `@@FILE` change blocks and securely relaying them to a companion desktop application.
+> **Status:** Phase 1 of 8 (monorepo setup) is done. The apps start and share code, but they don't talk to each other yet. See [CHECKLIST.md](CHECKLIST.md).
 
-### Key Highlights
-- **Production Monorepo**: Managed with `pnpm` workspaces, strict TypeScript configurations, and shared schemas.
-- **Hardened Electron Desktop**: Isolated main process, context-isolated preload script, and Fastify server strictly bound to loopback `127.0.0.1`.
-- **Manifest V3 Chrome Extension**: Built with React and CRXJS, keeping permissions minimal and delegating all filesystem writes to the desktop app.
-- **Security-First Architecture**: Path traversal prevention, symlink escape checks, timing-safe token authentication, and command execution allowlisting.
-- **Rollback / Undo Support**: Automatic state preservation enabling one-click transaction rollbacks.
+## How it works
 
----
-
-## Monorepo Architecture
-
-```text
-bridge/
-├── apps/
-│   ├── desktop/      # Electron + React + Vite + Fastify Desktop App
-│   └── extension/    # Chrome Extension (Manifest V3 + React + CRXJS)
-├── packages/
-│   └── shared/       # Shared Parser, Protocol, Zod Schemas & Types
-├── docs/             # Technical Architecture, Protocol, and Security Docs
-└── scripts/          # Automated verification and build utilities
+```
+chatgpt.com ──▶ Chrome extension ──WebSocket (127.0.0.1)──▶ Bridge desktop ──▶ your project
+  @@FILE blocks   parses, shows diff cards                    sandboxed writes, undo,
+                  side panel                                  allowlisted commands
 ```
 
----
+1. The chat replies with one or more blocks like:
 
-## Prerequisites
-
-- **Node.js**: `v20.0.0` or higher (`v24.x` recommended)
-- **pnpm**: `v9.0.0` or higher (via Corepack)
-- **Google Chrome** (or Chromium-based browser)
-
----
-
-## Quick Start
-
-### 1. Enable pnpm and Install Dependencies
-```bash
-# Enable pnpm via corepack if not already installed
-corepack enable
-
-# Install workspace dependencies
-pnpm install
-```
-
-### 2. Verify TypeScript and Builds
-```bash
-# Typecheck all packages
-pnpm run typecheck
-
-# Build all packages and applications
-pnpm run build
-```
-
----
-
-## Development Commands
-
-| Command | Description |
-| :--- | :--- |
-| `pnpm run dev` | Starts the Desktop Electron application in development mode with HMR |
-| `pnpm run dev:desktop` | Alias for `pnpm run dev` |
-| `pnpm run dev:extension` | Starts the Chrome extension Vite build with CRXJS hot-reloading |
-| `pnpm run typecheck` | Typechecks shared package, desktop main/renderer, and extension |
-| `pnpm run build` | Compiles `@bridge/shared`, builds desktop app, and bundles extension |
-| `pnpm run package:mac` | Packages desktop application into a macOS `.dmg` installer |
-| `pnpm run package:win` | Packages desktop application into a Windows `.exe` installer |
-| `./scripts/verify.sh` | Local verification script checking typechecking and builds |
-
----
-
-## Loading the Extension into Chrome
-
-1. Build or run the extension in dev mode:
-   ```bash
-   pnpm run build:extension
-   # or for live development:
-   pnpm run dev:extension
+   ````
+   @@FILE src/hooks/useTheme.js@@
+   ```js
+   ...full file...
    ```
-2. Navigate to `chrome://extensions/` in Google Chrome.
-3. Enable **Developer mode** (toggle in upper right).
-4. Click **Load unpacked** and select `apps/extension/dist/`.
-5. Open the Extension Options and pair with Bridge Desktop.
+   ````
 
----
+2. The extension parses them with the shared parser and shows a diff card under the message.
+3. The desktop app checks each path against the project sandbox and writes the file. Every write can be undone.
+4. Three modes control how much happens automatically: **Manual**, **Auto-apply** and **Full auto**.
 
-## Documentation
+[PLAN.md](PLAN.md) has the full architecture and security model.
 
-Comprehensive architectural and engineering documentation is available in the [`docs/`](./docs/README.md) directory:
+## Requirements
 
-- [Architecture Overview](./docs/ARCHITECTURE.md) — End-to-end data flow, trust boundaries, and component roles.
-- [Folder Structure & Conventions](./docs/FOLDER-STRUCTURE.md) — Code placement rules, import boundaries, and naming standards.
-- [Development Guide](./docs/DEVELOPMENT.md) — Setup details, dependency management, and troubleshooting.
-- [Security Architecture](./docs/SECURITY.md) — Threat model, loopback restrictions, path traversal defenses, and command allowlisting.
-- [Communication Protocol](./docs/COMMUNICATION-PROTOCOL.md) — Envelope structure, versioning, and API endpoints.
-- [Packaging & Distribution](./docs/PACKAGING.md) — macOS DMG and Windows NSIS installer creation with code signing notes.
+- Node.js 24 LTS (`nvm use` reads `.nvmrc`)
+- pnpm 9.15.4 (`corepack enable` picks it up from `packageManager`)
+- Google Chrome or another Chromium browser with side-panel support
+- macOS, Windows or Linux
+
+## Setup
+
+```bash
+corepack enable
+pnpm install
+pnpm dev
+```
+
+`pnpm dev` starts the Electron app (with hot reload) and rebuilds the extension into `apps/extension/dist` on every change.
+
+## Load the extension
+
+1. Run `pnpm dev` or `pnpm build` so that `apps/extension/dist` exists.
+2. Open `chrome://extensions` and turn on **Developer mode**.
+3. Click **Load unpacked** and choose **`apps/extension/dist`**.
+4. Open https://chatgpt.com. The DevTools console shows `[Bridge] content script loaded`.
+5. Click the Bridge toolbar icon to open the side panel.
+
+During `pnpm dev`, the content script and side panel rebuild automatically. Click the reload icon on the extension's card in `chrome://extensions` and refresh the chatgpt.com tab to pick up changes.
+
+## Project structure
+
+```
+apps/
+  desktop/          Electron app (electron-vite)
+    src/main/       main process: window, security settings
+    src/preload/    contextBridge API (window.bridge)
+    src/renderer/   React UI
+    resources/      app icon, macOS entitlements
+  extension/        Chrome MV3 extension (CRXJS + Vite)
+    manifest.config.ts
+    src/content/    runs on chatgpt.com
+    src/background/ service worker
+    src/sidepanel/  React side panel
+packages/
+  shared/           @bridge/shared: types, @@FILE parser, logo, design tokens
+archive/prototype/  earlier server/pairing prototype, kept for reference (not built)
+```
+
+## Scripts
+
+| Command             | What it does                                        |
+| ------------------- | --------------------------------------------------- |
+| `pnpm dev`          | Desktop app with hot reload + extension watch build |
+| `pnpm build`        | Production build of both apps                       |
+| `pnpm lint`         | ESLint over the whole repo                          |
+| `pnpm format`       | Prettier write                                      |
+| `pnpm format:check` | Prettier check (CI)                                 |
+| `pnpm typecheck`    | `tsc --noEmit` in every package                     |
+| `pnpm test`         | Vitest (shared parser)                              |
+| `pnpm package:mac`  | Build a macOS dmg/zip with electron-builder         |
+| `pnpm package:win`  | Build a Windows installer with electron-builder     |
+
+## Troubleshooting
+
+- **`Cannot read properties of undefined (reading 'whenReady')` on `pnpm dev`**: your shell has `ELECTRON_RUN_AS_NODE=1` set. Some editor-integrated tools set it, so Electron starts as plain Node. Run `unset ELECTRON_RUN_AS_NODE` first.
+
+## Docs
+
+- [PLAN.md](PLAN.md): architecture, modes, security model, phases
+- [CHECKLIST.md](CHECKLIST.md): task-level progress
+- [DESIGN.md](DESIGN.md): design tokens and component specs
+- [CLAUDE.md](CLAUDE.md): working rules for AI coding sessions
