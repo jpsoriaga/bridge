@@ -165,7 +165,7 @@ Geist Mono 13px with one row per entry (~25px tall) and a 16px indent per level.
 
 ### Logo
 
-The mark is a suspension bridge (two towers, a deck and a cable) drawn in white strokes on a rounded ink tile. The geometry is on a 32-unit grid, with a 7.5 corner radius and 2.25 stroke width.
+The mark is a plus and a minus set on a diagonal, the two sides of a diff, drawn in white strokes on a rounded ink tile. It stands for what Bridge does: the chat proposes changes and you review them before they land. The geometry is on a 32-unit grid, with a 7.5 corner radius and 3.5 stroke width.
 
 - Source: [`packages/shared/assets/logo.svg`](packages/shared/assets/logo.svg). React components draw it from `LOGO_MARK` in `@bridge/shared`, so the tile uses `--inverse-bg` and the strokes `--inverse-fg`. It inverts in dark mode.
 - Sizes: 24px in bars, 16px minimum. Don't add a wordmark inside the tile, change its colours, or put it on a coloured background.
