@@ -25,6 +25,12 @@ const USER_ENV = {
   OPENAI_ORG: 'org',
   ELECTRON_RUN_AS_NODE: '1',
   CI: 'false',
+  npm_config_auto_install_peers: 'true',
+  npm_lifecycle_event: 'dev',
+  npm_package_name: 'bridge',
+  INIT_CWD: '/Users/me/bridge',
+  PNPM_SCRIPT_SRC_DIR: '/Users/me/bridge',
+  NPM_CONFIG_REGISTRY: 'https://registry.example.com/',
   force_color: '3',
   '=C:': 'C:\\work',
   UNSET: undefined
@@ -65,6 +71,19 @@ describe('filterEnv', () => {
     'UNSET'
   ])('drops %s', (name) => {
     expect(env).not.toHaveProperty(name);
+  });
+
+  it('drops what the launching package manager set, and keeps the user’s npm config', () => {
+    for (const name of [
+      'npm_config_auto_install_peers',
+      'npm_lifecycle_event',
+      'npm_package_name',
+      'INIT_CWD',
+      'PNPM_SCRIPT_SRC_DIR'
+    ]) {
+      expect(env).not.toHaveProperty(name);
+    }
+    expect(env.NPM_CONFIG_REGISTRY).toBe('https://registry.example.com/');
   });
 
   it('sets CI=1 and FORCE_COLOR=0, replacing any spelling of them', () => {

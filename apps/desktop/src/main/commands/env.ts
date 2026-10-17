@@ -15,6 +15,14 @@ export const DEFAULT_ENV_DENYLIST: readonly string[] = [
   'ELECTRON_RUN_AS_NODE'
 ];
 
+/**
+ * Set by the package manager that launched Bridge (`pnpm dev`), describing that run, not
+ * the user's setup: npm prints a warning for each `npm_config_*` it doesn't know. Matched
+ * with case, so a user's own `NPM_CONFIG_REGISTRY` stays.
+ */
+const LAUNCHER_ENV = (name: string) =>
+  name.startsWith('npm_') || name === 'INIT_CWD' || name === 'PNPM_SCRIPT_SRC_DIR';
+
 /** Always set for commands: non-interactive, and no colour codes to strip. */
 export const FORCED_ENV: Readonly<Record<string, string>> = { CI: '1', FORCE_COLOR: '0' };
 
@@ -45,7 +53,7 @@ export function filterEnv(
   for (const [name, value] of Object.entries(env)) {
     if (value === undefined) continue;
     // Windows has env names like "=C:" for per-drive folders. Keep them out too.
-    if (name.startsWith('=') || deny.some((re) => re.test(name))) continue;
+    if (name.startsWith('=') || LAUNCHER_ENV(name) || deny.some((re) => re.test(name))) continue;
     out[name] = value;
   }
   // Windows env names ignore case: drop any spelling of the forced names first.

@@ -16,6 +16,8 @@ import type { InsertResult } from '../../messages';
 
 /** How long a sent message has to show up as a new user turn. */
 export const SEND_CONFIRM_MS = 10_000;
+/** How long the send button may take to appear after the text goes in. */
+export const SEND_BUTTON_WAIT_MS = 5_000;
 const SEND_POLL_MS = 250;
 
 /** The chat page, as the loop sees it. `page.ts` has the real one; tests use a fake. */
@@ -399,8 +401,8 @@ export class FullAutoLoop {
         }
       }
       step.sentFrom = before;
-      if (!page.submit()) {
-        this.pause('send-failed');
+      if (!(await this.pressSend(stale))) {
+        if (!stale()) this.pause('send-failed');
         return;
       }
       this.lastSendAt = this.deps.now();
@@ -411,8 +413,8 @@ export class FullAutoLoop {
         this.pause('send-failed');
         return;
       }
-      if (!page.submit()) {
-        this.pause('send-failed');
+      if (!(await this.pressSend(stale))) {
+        if (!stale()) this.pause('send-failed');
         return;
       }
       this.lastSendAt = this.deps.now();
@@ -434,6 +436,19 @@ export class FullAutoLoop {
       kind: 'sent',
       text: `Sent message ${this.step} of ${this.limit}.`
     });
+  }
+
+  /**
+   * Clicks send, waiting for the button: the page shows (or enables) it only once it has
+   * rendered the text just inserted, so it may not be there yet.
+   */
+  private async pressSend(stale: () => boolean): Promise<boolean> {
+    const deadline = this.deps.now() + SEND_BUTTON_WAIT_MS;
+    while (!this.deps.page.submit()) {
+      if (stale() || this.deps.now() >= deadline) return false;
+      await this.deps.sleep(SEND_POLL_MS);
+    }
+    return true;
   }
 
   private pause(reason: PauseReason): void {

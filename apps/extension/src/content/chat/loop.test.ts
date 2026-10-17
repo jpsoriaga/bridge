@@ -42,6 +42,8 @@ function fakePage() {
     sent: [] as string[],
     sendWorks: true,
     hasButton: true,
+    /** submit() calls that find no button yet, like the real page right after a paste. */
+    buttonLate: 0,
     banner: null as string | null,
     insertWorks: true
   };
@@ -56,6 +58,10 @@ function fakePage() {
     },
     submit: () => {
       if (!page.hasButton) return false;
+      if (page.buttonLate > 0) {
+        page.buttonLate -= 1;
+        return false;
+      }
       if (page.sendWorks) {
         page.sent.push(page.composer);
         page.composer = '';
@@ -456,6 +462,16 @@ describe('FullAutoLoop', () => {
     // Inserted once, sent once: no duplicate text.
     expect(t.page.sent).toHaveLength(1);
     expect(t.page.sent[0]!.match(/Output of/g)).toHaveLength(1);
+  });
+
+  it('waits for a send button that appears a moment after the text goes in', async () => {
+    const t = setup();
+    t.page.buttonLate = 3;
+    t.loop.onReply(reply({ runs: [{ command: 'pnpm test' }] }).actions);
+    await settle();
+    expect(t.loop.state).toBe('waiting-reply');
+    expect(t.page.sent).toHaveLength(1);
+    expect(t.page.buttonLate).toBe(0);
   });
 
   it('pauses when there is no send button or the composer refuses the text', async () => {
