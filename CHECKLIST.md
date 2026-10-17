@@ -33,19 +33,27 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 
 ## Phase 2: Local server and pairing
 
-- [ ] Protocol envelope `{v, id, type, payload}` plus message types in `@bridge/shared`
-- [ ] zod schemas for every message, with tests for valid and invalid payloads
-- [ ] WebSocket server in main, bound to `127.0.0.1` with a default port and a fallback range
-- [ ] Reject connections whose `Origin` isn't `chrome-extension://<id>`
-- [ ] Message size cap and per-connection rate limit
-- [ ] Pairing: desktop shows a one-time code, which is exchanged for a token. Token stored hashed on the desktop
-- [ ] Revoke pairing from the desktop. The open socket closes
-- [ ] Background worker connects, authenticates in the first message, and reconnects with backoff
-- [ ] Verify whether loopback WS needs `host_permissions`. Update the manifest and PLAN.md
-- [ ] Side panel: pairing-code entry, token in `chrome.storage.local`
-- [ ] Status pill live in desktop and side panel (connected, connecting, not connected, error)
-- [ ] Preload API grows by typed, validated methods only (`getStatus`, `onStatus`, `startPairing`, `revoke`)
-- [ ] Tests: server refuses a bad origin, a bad token and oversized messages
+- [x] Electron upgraded 34 → 44 (and electron-vite 2 → 6) before Phase 2 work, committed separately
+- [x] Protocol envelope `{v, id, type, payload}` plus message types in `@bridge/shared`
+- [x] zod schemas for every message (`auth`, `auth_ok`, `auth_error`, `ping`, `pong`, `status`, `error`), with tests for valid and invalid payloads
+- [x] Shared `ConnectionStatus` type: `app-not-running`, `not-paired`, `connecting`, `connected`, `error`
+- [x] Fastify + `@fastify/websocket` server in main, bound to `127.0.0.1`, default port 47821 with fallback to 47830. Active port saved in settings
+- [x] Reject any request whose `Host` isn't `127.0.0.1:<port>`
+- [x] Reject `/pair`, `/unpair` and `/ws` unless `Origin` is `chrome-extension://<id>` from `ALLOWED_EXTENSION_IDS`. Manifest `key` pins the dev ID
+- [x] `GET /health` returns only `{ name, version }`. No CORS headers. Logger off
+- [x] Body size cap, WebSocket frame cap and per-connection rate limit
+- [x] Pairing: 6-digit code, 2-minute expiry, single use, exchanged for a 32-byte token. Only the SHA-256 is stored, encrypted with `safeStorage` when available
+- [x] `/pair` locks for 60s after 5 wrong codes. Codes and tokens compared in constant time
+- [x] Unpair from the desktop or the extension revokes the token. The open socket closes. Pairing again replaces the old token
+- [x] Background worker connects, authenticates in the first message within 5s, pings every 20s, and reconnects with backoff (1s → 30s)
+- [x] Verify whether loopback needs `host_permissions`: HTTP does, WebSocket doesn't. Added `http://127.0.0.1/*` and documented it in PLAN.md
+- [x] Side panel: pairing-code entry, token in `chrome.storage.local`, Unpair, "Open the Bridge app" hint
+- [x] Status pill live in desktop and side panel
+- [x] Desktop: Pair extension with code and countdown, paired state, Unpair, server port under Settings
+- [x] Content script asks the worker for status and logs it. Nothing injected into chatgpt.com
+- [x] Preload API grows by typed methods only (`getStatus`, `onStatus`, `startPairing`, `unpair`), each on its own channel with a sender check
+- [x] Tests: wrong Host, wrong Origin, missing or invalid token, late auth, expired or reused code, rate limit, oversized messages, happy path, unpair revokes
+- [x] Tests: reconnect backoff timing (fake timers), connection manager, manifest permissions and key → ID
 
 ## Phase 3: Reading the chat
 

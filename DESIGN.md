@@ -86,17 +86,18 @@ Dark mode follows `prefers-color-scheme`. Components use only tokens and never r
 | Geist      | `@fontsource-variable/geist`      | All UI text                                                   |
 | Geist Mono | `@fontsource-variable/geist-mono` | File paths, diff bodies, commands, inline code, the file tree |
 
-| Role                  | Size | Weight  | Notes                             |
-| --------------------- | ---- | ------- | --------------------------------- |
-| Bar title / wordmark  | 16px | 600     | `letter-spacing: -0.01em`         |
-| Body, chat text       | 14px | 400     | line-height 1.5                   |
-| Button                | 13px | 500     | Primary button 600                |
-| Mode segment          | 13px | 500     | Active 600                        |
-| Path, diff, command   | 13px | 400     | Geist Mono, diff line-height 21px |
-| Label, meta, hint     | 12px | 400     | `--fg-muted`                      |
-| Status pill, counters | 12px | 400–500 |                                   |
+| Role                  | Size | Weight  | Notes                                  |
+| --------------------- | ---- | ------- | -------------------------------------- |
+| Bar title / wordmark  | 16px | 600     | `letter-spacing: -0.01em`              |
+| Body, chat text       | 14px | 400     | line-height 1.5                        |
+| Button                | 13px | 500     | Primary button 600                     |
+| Mode segment          | 13px | 500     | Active 600                             |
+| Path, diff, command   | 13px | 400     | Geist Mono, diff line-height 21px      |
+| Label, meta, hint     | 12px | 400     | `--fg-muted`                           |
+| Status pill, counters | 12px | 400–500 |                                        |
+| Pairing code          | 24px | 600     | Geist Mono, tabular, `0.08em` tracking |
 
-Tokens: `--text-xs` 12, `--text-sm` 13, `--text-base` 14, `--text-lg` 16.
+Tokens: `--text-xs` 12, `--text-sm` 13, `--text-base` 14, `--text-lg` 16, `--text-xl` 24 (pairing code only).
 
 ## Spacing, radii, borders, elevation
 
@@ -144,12 +145,27 @@ The track is `--bg-muted` with a 12px radius and 3px padding. It holds three equ
 
 An 8px dot followed by 12px `--fg-muted` text, with no background or border. The dot's tone comes from `data-tone`:
 
-| State         | Dot         | Text                 |
-| ------------- | ----------- | -------------------- |
-| Connected     | `success`   | "Connected"          |
-| Connecting    | `warning`   | "Connecting…"        |
-| Not connected | none (idle) | "Not connected"      |
-| Error         | `danger`    | "Can't reach Bridge" |
+States come from `ConnectionStatus` in `@bridge/shared`, and tones from `CONNECTION_STATUS_TONES`. Each app sets its own labels:
+
+| `ConnectionStatus` | Dot         | Side panel text      | Desktop text            |
+| ------------------ | ----------- | -------------------- | ----------------------- |
+| `connected`        | `success`   | "Connected"          | "Connected"             |
+| `connecting`       | `warning`   | "Connecting…"        | "Waiting for extension" |
+| `not-paired`       | none (idle) | "Not paired"         | "Not paired"            |
+| `app-not-running`  | none (idle) | "App not running"    | (not used)              |
+| `error`            | `danger`    | "Can't reach Bridge" | "Server error"          |
+
+### Text input (`.input`)
+
+40px tall, 12px horizontal padding, 1px `--border`, `--radius-md`, `--bg`. Hover uses `--border-strong`. Placeholder is `--fg-subtle`. `aria-invalid="true"` turns the border `--danger`. The pairing-code field is mono at 16px with tabular digits, followed by a primary `.btn-lg`.
+
+### Inline error (`.error-text`)
+
+12px `--danger` text under the field or section it belongs to, with `role="alert"`. It says what happened and what to do next ("Too many wrong codes. Wait 60s, then start a new code in the Bridge app."). It never shows raw error codes.
+
+### Pairing code
+
+On the desktop's Extension section: the six digits in Geist Mono 24px/600 with a space after the third digit, then a 12px muted hint with the countdown ("Expires in 1:52"). The code disappears as soon as it's used, expires, or is cancelled by the lockout.
 
 ### Activity log row
 

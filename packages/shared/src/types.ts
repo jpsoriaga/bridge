@@ -20,3 +20,27 @@ export const MODE_DESCRIPTIONS: Record<Mode, string> = {
   'auto-apply': 'Edits apply instantly. You can undo any change.',
   'full-auto': 'Edits apply and allowlisted commands run without asking.'
 };
+
+/** Connection between the extension and the desktop app, as either side reports it. */
+export type ConnectionStatus =
+  'app-not-running' | 'not-paired' | 'connecting' | 'connected' | 'error';
+
+export const CONNECTION_STATUSES: readonly ConnectionStatus[] = [
+  'app-not-running',
+  'not-paired',
+  'connecting',
+  'connected',
+  'error'
+];
+
+/** `data-tone` for the status pill dot. `undefined` is the idle grey. */
+export const CONNECTION_STATUS_TONES: Record<
+  ConnectionStatus,
+  'success' | 'warning' | 'danger' | undefined
+> = {
+  'app-not-running': undefined,
+  'not-paired': undefined,
+  connecting: 'warning',
+  connected: 'success',
+  error: 'danger'
+};

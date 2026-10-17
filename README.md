@@ -6,7 +6,7 @@ Bridge lets the ChatGPT web chat edit a project on your computer. The chat write
 
 It runs entirely on your machine. The desktop app listens only on `127.0.0.1`, and nothing is sent anywhere else.
 
-> **Status:** Phase 1 of 8 (monorepo setup) is done. The apps start and share code, but they don't talk to each other yet. See [CHECKLIST.md](CHECKLIST.md).
+> **Status:** Phase 2 of 8 (local server and pairing) is done. The extension pairs with the desktop app and stays connected, but neither reads the chat nor touches files yet. See [CHECKLIST.md](CHECKLIST.md).
 
 ## How it works
 
@@ -56,14 +56,31 @@ pnpm dev
 4. Open https://chatgpt.com. The DevTools console shows `[Bridge] content script loaded`.
 5. Click the Bridge toolbar icon to open the side panel.
 
+The manifest carries a fixed `key`, so the unpacked extension always gets the ID `golkpkmancgpgkpfjggoimedcogghhip`. The desktop app only accepts connections from that ID.
+
 During `pnpm dev`, the content script and side panel rebuild automatically. Click the reload icon on the extension's card in `chrome://extensions` and refresh the chatgpt.com tab to pick up changes.
+
+## Pair the extension
+
+You pair once. After that the extension reconnects on its own whenever both are running.
+
+1. Start the Bridge desktop app. Its status reads **Not paired**, and Settings shows the local server address (normally `127.0.0.1:47821`).
+2. Click **Pair extension**. The app shows a 6-digit code that works once and expires in 2 minutes.
+3. Open the Bridge side panel in Chrome (the toolbar icon), type the code and click **Pair**.
+4. Both status pills turn to **Connected**.
+
+To unpair, click **Unpair** in either the app or the side panel. That revokes the token, and the other side shows **Not paired**. Pairing again from the app also replaces the old token.
+
+After 5 wrong codes, pairing is locked for 60 seconds and the current code is cancelled. Start a new code once the lock ends.
+
+If the side panel says **App not running**, open the desktop app. The extension keeps retrying (up to every 30 seconds) and retries immediately when you open the side panel.
 
 ## Project structure
 
 ```
 apps/
   desktop/          Electron app (electron-vite)
-    src/main/       main process: window, security settings
+    src/main/       main process: window, local server, pairing
     src/preload/    contextBridge API (window.bridge)
     src/renderer/   React UI
     resources/      app icon, macOS entitlements
@@ -73,7 +90,7 @@ apps/
     src/background/ service worker
     src/sidepanel/  React side panel
 packages/
-  shared/           @bridge/shared: types, @@FILE parser, logo, design tokens
+  shared/           @bridge/shared: types, @@FILE parser, protocol schemas, logo, design tokens
 archive/prototype/  earlier server/pairing prototype, kept for reference (not built)
 ```
 
@@ -87,13 +104,15 @@ archive/prototype/  earlier server/pairing prototype, kept for reference (not bu
 | `pnpm format`       | Prettier write                                      |
 | `pnpm format:check` | Prettier check (CI)                                 |
 | `pnpm typecheck`    | `tsc --noEmit` in every package                     |
-| `pnpm test`         | Vitest (parser, window security, manifest)          |
+| `pnpm test`         | Vitest (parser, protocol, server, extension)        |
 | `pnpm package:mac`  | Build a macOS dmg/zip with electron-builder         |
 | `pnpm package:win`  | Build a Windows installer with electron-builder     |
 
 ## Troubleshooting
 
 - **`Cannot read properties of undefined (reading 'whenReady')` on `pnpm dev`**: your shell has `ELECTRON_RUN_AS_NODE=1` set. Some editor-integrated tools set it, so Electron starts as plain Node. Run `unset ELECTRON_RUN_AS_NODE` first.
+- **Desktop says "Server error"**: something else is using every port from 47821 to 47830. Free one and restart Bridge.
+- **Side panel stays on "Can't reach Bridge"**: the app answered but refused the socket. That usually means the extension ID doesn't match. Check that the extension was loaded from `apps/extension/dist` and that the ID on `chrome://extensions` is the one above.
 
 ## Docs
 
