@@ -25,6 +25,10 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [x] Design tokens (light and dark), Geist and Geist Mono, base `.btn`, `.segmented`, `.status` and `.dot` classes
 - [x] Logo: SVG source, `LOGO_MARK` geometry, extension PNG icons, 1024px desktop icon
 - [x] Docs: CLAUDE.md, PLAN.md, CHECKLIST.md, README.md, DESIGN.md
+- [x] Root `vitest.config.ts` with `projects` for shared, desktop and extension. `pnpm test` runs all
+- [x] Desktop: `createWindowOptions()` tested for `contextIsolation`, `sandbox`, `nodeIntegration: false`, `webSecurity`
+- [x] Desktop: test that the production CSP has no `unsafe-inline` or `unsafe-eval`
+- [x] Extension: manifest tests (permissions exactly `storage` + `sidePanel`, chatgpt.com only, no `<all_urls>` or `host_permissions`)
 - [ ] Delete `archive/prototype/` once Phases 2–7 no longer need it for reference
 
 ## Phase 2: Local server and pairing

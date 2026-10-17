@@ -87,7 +87,7 @@ archive/prototype/  earlier server/pairing prototype, kept for reference (not bu
 | `pnpm format`       | Prettier write                                      |
 | `pnpm format:check` | Prettier check (CI)                                 |
 | `pnpm typecheck`    | `tsc --noEmit` in every package                     |
-| `pnpm test`         | Vitest (shared parser)                              |
+| `pnpm test`         | Vitest (parser, window security, manifest)          |
 | `pnpm package:mac`  | Build a macOS dmg/zip with electron-builder         |
 | `pnpm package:win`  | Build a Windows installer with electron-builder     |
 

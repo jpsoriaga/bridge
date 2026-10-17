@@ -1,23 +1,9 @@
 import { app, BrowserWindow, session, shell } from 'electron';
 import { join } from 'node:path';
+import { createWindowOptions } from './window';
 
 function createWindow(): void {
-  const window = new BrowserWindow({
-    width: 1080,
-    height: 720,
-    minWidth: 800,
-    minHeight: 600,
-    show: false,
-    autoHideMenuBar: true,
-    title: 'Bridge',
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
-      contextIsolation: true,
-      sandbox: true,
-      nodeIntegration: false,
-      webSecurity: true
-    }
-  });
+  const window = new BrowserWindow(createWindowOptions(join(__dirname, '../preload/index.js')));
 
   window.on('ready-to-show', () => window.show());
 
