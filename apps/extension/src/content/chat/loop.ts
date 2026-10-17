@@ -144,6 +144,15 @@ export class FullAutoLoop {
   /** A new assistant reply finished (one that wasn't on the page when it loaded). */
   onReply(actions: ReplyActions): void {
     if (this.deps.config()?.mode !== 'full-auto') return;
+    // A reply after Bridge pressed send is proof the message went out, whatever the page's
+    // turn count says (it may only keep nearby turns mounted).
+    const clicked = this.current?.sentFrom !== null && this.current?.sentFrom !== undefined;
+    if (
+      clicked &&
+      (this.state === 'sending' || (this.state === 'paused' && this.reason === 'send-failed'))
+    ) {
+      this.confirmSent(this.current!);
+    }
     if (this.state === 'stopped' || this.state === 'acting' || this.state === 'sending') return;
     if (this.state === 'paused') {
       // The user carried on by hand. That run is over; this reply may start the next.
@@ -406,7 +415,7 @@ export class FullAutoLoop {
         return;
       }
       this.lastSendAt = this.deps.now();
-    } else if (page.userTurns() <= step.sentFrom) {
+    } else if (!this.sendLanded(step)) {
       // Resumed after a send that didn't show up: press send again (the text is still there).
       this.set('sending');
       if (!page.composerText().trim() && !page.insert(step.message ?? '').ok) {
@@ -421,7 +430,7 @@ export class FullAutoLoop {
     }
 
     const deadline = this.deps.now() + SEND_CONFIRM_MS;
-    while (page.userTurns() <= (step.sentFrom ?? 0)) {
+    while (!this.sendLanded(step)) {
       if (this.deps.now() >= deadline) {
         this.pause('send-failed');
         return;
@@ -429,9 +438,30 @@ export class FullAutoLoop {
       await this.deps.sleep(SEND_POLL_MS);
       if (stale()) return;
     }
+    this.confirmSent(step);
+  }
+
+  /**
+   * Whether the follow-up went out: a new user turn, or the composer no longer holding it
+   * (the page empties it on send). The turn count alone isn't enough: the page may unmount
+   * turns far from the viewport.
+   */
+  private sendLanded(step: Step): boolean {
+    const { page } = this.deps;
+    if (page.userTurns() > (step.sentFrom ?? Number.POSITIVE_INFINITY)) return true;
+    const composer = page.composerText().trim();
+    if (!composer) return true;
+    // The first line only: a rich composer joins paragraphs without line breaks.
+    const probe = (step.message ?? '').trim().split('\n')[0]!.slice(0, 40).trim();
+    return probe.length > 0 && !composer.includes(probe);
+  }
+
+  /** The follow-up went out: count it and wait for the reply. */
+  private confirmSent(step: Step): void {
     this.step += 1;
     step.actions.markReadsSent();
     this.current = null;
+    this.reason = undefined;
     this.set('waiting-reply', {
       kind: 'sent',
       text: `Sent message ${this.step} of ${this.limit}.`

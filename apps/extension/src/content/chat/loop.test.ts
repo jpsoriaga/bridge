@@ -44,6 +44,8 @@ function fakePage() {
     hasButton: true,
     /** submit() calls that find no button yet, like the real page right after a paste. */
     buttonLate: 0,
+    /** The page keeps nearby turns only: sending doesn't change the count Bridge sees. */
+    virtualized: false,
     banner: null as string | null,
     insertWorks: true
   };
@@ -65,7 +67,7 @@ function fakePage() {
       if (page.sendWorks) {
         page.sent.push(page.composer);
         page.composer = '';
-        page.turns += 1;
+        if (!page.virtualized) page.turns += 1;
       }
       return true;
     },
@@ -472,6 +474,49 @@ describe('FullAutoLoop', () => {
     expect(t.loop.state).toBe('waiting-reply');
     expect(t.page.sent).toHaveLength(1);
     expect(t.page.buttonLate).toBe(0);
+  });
+
+  it('counts a send by the composer emptying when the turn count doesn’t move', async () => {
+    const t = setup();
+    t.page.virtualized = true;
+    t.loop.onReply(reply({ runs: [{ command: 'pnpm test' }] }).actions);
+    await settle();
+    expect(t.loop.state).toBe('waiting-reply');
+    expect(t.loop.step).toBe(1);
+    t.loop.onReply(reply({ runs: [{ command: 'pnpm test' }] }).actions);
+    await settle();
+    expect(t.loop.step).toBe(2);
+  });
+
+  it('takes a reply that arrives after a send it couldn’t confirm as proof, and carries on', async () => {
+    const t = setup();
+    t.page.sendWorks = false;
+    t.loop.onReply(reply({ runs: [{ command: 'pnpm test' }] }).actions);
+    await settle();
+    expect(t.loop.reason).toBe('send-failed');
+    // The message did go out (the user pressed send, or the page didn't show it), and the
+    // chat answered: the same run goes on, now at step 1.
+    t.page.composer = '';
+    t.page.sendWorks = true;
+    const loopId = t.loop.loopId;
+    t.loop.onReply(reply({ runs: [{ command: 'pnpm test' }] }).actions);
+    await settle();
+    expect(t.loop.loopId).toBe(loopId);
+    expect(t.loop.step).toBe(2);
+    expect(t.loop.state).toBe('waiting-reply');
+  });
+
+  it('ends on a DONE reply that lands while a send is being confirmed', async () => {
+    const t = setup();
+    t.page.virtualized = true;
+    t.page.sendWorks = false;
+    t.loop.onReply(reply({ runs: [{ command: 'pnpm test' }] }).actions);
+    // While it waits to see the send land, the chat already answered DONE.
+    await new Promise((r) => setImmediate(r));
+    t.loop.onReply(reply({ done: true }).actions);
+    await settle();
+    expect(t.loop.state).toBe('idle');
+    expect(t.events().at(-1)).toBe('done: The chat said it’s done.');
   });
 
   it('pauses when there is no send button or the composer refuses the text', async () => {
