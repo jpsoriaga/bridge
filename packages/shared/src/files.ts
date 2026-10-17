@@ -59,7 +59,9 @@ export const WriteParams = z.strictObject({
   // Characters, not bytes. The desktop checks the UTF-8 size against MAX_FILE_BYTES.
   content: z.string().max(MAX_FILE_BYTES),
   /** Required to modify an existing file, absent to create one. From `read`. */
-  baseHash: Sha256Hex.optional()
+  baseHash: Sha256Hex.optional(),
+  /** `chat`: applied from a diff card. The desktop's activity list says "via chat". */
+  source: z.literal('chat').optional()
 });
 export const UndoParams = z.strictObject({ opId: OpId });
 export type ReadParams = z.infer<typeof ReadParams>;

@@ -1,0 +1,33 @@
+<main class="relative h-full w-full flex-1">
+  <article class="w-full text-token-text-primary" dir="auto" data-testid="conversation-turn-2" data-scroll-anchor="true">
+    <h6 class="sr-only">ChatGPT said:</h6>
+    <div class="text-base my-auto mx-auto py-5">
+      <div class="group/conversation-turn relative flex w-full min-w-0 flex-col agent-turn">
+        <div class="flex-col gap-1 md:gap-3">
+          <div class="flex max-w-full flex-col flex-grow">
+            <div data-message-author-role="assistant" data-message-id="a1b2c3d4-0001-4000-8000-000000000001" dir="auto" class="min-h-8 text-message relative flex w-full flex-col" data-message-model-slug="model">
+              <div class="flex w-full flex-col gap-1 empty:hidden first:pt-[3px]">
+                <div class="markdown prose w-full break-words dark:prose-invert light">
+                  <p data-start="0" data-end="38">Here is the updated greeting helper:</p>
+                  <p data-start="40" data-end="66"><code data-start="40" data-end="66">@@FILE src/greet.ts@@</code></p>
+                  <pre class="overflow-visible!" data-start="68" data-end="160"><div class="contain-inline-size rounded-2xl relative bg-token-sidebar-surface-primary"><div class="flex items-center text-token-text-secondary px-4 py-2 text-xs font-sans justify-between h-9 select-none rounded-t-2xl">ts</div><div class="sticky top-9"><div class="absolute end-0 bottom-0 flex h-9 items-center pe-2"><div class="bg-token-bg-elevated-secondary text-token-text-secondary flex items-center gap-4 rounded-sm px-2 font-sans text-xs"><button class="flex gap-1 items-center select-none py-1" aria-label="Copy"><svg width="24" height="24" viewBox="0 0 24 24"><path d="M0 0h24v24H0z"></path></svg>Copy</button><span class="" data-state="closed"><button class="flex items-center gap-1 py-1 select-none"><svg width="24" height="24" viewBox="0 0 24 24"><path d="M0 0h24v24H0z"></path></svg>Edit</button></span></div></div></div><div class="overflow-y-auto p-4" dir="ltr"><code class="whitespace-pre! language-ts"><span><span class="hljs-keyword">export</span> <span class="hljs-keyword">function</span> <span class="hljs-title function_">greet</span>(<span class="hljs-params">name: <span class="hljs-built_in">string</span></span>): <span class="hljs-built_in">string</span> {
+  <span class="hljs-keyword">return</span> <span class="hljs-string">`Hello, <span class="hljs-subst">${name}</span>!`</span>;
+}
+</span></code></div></div></pre>
+                  <p data-start="162" data-end="200">Apply it and run the tests again.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="flex min-h-[46px] justify-start">
+            <div class="touch:-me-2 touch:-ms-3.5 -ms-2.5 -me-1 flex flex-wrap items-center gap-y-4 p-1 select-none">
+              <button class="text-token-text-secondary hover:bg-token-bg-secondary rounded-lg" aria-label="Copy" data-testid="copy-turn-action-button"><span class="touch:w-10 flex h-8 w-8 items-center justify-center"><svg width="20" height="20" viewBox="0 0 20 20"><path d="M0 0h20v20H0z"></path></svg></span></button>
+              <button class="text-token-text-secondary hover:bg-token-bg-secondary rounded-lg" aria-label="Good response" data-testid="good-response-turn-action-button"><span class="flex h-8 w-8 items-center justify-center"><svg width="20" height="20" viewBox="0 0 20 20"><path d="M0 0h20v20H0z"></path></svg></span></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </article>
+</main>
+<form class="w-full"><div id="prompt-textarea" contenteditable="true" translate="no" class="ProseMirror" data-virtualkeyboard="true"><p data-placeholder="Ask anything" class="placeholder"><br class="ProseMirror-trailingBreak"></p></div></form>

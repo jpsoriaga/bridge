@@ -156,7 +156,8 @@ export async function writeFile(
       path: target.rel,
       kind: 'modify',
       beforeHash: params.baseHash,
-      afterHash
+      afterHash,
+      ...(params.source && { source: params.source })
     });
     return { opId, kind: 'modify', hash: afterHash };
   }
@@ -176,7 +177,8 @@ export async function writeFile(
     path: target.rel,
     kind: 'create',
     beforeHash: null,
-    afterHash
+    afterHash,
+    ...(params.source && { source: params.source })
   });
   return { opId, kind: 'create', hash: afterHash };
 }

@@ -2,7 +2,7 @@
 
 Clean, neutral, black on white. The chat is the work, and Bridge's UI should feel like part of it rather than a layer on top. The reference is the mockup with a chat column on the left (assistant text, diff cards, command card, composer) and the Bridge side panel on the right (project, mode, actions, files, activity, Stop).
 
-Tokens and base components live in [`packages/shared/src/styles.css`](packages/shared/src/styles.css). Both apps import it as `@bridge/shared/styles.css`. If this file and the CSS disagree, fix whichever is wrong in the same change.
+Tokens live in [`packages/shared/src/tokens.css`](packages/shared/src/tokens.css), and base components in [`packages/shared/src/styles.css`](packages/shared/src/styles.css), which imports the tokens. Both apps import `@bridge/shared/styles.css`. The cards injected into the chat load `tokens.css` into their shadow roots (`:root` becomes `:host`) and add their own [`card.css`](apps/extension/src/content/chat/cards/card.css). If this file and the CSS disagree, fix whichever is wrong in the same change.
 
 ## Principles
 
@@ -104,7 +104,7 @@ Tokens: `--text-xs` 12, `--text-sm` 13, `--text-base` 14, `--text-lg` 16, `--tex
 - **Spacing** is on a 4px base: `--space-1` 4, `-2` 8, `-3` 12, `-4` 16, `-5` 20, `-6` 24, `-8` 32.
 - **Radii**: `--radius-sm` 6px (inline code, tags), `--radius-md` 8px (buttons, segments), `--radius-lg` 12px (cards, segmented track), `--radius-xl` 18px (chat bubble), `--radius-full` (composer, dots, send button).
 - **Borders** are always 1px. Use solid `--border` by default and `--border-strong` for pending or emphasised items. The command card is **dashed** `--border-strong`, the only dashed line in the system.
-- **Elevation**: `--shadow-xs` (`0 1px 2px rgb(0 0 0/.06)`) appears only on the composer and the active mode segment. There are no other shadows, gradients or blur.
+- **Elevation**: `--shadow-xs` (`0 1px 2px rgb(0 0 0/.06)`) appears only on the composer and the active mode segment. There are no other shadows, gradients or blur. The chat cards have none.
 - **Focus**: a 2px ring in `--fg`, offset 2px (`--focus-ring`), shown on `:focus-visible` only.
 - **Motion**: 120ms colour and background transitions with `--ease`. Nothing slides or bounces, and all of it is off under `prefers-reduced-motion`.
 
@@ -122,16 +122,36 @@ The default size is 32px tall with 12px padding (Undo, Reject, Run & send output
 
 ### Diff card
 
-A 1px border with a 12px radius on `--bg`. There are three states:
+Injected right after the code block it describes, in a closed shadow root, so the page's CSS can't reach it and its CSS can't leak out. It follows the page's light/dark class (`html.dark`), falling back to `prefers-color-scheme`. A 1px border with a 12px radius on `--bg`, 12px above and below. Everything from the chat (paths, diff lines) is rendered as text.
 
 1. **Pending (review)**: `--border-strong` edge.
-   - Header row (12px 16px): a file icon (16px, `--fg-muted`), the path in mono 13px `--fg`, then meta in 12px `--fg-muted`: "Modified · " followed by `+6` in `--success` and `−2` in `--danger`.
-   - Body: a hairline above, then mono 13px/21px rows with 16px side padding. Added rows have a `--success-bg` background and a `+ ` prefix. Removed rows have `--danger-bg` and a `- ` prefix. Context rows have no fill. Long bodies collapse after 12 lines behind a "Show N more lines" row.
-   - Footer: a hairline above, `--bg-hover` fill, and "Review before applying" (12px muted) on the left. **Reject** (secondary) and **Apply** (primary) are on the right.
-2. **Applied**: collapses to one row with a `--border` edge. It shows a check icon in `--success`, the path, meta ("New file · +18"), the word "Applied" in `--success` at 13px/500, and an **Undo** button (secondary).
+   - Header row (8px 16px, at least 48px): a file icon (16px, `--fg-muted`), the path in mono 13px `--fg` (truncated, full path in the tooltip), the status badge(s), then meta in 12px `--fg-muted`: "Modified · " followed by `+6` in `--success` and `−2` in `--danger` ("New file", "No changes"). While the file is read, the meta says "Reading…". On the right, a **Hide diff / Show diff** toggle (12px muted, chevron).
+   - Body: a hairline above, then mono 13px/21px rows with 16px side padding, scrolling past 480px. Hunk headers (`@@ -1,3 +1,4 @@`) are `--fg-subtle`. Added rows have a `--success-bg` background and a `+ ` prefix. Removed rows have `--danger-bg` and a `- ` prefix. Context rows have no fill. At most 400 rows render; a full-width "Show all N lines" row under them renders the rest.
+   - Footer: a hairline above, `--bg-hover` fill, a 12px hint on the left, and **Reject** (secondary) and **Apply** (primary, `.btn-lg`) on the right. **Retry** (secondary) appears when the read failed for a reason other than the sandbox.
+   - Hints: "Review before applying." by default; "Already up to date." for unchanged; "Bridge won't write this file." when blocked; in `--warning`: the partial warning, "This looks like part of a file… Click again to apply anyway." while confirming (the button reads **Apply anyway**), and "The file was updated since this diff was first shown. This is the new diff." after a conflict; "Session ended. Start a new one to apply." when the session is over (every button disabled).
+2. **Applied**: one row with a `--border` edge: a check icon in `--success`, the path, meta ("New file · +18 −0"), the word "Applied" in `--success` at 13px/500, and an **Undo** button (secondary; "Undoing…" while busy).
 3. **Rejected / undone**: one row with the path and the meta struck through in `--fg-subtle`, the word "Rejected" or "Undone" in `--fg-muted`, and no actions.
 
-On error (a write failed or the path was blocked), the card keeps its last state and adds a 12px `--danger` line under the header with the reason. It never shows a raw stack trace.
+**Badges** are mono 12px tags with a 6px radius and a 1px border, 18px tall. Tone comes from colour of text and border (35% mix), never a fill:
+
+| Badge       | Tone      | When                                                                   |
+| ----------- | --------- | ---------------------------------------------------------------------- |
+| `new`       | `success` | The file doesn't exist yet                                             |
+| `modified`  | neutral   | The file exists and the content differs                                |
+| `unchanged` | neutral   | Same text as on disk (line endings ignored). Apply is disabled         |
+| `conflict`  | `warning` | The file changed after the card read it; the diff shown is the new one |
+| `blocked`   | `danger`  | The sandbox refused the path, or the file is binary or over 1 MB       |
+| `partial?`  | `warning` | Shown next to the others when the content has a placeholder comment    |
+
+On error (a write failed, the app isn't connected), the card keeps its state and adds a 12px `--danger` line under the header with the reason (`role="alert"`). It never shows a raw code or stack trace.
+
+### Apply all bar
+
+Under the last diff card of a reply with two or more applicable files (pending, readable, changed, not `partial?`). Same card frame with a `--border` edge, holding only a footer row: the hint "Applies each file in order and stops at the first problem." and a primary 32px **Apply all (N)** ("Applying…" while running). If it stops, the hint turns `--warning`: "Stopped at path. Its card says why."
+
+### READ card
+
+At the end of a reply that asked for files with `@@READ`. Pending-card frame (`--border-strong`). Header: file icon and "The chat asked for N files" (13px/500). Then one row per path (mono 13px, ~25px tall): file icon, path, and on the right either "1,204 chars" (12px muted), "Reading…", or a `danger` badge "blocked · protected file" with the path struck through in `--fg-subtle`. Footer: a hint with the total ("12,345 characters. Bridge puts them in the message box; you press send."), in `--warning` above 30,000 characters ("The chat may turn this into an attachment or cut it off."), and **Send these files** (primary `.btn-lg`). After sending, the hint says "Added to the message box. Review it and press send." and the button reads **Send again**.
 
 ### Command card
 
@@ -171,7 +191,7 @@ On the desktop's Extension section: the six digits in Geist Mono 24px/600 with a
 
 An 8px dot and 13px `--fg` text with an 8px gap. Rows are spaced 8px apart, newest first. Dot tones: `success` for applied or passed, `warning` for waiting on review, `danger` for failed or blocked, and idle for informational events ("Sent 3 files to chat") and undone writes. Show about the last 20 rows; older ones scroll.
 
-Classes `.activity`, `.activity-row`, `.activity-text`, `.activity-path` and `.activity-meta` live in `styles.css`. The text is two lines: the path in mono (truncated, full path in the tooltip) and a 12px `--fg-muted` meta line, "07:50 PM · Modified" or "07:50 PM · Blocked read · protected file" (reasons from `FILE_ERROR_LABELS`). Writes that can be undone end with a secondary **Undo** button. An undone row (`data-undone="true"`) strikes the path through in `--fg-subtle` and says "· undone". The section label row has **Undo last** on the right.
+Classes `.activity`, `.activity-row`, `.activity-text`, `.activity-path` and `.activity-meta` live in `styles.css`. The text is two lines: the path in mono (truncated, full path in the tooltip) and a 12px `--fg-muted` meta line, "07:50 PM · Modified", "07:50 PM · Modified · via chat" (applied from a diff card) or "07:50 PM · Blocked read · protected file" (reasons from `FILE_ERROR_LABELS`). Writes that can be undone end with a secondary **Undo** button. An undone row (`data-undone="true"`) strikes the path through in `--fg-subtle` and says "· undone". The section label row has **Undo last** on the right.
 
 ### Project section (desktop)
 
@@ -185,9 +205,23 @@ A hint listing the built-in patterns in mono, then the user's patterns, each wit
 
 Labelled "Test read (dev only)". A row with an operation `select`, a mono path input and **Send**; a mono textarea for write content; the JSON reply in a `--bg-muted` box with a hairline and `--radius-md`, mono 12px. It is a developer tool, so it skips the one-primary-action rule and is never shown in production builds.
 
+### Session section (side panel)
+
+Label "Session" with **End session** (secondary) on the right of the label row while a session is active. Below it, a status line: a `success` dot and "Session active · e2e00000…" (the conversation id shortened to 8 characters in mono, full id in the tooltip), or "Session active · waiting for your first message" in a new chat. Then three activity-style rows: "N edits applied" (`success` dot when N > 0), "N waiting for review" (`warning` dot when N > 0), and "Sent N files to the chat" with the paths as a muted mono meta line.
+
+With no session, "No session" (or "Session ended"), a hint, a line with the prompt's size ("1,185 characters, 3 of 3 files listed."; `--warning` above 30,000), and **Start session** as the view's primary `.btn-lg`. With no chat in the tab: "No chat in this tab" and a hint to open or reload one.
+
+**Layout notice**: when the tab reports it can't read the page, the section shows a bordered box (1px warning at 35%, `--radius-md`, 12px padding, 13px `--fg`): "Bridge can't read this page layout. The chat page may have changed. Cards and sessions are off until Bridge is updated."
+
+### Send files (side panel)
+
+Label "Send files" with a **Clear** text button when anything is selected. A 32px mono filter input, then the tree in a 1px `--border` box with `--radius-md`, at most 320px tall and scrolling: Geist Mono 13px, one row per entry (~25px), 16px indent per level, a checkbox (`accent-color: var(--fg)`) before each entry. Folders end in `/`, open on click, and are `--fg-muted` while closed; their checkbox selects every file under them and shows indeterminate when partly selected. Files show their size in 12px `--fg-subtle` tabular figures on the right. Collapsed entries (`node_modules`) can't be selected. While filtering, matching files show as a flat list of full paths (first 200).
+
+**Budget meter** under the tree: a 4px `--bg-muted` track with an `--fg` fill (`--radius-full`) for the share of 30,000 characters, turning `--warning` past it. Below, a 12px hint: "3 files · about 4,210 of 30,000 characters", plus the warning line past the limit and an error past 50 files. Then **Insert N files** (primary `.btn-lg`) and a status line after sending.
+
 ### Files in context tree
 
-Geist Mono 13px with one row per entry (~25px tall) and a 16px indent per level. Folders end in `/`. A `new` tag in `--success` mono follows files the chat created this session.
+Phase 5. Same rows as the Send files tree, without checkboxes. A `new` tag in `--success` mono follows files the chat created this session.
 
 ### Stop button
 
@@ -203,7 +237,7 @@ The mark is a plus and a minus set on a diagonal, the two sides of a diff, drawn
 
 ### Icons
 
-Use outline icons 16px with a 1.5px stroke (Lucide style): check, file, arrow-up and folder. Icons inherit `currentColor`. None are installed yet. Add `lucide-react` when the first icon is needed.
+Use outline icons 16px with a 1.5px stroke (Lucide style): check, file, chevron, arrow-up and folder. Icons inherit `currentColor`. The chat cards draw theirs with `createElementNS` from path data in `cards/dom.ts` (no React there). Add `lucide-react` when the React UIs need their first icon.
 
 ## Don'ts
 

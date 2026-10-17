@@ -7,12 +7,15 @@ import {
 } from '@bridge/shared';
 import {
   SIDE_PANEL_PORT,
+  type ChatPanelState,
   type PairResult,
   type StatusUpdate,
   type WorkerRequest
 } from '../messages';
 import { DevFileTester } from './DevFileTester';
 import { Logo } from './Logo';
+import { request } from './request';
+import { SessionSection } from './SessionSection';
 
 const STATUS_LABELS: Record<ConnectionStatus, string> = {
   'app-not-running': 'App not running',
@@ -21,10 +24,6 @@ const STATUS_LABELS: Record<ConnectionStatus, string> = {
   connected: 'Connected',
   error: "Can't reach Bridge"
 };
-
-function request<R>(message: WorkerRequest): Promise<R> {
-  return chrome.runtime.sendMessage<WorkerRequest, R>(message);
-}
 
 function useWorkerStatus(): StatusUpdate | null {
   const [update, setUpdate] = useState<StatusUpdate | null>(null);
@@ -125,7 +124,15 @@ function ProjectSection({ project }: { project: ProjectInfo | null }) {
   );
 }
 
-function Body({ status, project }: { status: ConnectionStatus; project: ProjectInfo | null }) {
+function Body({
+  status,
+  project,
+  chat
+}: {
+  status: ConnectionStatus;
+  project: ProjectInfo | null;
+  chat: ChatPanelState;
+}) {
   const [busy, setBusy] = useState(false);
   const act = (message: WorkerRequest) => {
     setBusy(true);
@@ -139,6 +146,7 @@ function Body({ status, project }: { status: ConnectionStatus; project: ProjectI
       return (
         <>
           <ProjectSection project={project} />
+          <SessionSection chat={chat} project={project} />
           {import.meta.env.DEV && <DevFileTester />}
           <section>
             <p className="label">Desktop app</p>
@@ -219,7 +227,7 @@ export function App() {
       </header>
 
       <main className="panel-body">
-        {update && <Body status={update.status} project={update.project} />}
+        {update && <Body status={update.status} project={update.project} chat={update.chat} />}
       </main>
     </div>
   );

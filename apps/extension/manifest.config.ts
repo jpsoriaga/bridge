@@ -48,4 +48,6 @@ export default defineManifest({
       run_at: 'document_idle'
     }
   ]
+  // No web_accessible_resources here: CRXJS adds the content script's chunks and the two
+  // fonts it imports (Geist, Geist Mono for the cards), matched to chatgpt.com only.
 });

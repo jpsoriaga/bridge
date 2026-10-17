@@ -6,7 +6,7 @@ Bridge lets the ChatGPT web chat edit a project on your computer. The chat write
 
 It runs entirely on your machine. The desktop app listens only on `127.0.0.1`, and nothing is sent anywhere else.
 
-> **Status:** Phase 3 of 8 (project folder and sandboxed files) is done. The extension pairs with the desktop app and can list, read and write files inside the project folder you open, with every write backed up and undoable. It doesn't read the chat yet. See [CHECKLIST.md](CHECKLIST.md).
+> **Status:** Phase 4 of 7 (chat integration, Manual mode) is done. Start a session from the side panel, and every whole-file edit the chat writes shows up as a diff card with Apply, Reject and Undo. You can send files to the chat, and send the ones it asks for, with a click. Nothing is sent or applied on its own. Auto-apply and commands come next. See [CHECKLIST.md](CHECKLIST.md).
 
 ## How it works
 
@@ -16,18 +16,21 @@ chatgpt.com ──▶ Chrome extension ──WebSocket (127.0.0.1)──▶ Brid
                   side panel                                  allowlisted commands
 ```
 
-1. The chat replies with one or more blocks like:
+1. **Start session** puts instructions and your file list into the chat's message box. You send it.
+2. The chat replies with one or more blocks like:
 
    ````
-   @@FILE src/hooks/useTheme.js@@
+   `@@FILE src/hooks/useTheme.js@@`
    ```js
    ...full file...
    ```
    ````
 
-2. The extension parses them with the shared parser and shows a diff card under the message.
-3. The desktop app checks each path against the project sandbox and writes the file. Every write can be undone.
-4. Three modes control how much happens automatically: **Manual**, **Auto-apply** and **Full auto**.
+   or asks to see files with `` `@@READ src/app.ts@@` ``.
+
+3. The extension parses finished replies with the shared parser and shows a diff card under each block, or a card listing the files it asked for.
+4. You click **Apply**. The desktop app checks the path against the project sandbox and writes the file. Every write can be undone.
+5. Three modes will control how much happens automatically: **Manual** (today), **Auto-apply** and **Full auto**.
 
 [PLAN.md](PLAN.md) has the full architecture and security model.
 
@@ -53,7 +56,7 @@ pnpm dev
 1. Run `pnpm dev` or `pnpm build` so that `apps/extension/dist` exists.
 2. Open `chrome://extensions` and turn on **Developer mode**.
 3. Click **Load unpacked** and choose **`apps/extension/dist`**.
-4. Open https://chatgpt.com. The DevTools console shows `[Bridge] content script loaded`.
+4. Open https://chatgpt.com (reload any tab that was already open).
 5. Click the Bridge toolbar icon to open the side panel.
 
 The manifest carries a fixed `key`, so the unpacked extension always gets the ID `golkpkmancgpgkpfjggoimedcogghhip`. The desktop app only accepts connections from that ID.
@@ -90,6 +93,21 @@ Every write is backed up first, into Bridge's own data folder (never into your p
 
 With `pnpm dev` running, the side panel has a **Test read (dev only)** field once connected: pick `tree`, `read`, `write` or `undo`, enter a path (or an op id for undo) and click **Send**. A write after a read of the same path modifies that file; a write without one creates a new file. Production builds don't include this field.
 
+## Use it in the chat
+
+You need the app running with a project open, the extension paired, and a chat open on chatgpt.com.
+
+1. Open the side panel next to the chat tab. Under **Session** it shows how big the instructions are (your file list included), then click **Start session**. The text lands in the message box; read it and press send. In a new chat, the session attaches to the conversation once it gets its address after your first message. The panel then reads **Session active**.
+2. Ask for a change. When the reply finishes, each `@@FILE` block gets a card under it with a diff against your file, `+N −M`, and a badge (`new`, `modified`, `unchanged`, `conflict`, `blocked`, `partial?`).
+3. **Apply** writes the file, **Reject** dismisses the card, and **Undo** (after applying) puts the old file back. A reply with two or more files has **Apply all**, which stops at the first problem. A block that looks partial (`// ...rest unchanged`) needs a second click.
+4. If you edited the file after the card appeared, Apply reports a conflict and shows the new diff. Check it and click Apply again.
+5. If the chat asks for files (`@@READ`), its card lists them and their size. **Send these files** puts them in the message box. To send files yourself, tick them under **Send files** in the side panel and click **Insert**. Both warn above 30,000 characters, where the chat may turn the text into an attachment or cut it.
+6. **End session** stops Bridge reading that conversation. Its cards stay but are disabled.
+
+Card states survive a page reload. Writes from cards show in the app's **Activity** as "via chat".
+
+If the side panel says **Bridge can't read this page layout**, the chat page changed in a way Bridge doesn't recognise. Nothing is parsed until the selectors are updated (see `apps/extension/src/content/chat/selectors.ts`).
+
 ## Project structure
 
 ```
@@ -101,11 +119,12 @@ apps/
     resources/      app icon, macOS entitlements
   extension/        Chrome MV3 extension (CRXJS + Vite)
     manifest.config.ts
-    src/content/    runs on chatgpt.com
+    src/content/    runs on chatgpt.com: chat/ reads messages, injects cards, fills the composer
+    fixtures/       saved chat page markup for the adapter tests
     src/background/ service worker
     src/sidepanel/  React side panel
 packages/
-  shared/           @bridge/shared: types, @@FILE parser, protocol schemas, logo, design tokens
+  shared/           @bridge/shared: types, chat parser and prompts, diff helper, protocol schemas, logo, design tokens
 archive/prototype/  earlier server/pairing prototype, kept for reference (not built)
 ```
 
@@ -119,7 +138,7 @@ archive/prototype/  earlier server/pairing prototype, kept for reference (not bu
 | `pnpm format`       | Prettier write                                      |
 | `pnpm format:check` | Prettier check (CI)                                 |
 | `pnpm typecheck`    | `tsc --noEmit` in every package                     |
-| `pnpm test`         | Vitest (parser, protocol, server, extension)        |
+| `pnpm test`         | Vitest (shared, desktop, extension incl. happy-dom) |
 | `pnpm package:mac`  | Build a macOS dmg/zip with electron-builder         |
 | `pnpm package:win`  | Build a Windows installer with electron-builder     |
 
@@ -130,6 +149,8 @@ Manual end-to-end scripts (Playwright, not in CI) live in [`e2e/`](e2e/README.md
 - **`Cannot read properties of undefined (reading 'whenReady')` on `pnpm dev`**: your shell has `ELECTRON_RUN_AS_NODE=1` set. Some editor-integrated tools set it, so Electron starts as plain Node. Run `unset ELECTRON_RUN_AS_NODE` first.
 - **"That folder holds Bridge's own data"**: you picked Bridge's userData folder, or a folder containing it. Choose the project folder itself.
 - **Desktop says "Server error"**: something else is using every port from 47821 to 47830. Free one and restart Bridge.
+- **No cards in the chat**: check the side panel says **Session active** for this tab. Cards only appear once a reply has finished. If the chat tab was open before the extension was loaded or reloaded, reload the tab.
+- **Cards use the system font**: chatgpt.com's content security policy blocked the extension's fonts. Cards still work.
 - **Side panel stays on "Can't reach Bridge"**: the app answered but the handshake failed. If you unpaired in the app while Chrome was closed, click **Unpair** in the side panel and pair again. Otherwise the extension ID may not match: check that the extension was loaded from `apps/extension/dist` and that the ID on `chrome://extensions` is the one above.
 
 ## Docs

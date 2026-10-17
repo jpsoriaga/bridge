@@ -213,7 +213,8 @@ export class ProjectService {
       kind: op.kind,
       path: op.path,
       opId: op.opId,
-      undone: op.undoneAt !== undefined
+      undone: op.undoneAt !== undefined,
+      ...(op.source && { source: op.source })
     }));
     return [...writes, ...this.sessionEvents]
       .sort((a, b) => b.time - a.time)

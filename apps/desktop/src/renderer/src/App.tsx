@@ -160,11 +160,16 @@ const formatTime = (time: number) =>
 
 function describe(entry: ActivityEntry): { meta: string; tone?: 'success' | 'danger' } {
   const reason = entry.code ? FILE_ERROR_LABELS[entry.code] : '';
+  const via = entry.source === 'chat' ? ' · via chat' : '';
   switch (entry.kind) {
     case 'create':
-      return entry.undone ? { meta: 'Created · undone' } : { meta: 'Created', tone: 'success' };
+      return entry.undone
+        ? { meta: `Created${via} · undone` }
+        : { meta: `Created${via}`, tone: 'success' };
     case 'modify':
-      return entry.undone ? { meta: 'Modified · undone' } : { meta: 'Modified', tone: 'success' };
+      return entry.undone
+        ? { meta: `Modified${via} · undone` }
+        : { meta: `Modified${via}`, tone: 'success' };
     case 'rejected':
       return { meta: `Blocked ${entry.op ?? 'request'} · ${reason}`, tone: 'danger' };
     case 'failed':

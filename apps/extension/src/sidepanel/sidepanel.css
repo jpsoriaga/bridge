@@ -105,3 +105,131 @@
   white-space: pre-wrap;
   word-break: break-all;
 }
+
+.hint[data-tone='warning'] {
+  color: var(--warning);
+}
+
+/* Label with an action on the right ("Session" · End session) */
+.label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.label-row .label {
+  margin: 0;
+}
+
+/* "Bridge can't read this page layout" */
+.notice {
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent);
+  border-radius: var(--radius-md);
+  color: var(--fg);
+  font-size: var(--text-sm);
+}
+
+.session-status {
+  font-size: var(--text-sm);
+  color: var(--fg);
+}
+
+.session-stats {
+  margin-top: var(--space-3);
+}
+
+.link-button {
+  height: 24px;
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.link-button:hover {
+  color: var(--fg);
+}
+
+/* Send files: project tree with checkboxes (DESIGN.md "Files in context tree") */
+.tree-filter {
+  width: 100%;
+  height: 32px;
+  font-size: var(--text-sm);
+}
+.tree {
+  max-height: 320px;
+  margin: var(--space-2) 0 0;
+  padding: var(--space-1) 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  list-style: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 25px;
+  padding-inline-end: var(--space-2);
+  margin-inline-start: var(--space-2);
+}
+.tree-row input {
+  flex: none;
+  margin: 0;
+  accent-color: var(--fg);
+}
+.tree-folder,
+.tree-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tree-folder {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.tree-folder[aria-expanded='false'] {
+  color: var(--fg-muted);
+}
+.tree-folder:hover {
+  color: var(--fg);
+}
+.tree-size {
+  flex: none;
+  font-size: var(--text-xs);
+  color: var(--fg-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Character budget meter under the tree */
+.meter {
+  margin-top: var(--space-3);
+}
+.meter-track {
+  height: 4px;
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: var(--bg-muted);
+}
+.meter-fill {
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: var(--fg);
+  transition: width 120ms var(--ease);
+}
+.meter[data-tone='warning'] .meter-fill {
+  background: var(--warning);
+}

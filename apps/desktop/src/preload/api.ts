@@ -39,6 +39,8 @@ export interface ActivityEntry {
   /** For create/modify: the op to undo. */
   opId?: string;
   undone?: boolean;
+  /** For create/modify: `chat` when applied from a diff card. */
+  source?: 'chat';
   code?: FileErrorCode;
   op?: FileRequest['type'];
 }

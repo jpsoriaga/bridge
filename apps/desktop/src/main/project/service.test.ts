@@ -168,6 +168,17 @@ describe('ProjectService', () => {
     expect(service.lastUndoable()).toBeNull();
   });
 
+  it('marks writes applied from the chat, and keeps the mark across a reopen', async () => {
+    await service.open(project.root);
+    await service.handle(req('write', { path: 'chat.txt', content: 'x', source: 'chat' }));
+    await service.handle(req('write', { path: 'tester.txt', content: 'x' }));
+    const sources = () =>
+      Object.fromEntries(service.activity().map((entry) => [entry.path, entry.source]));
+    expect(sources()).toEqual({ 'chat.txt': 'chat', 'tester.txt': undefined });
+    await service.open(project.root);
+    expect(sources()).toEqual({ 'chat.txt': 'chat', 'tester.txt': undefined });
+  });
+
   it('runs writes one at a time', async () => {
     await service.open(project.root);
     const results = await Promise.all(

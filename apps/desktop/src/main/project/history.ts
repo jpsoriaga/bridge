@@ -17,6 +17,8 @@ export interface OpRecord {
   afterHash: string;
   /** Epoch ms when undone. */
   undoneAt?: number;
+  /** `chat`: applied from a diff card in the chat. */
+  source?: 'chat';
 }
 
 interface LogFile {
@@ -39,7 +41,8 @@ function isOpRecord(value: unknown): value is OpRecord {
     (op.beforeHash === null || (typeof op.beforeHash === 'string' && HASH.test(op.beforeHash))) &&
     typeof op.afterHash === 'string' &&
     HASH.test(op.afterHash) &&
-    (op.undoneAt === undefined || typeof op.undoneAt === 'number')
+    (op.undoneAt === undefined || typeof op.undoneAt === 'number') &&
+    (op.source === undefined || op.source === 'chat')
   );
 }
 

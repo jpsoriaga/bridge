@@ -1,0 +1,49 @@
+<main class="relative h-full w-full flex-1">
+  <article class="w-full text-token-text-primary" dir="auto" data-testid="conversation-turn-4" data-scroll-anchor="true">
+    <h6 class="sr-only">ChatGPT said:</h6>
+    <div class="text-base my-auto mx-auto py-5">
+      <div class="group/conversation-turn relative flex w-full min-w-0 flex-col agent-turn">
+        <div class="flex-col gap-1 md:gap-3">
+          <div class="flex max-w-full flex-col flex-grow">
+            <div data-message-author-role="assistant" data-message-id="a1b2c3d4-0002-4000-8000-000000000002" dir="auto" class="min-h-8 text-message relative flex w-full flex-col">
+              <div class="flex w-full flex-col gap-1 empty:hidden first:pt-[3px]">
+                <div class="markdown prose w-full break-words dark:prose-invert light">
+                  <p>Two changes. First install the dependency:</p>
+                  <pre class="overflow-visible!"><div class="contain-inline-size rounded-2xl relative"><div class="flex items-center px-4 py-2 text-xs justify-between h-9 select-none">bash</div><div class="sticky top-9"><div class="absolute end-0 bottom-0 flex h-9 items-center pe-2"><div class="flex items-center gap-4 rounded-sm px-2 text-xs"><button class="flex gap-1 items-center select-none py-1" aria-label="Copy"><svg width="24" height="24"><path d="M0 0"></path></svg>Copy</button></div></div></div><div class="overflow-y-auto p-4" dir="ltr"><code class="whitespace-pre! language-bash"><span>pip install requests
+</span></code></div></div></pre>
+                  <h3>1. Package init</h3>
+                  <p>@@FILE pkg/<strong>init</strong>.py@@</p>
+                  <pre class="overflow-visible!"><div class="contain-inline-size rounded-2xl relative"><div class="flex items-center px-4 py-2 text-xs justify-between h-9 select-none">python</div><div class="sticky top-9"><div class="absolute end-0 bottom-0 flex h-9 items-center pe-2"><div class="flex items-center gap-4 rounded-sm px-2 text-xs"><button class="flex gap-1 items-center select-none py-1" aria-label="Copy"><svg width="24" height="24"><path d="M0 0"></path></svg>Copy</button></div></div></div><div class="overflow-y-auto p-4" dir="ltr"><code class="whitespace-pre! language-python"><span><span class="hljs-keyword">from</span> .client <span class="hljs-keyword">import</span> Client
+
+__all__ = [<span class="hljs-string">"Client"</span>]
+</span></code></div></div></pre>
+                  <h3>2. Client</h3>
+                  <ul>
+                    <li><code>@@FILE pkg/client.py@@</code></li>
+                  </ul>
+                  <pre class="overflow-visible!"><div class="contain-inline-size rounded-2xl relative"><div class="flex items-center px-4 py-2 text-xs justify-between h-9 select-none">python</div><div class="sticky top-9"><div class="absolute end-0 bottom-0 flex h-9 items-center pe-2"><div class="flex items-center gap-4 rounded-sm px-2 text-xs"><button class="flex gap-1 items-center select-none py-1" aria-label="Copy"><svg width="24" height="24"><path d="M0 0"></path></svg>Copy</button></div></div></div><div class="overflow-y-auto p-4" dir="ltr"><code class="whitespace-pre! language-python"><span><span class="hljs-keyword">import</span> requests
+
+
+<span class="hljs-keyword">class</span> <span class="hljs-title class_">Client</span>:
+    <span class="hljs-keyword">def</span> <span class="hljs-title function_">get</span>(<span class="hljs-params">self, url</span>):
+        <span class="hljs-keyword">return</span> requests.get(url, timeout=<span class="hljs-number">10</span>)
+</span></code></div></div></pre>
+                  <p>Before the next step I need to see:<br>
+<code>@@READ pyproject.toml@@</code><br>
+<code>@@READ tests/test_client.py@@</code></p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="flex min-h-[46px] justify-start">
+            <div class="flex flex-wrap items-center p-1 select-none">
+              <button class="rounded-lg" aria-label="Copy" data-testid="copy-turn-action-button"><svg width="20" height="20"><path d="M0 0"></path></svg></button>
+              <button class="rounded-lg" aria-label="Good response" data-testid="good-response-turn-action-button"><svg width="20" height="20"><path d="M0 0"></path></svg></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </article>
+</main>
+<form class="w-full"><div id="prompt-textarea" contenteditable="true" class="ProseMirror"><p><br></p></div></form>

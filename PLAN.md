@@ -37,24 +37,25 @@ It's a personal tool. It runs only on your machine, talks only to `127.0.0.1`, a
 
 ### Extension (`apps/extension`)
 
-- **Content script** runs only on `https://chatgpt.com/*`.
-  - Watches the conversation with a `MutationObserver`, and waits for an assistant message to finish streaming before parsing it with `parseFileBlocks`.
-  - Injects diff and command cards under the message, inside a shadow root so page CSS can't leak in.
-  - Writes text into the composer (for "Send files" and "Run & send output").
-  - Holds no secrets.
-- **Background service worker** owns the single connection to the desktop app. It relays messages between the content script, the side panel and the desktop, and reconnects with backoff.
-- **Side panel** mirrors the desktop state: connection, project, mode, files in context, activity, step counter and Stop.
-- **Permissions**: `storage` (the pairing key in `chrome.storage.local`), `sidePanel` and `alarms` (wakes the worker to reconnect), plus one host permission, `http://127.0.0.1/*`, for the service worker's HTTP calls to the desktop (see "Phase 2 decisions"). The content script matches only chatgpt.com.
+- **Content script** runs only on `https://chatgpt.com/*`, in the top frame.
+  - Watches the conversation with one debounced `MutationObserver`, waits for an assistant message to finish streaming, turns it into text (`messageToText`) and parses it with `parseChat`.
+  - Injects diff, READ and Apply-all cards under the message, each in a closed shadow root so page CSS can't leak in or out.
+  - Writes text into the composer (session prompt, files the chat asked for, "Send files"). It never presses send.
+  - Holds no secrets and never touches `chrome.storage`. File access and card state go through the worker.
+- **Background service worker** owns the single connection to the desktop app. It relays messages between the content script, the side panel and the desktop, reconnects with backoff, and owns chat sessions and card state.
+- **Side panel** mirrors the desktop state: connection, project, the chat session in the active tab (start, end, stats), Send files, and later mode, step counter and Stop.
+- **Permissions**: `storage` (the pairing key, sessions and card state in `chrome.storage.local`; tab bindings in `chrome.storage.session`), `sidePanel` and `alarms` (wakes the worker to reconnect), plus one host permission, `http://127.0.0.1/*`, for the service worker's HTTP calls to the desktop (see "Phase 2 decisions"). The content script matches only chatgpt.com. `web_accessible_resources` (added by CRXJS) holds the content script's chunks and two font files, matched to chatgpt.com only.
 
 ### Shared (`packages/shared`)
 
 Pure TypeScript with no Node or DOM dependencies (except `styles.css`):
 
 - types (`FileEdit`, `Mode`, …)
-- the `@@FILE` parser
+- the chat parser (`parseChat`: `@@FILE`, `@@READ`, `@@CONTEXT`) and the text Bridge puts in the composer (`buildSessionPrompt`, `buildContextMessage`, `pickFence`)
+- the diff helper (`diffFile`, on jsdiff)
 - the protocol message types and schemas (Phase 2)
 - the logo geometry
-- the design tokens
+- the design tokens (`tokens.css`, imported by `styles.css`)
 
 It's consumed as TS source through `workspace:*`. Vite bundles it into every target. electron-vite needs `externalizeDepsPlugin({ exclude: ['@bridge/shared'] })` so main and preload bundle it rather than `require()` a `.ts` file. With that in place, no build step or tsup is needed.
 
@@ -62,8 +63,8 @@ It's consumed as TS source through `workspace:*`. Vite bundles it into every tar
 
 | Link                        | Transport                                                                     | Auth                                                                                                                                                          |
 | --------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Content script ↔ background | `chrome.runtime` messages                                                     | Chrome-internal                                                                                                                                               |
-| Side panel ↔ background     | `chrome.runtime` port                                                         | Chrome-internal                                                                                                                                               |
+| Content script ↔ background | `chrome.runtime` messages, zod-validated both ways                            | Worker accepts only the top frame of an `https://chatgpt.com` tab, and only chat requests; file requests need an active session in that tab                   |
+| Side panel ↔ background     | `chrome.runtime` port and messages                                            | Only the extension's own pages                                                                                                                                |
 | Background ↔ desktop        | WebSocket to `ws://127.0.0.1:<port>`, JSON envelopes `{v, id, type, payload}` | Server checks `Origin` is the extension's `chrome-extension://<id>`, then a mutual HMAC challenge over the pairing key. The token is never sent after pairing |
 | Renderer ↔ main             | Electron IPC via the preload API                                              | Process boundary; main validates every payload                                                                                                                |
 
@@ -124,6 +125,32 @@ Open points carried forward:
 - A local process that can write into the project could swap a checked folder for a symlink between the sandbox check and the write (TOCTOU). Bridge resolves each component just before using it, which keeps the window small but not zero. That threat (malware already writing to your project) is outside what Bridge defends against.
 - A hard link inside the project to a file outside can't be told apart from a normal file. Reading one would read the outside file. Writes replace the directory entry (temp file plus rename), so they never modify the outside file.
 
+## Phase 4 decisions
+
+Chat integration, Manual mode only. Code: `packages/shared/src/{parser,prompts,diff}.ts`, extension `src/content/chat/`, `src/background/{sessions,cards,senders}.ts`, `src/sidepanel/{SessionSection,SendFiles}.tsx`.
+
+- **Nothing happens on its own.** Nothing is auto-submitted, auto-applied or sent without a click. Reading a file to show a diff or a READ card's sizes is the only thing that happens when a card appears.
+- **Sessions.** Start session (side panel) needs a connected app, an open project and a chatgpt.com tab whose layout Bridge can read. It lists the tree, builds `buildSessionPrompt`, shows the character count first, and inserts it into the composer. A session belongs to a conversation (`/c/<id>`, also `/g/<gpt>/c/<id>`) and lives in `chrome.storage.local`. In a new chat it waits on the tab (`chrome.storage.session`) and binds when the URL gets an id. End session marks it ended: cards already shown stay but are disabled, and nothing new is parsed. Sessions are dropped 30 days after they start or end.
+- **Only assistant messages.** The content script reads only `[data-message-author-role="assistant"]`. User messages, including files Bridge sent, are never parsed. The parser also skips `@@CONTEXT` blocks and any fence without a marker, so an echoed context block or an example inside a code block is never an edit.
+- **One parser, no HTML regex.** `messageToText` walks the message in order: paragraphs and list items become lines, `<br>` a line break, inline `<code>` stays in backticks, `<strong>`/`<em>` become `__…__`/`_…_` (markdown turns `__init__.py` into bold "init"), and each `<pre>` becomes one fenced block of `code.textContent` (not the header with the language and Copy), with a fence longer than any backtick run inside. Prose lines that look like fences are escaped, so the Nth fence in the text is the Nth `<pre>`, which is where the card goes.
+- **Streaming.** A message is parsed once it has no streaming marker and its turn shows the action buttons. If the page has no action buttons Bridge recognises, it falls back to "no stop button on the page". Mutations are debounced 250ms. A changed message text (regenerate, edit) rebuilds that message's cards.
+- **Selectors** are all in `src/content/chat/selectors.ts`, each with fallbacks. If a chat page has a composer slot or turns but Bridge can't find the composer or any messages for 5 seconds, the tab reports `layout: unknown` and the side panel shows "Bridge can't read this page layout" instead of Start session.
+- **Block keys** are `conversationId:messageId:blockIndex:contentHash` (first 16 hex of SHA-256 over path and content). The worker keeps each card's state (`pending`, `applied`, `rejected`, `undone`, plus `opId` and counts) under that key in `chrome.storage.local`, so a reload shows it as it was. Records not updated for 30 days are pruned on every write. A tab may only write card state for the conversation it has an active session in.
+- **Cards** are built with `createElement` and text nodes only; nothing from the chat goes through `innerHTML`. Each lives in a **closed** shadow root after its code block, so page scripts can't reach in through `host.shadowRoot`. They're re-inserted when a re-render drops them. Tokens come from `@bridge/shared/tokens.css` with `:root` swapped for `:host`, plus copies keyed to the page's `html.dark` / `html.light`, so cards follow the page's theme.
+- **Apply flow.** The card reads the file when it appears (content and hash, or `not-found` for a new file) and diffs it in the extension (`diffFile`; line endings ignored, since the desktop keeps each file's EOL). Apply writes with that `baseHash`. On `conflict` (or `exists`) the card re-reads, shows the new diff with an "updated since" note, and Apply sends the new hash. Undo sends `undo { opId }`, never forced. Sandbox refusals show the card as `blocked`. A `suspectedPartial` block needs a second click. Apply all (2+ applicable files, partial ones excluded) applies in order and stops at the first failure.
+- **Composer.** Text goes in with a synthetic `paste` event carrying `text/plain`, which ProseMirror handles like a real paste. If the page doesn't handle it, `execCommand('insertText')` is the fallback, and an old `<textarea>` composer gets its value set through the prototype setter. Above 30,000 characters (`COMPOSER_WARN_CHARS`) the panel and READ card warn that the chat may turn the paste into an attachment or cut it.
+- **Send files** (side panel) uses `tree` for a checkbox tree with a filter and a budget meter (file sizes plus format overhead), at most 50 files per send. The worker reads each and inserts them with `buildContextMessage`; refused files are listed by reason, not sent.
+- **Messaging.** Every `chrome.runtime` message is a zod schema in `src/messages.ts`. The worker classifies the sender: an extension page (URL under `chrome-extension://<id>/`) or the content script in frame 0 of a tab whose URL origin is exactly `https://chatgpt.com`. Each gets its own request list. The content script accepts `insert-text` and `session-changed` only from the worker (no `sender.tab`). The worker proxies `read`, `write` and `undo` (and `tree` for the panel). No new server operation was added.
+- **"via chat".** `write` gained an optional `source: 'chat'`, which the worker sets for card writes. The desktop stores it in the op log and the Activity list says "Modified · via chat".
+- **Fonts.** Geist and Geist Mono (latin subsets) are loaded from the extension through `FontFace` on the page's `document.fonts`, because `@font-face` doesn't work inside a shadow root. If chatgpt.com's CSP blocks `chrome-extension://` fonts, the load fails quietly (a console note) and the token stacks fall back to `ui-sans-serif`/`system-ui` and `ui-monospace`. This hasn't been checked against the live site's CSP yet; the e2e stand-in page has no CSP.
+
+Open points carried forward:
+
+- chatgpt.com can change its markup at any time. The likeliest breaks are the turn action buttons (end-of-stream detection), the streaming class, and the code block layout inside `<pre>`. See `selectors.ts` and the fixtures README for how to refresh them.
+- The adapter turns every `<strong>` into `__…__`, so a marker like `@@FILE a/**b**.ts@@` written without inline code would read as `a/__b__.ts`. The session prompt tells the chat to put markers in inline code, which avoids markdown entirely.
+- `web_accessible_resources` lets chatgpt.com detect that Bridge is installed (it can probe the font URLs). Nothing secret is exposed.
+- `chrome.storage.local` is readable by content scripts by default, and it holds the pairing key. Bridge's content script never reads storage, but a compromised renderer could. Restricting it (`setAccessLevel`) or moving the key is a Phase 7 hardening item.
+
 ## Modes
 
 | Mode           | Edits                                                                   | Commands                                                                                                                                                                                                                                       |
@@ -150,36 +177,38 @@ These rules don't change between phases. CLAUDE.md repeats them.
 6. **No telemetry**, no analytics, and no network calls except loopback.
 7. **No OpenAI or Codex branding.** Bridge is its own product. Refer to "the chat" in UI copy.
 
-## The `@@FILE` format
+## The chat format
 
-Each edit is one whole file:
+Each edit is one whole file, a marker line (in inline code, so markdown leaves `__init__.py` alone) and one fenced block:
 
 ````
-@@FILE src/hooks/useTheme.js@@
+`@@FILE src/hooks/useTheme.js@@`
 ```js
 ...full file contents...
 ```
 ````
 
-- The header is on its own line. The path is everything between `@@FILE ` and the closing `@@`, and may contain spaces. It's relative to the project root.
-- The fence starts on the very next line. The language tag is optional. Backticks or tildes work, 3 or more.
+- The marker is on its own line, plain or in inline code, optionally as a list item. The path is everything between `@@FILE ` and the closing `@@`, and may contain spaces. It's relative to the project root.
+- The fence follows the marker, with at most two blank lines between. The language tag is optional. Backticks or tildes work, 3 or more.
 - The block ends at a line made only of the same fence character, at least as long as the opener. Wrap a file that itself contains a triple-backtick fence in four backticks.
 - Content is the text between the fences, plus a trailing newline. CRLF is normalised to LF.
-- A block whose fence never closes is ignored. That's what you see mid-stream or in a truncated reply.
+- A fence that never closes ends parsing. That's what you see mid-stream or in a truncated reply.
+- Content with a placeholder comment (`// ...rest unchanged`, `# ... existing code`, `/* ... */`, "rest of the file") is flagged `suspectedPartial`. Only comment lines are checked, so `...rest` spreads and Python's `...` don't count.
+- `` `@@READ path@@` `` (one per line, or several on one line) asks Bridge for a file. The READ card lists them.
+- Files Bridge sends are `` `@@CONTEXT path@@` `` plus a fence longer than any backtick run in the file (`pickFence`). The parser skips them, so they're never edits.
 - The parser does no path validation. That's the desktop sandbox's job.
 - Not yet supported: deletes, renames and partial patches. Possible later syntax is `@@DELETE path@@`.
 
-The "Start session" prompt (Phase 6) teaches the chat this format and the rules (whole files only, one block per file, relative paths).
+The "Start session" prompt (`buildSessionPrompt`) teaches the chat these rules: whole files only, no placeholders, one block per file, relative paths, ask with `@@READ` instead of guessing. It lists the project tree as an outline, about 1,500 entries at most; past that, the deepest folders are summarised as "(N more entries)".
 
 ## Phases
 
-| #   | Phase                    | Goal                                                               | Deliverables                                                                                                                                                                                                                     |
-| --- | ------------------------ | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Monorepo setup           | `pnpm install && pnpm dev` runs both apps, which share one package | Workspace, strict TS, lint, format, tests, CI. `@bridge/shared` with types and the parser (tested). Hardened Electron shell. MV3 extension stub. Design tokens and logo. Docs                                                    |
-| 2   | Local server and pairing | The extension and desktop connect securely                         | WS server on 127.0.0.1 with Origin and token checks. Pairing-code flow. Protocol envelope and schemas in shared (zod). Background connection with reconnect. Status pill live in both UIs                                        |
-| 3   | Project and files        | The extension can read and write inside one folder, with undo      | Folder picker and recents. Path sandbox with 40+ attack tests. `tree`, `read`, `write`, `undo` over the socket. Atomic writes with conflict checks. Backups and op log in userData. Activity list with undo. Dev-only test field |
-| 4   | Reading the chat         | Bridge sees edits as they arrive and Manual mode works end to end  | Message observer with end-of-stream detection. Parsing per message, deduped by message id. Diff cards in a shadow root, diffed against `read`. Apply (`write` with `baseHash`) and Reject. Error states on cards                 |
-| 5   | Modes and undo           | Auto-apply is safe to leave on                                     | Mode switch persisted and synced between the desktop and the side panel. Auto-apply with Undo on every card. Files-in-context tree. Undo of a whole message. Delete and rename                                                   |
-| 6   | Sending context          | The chat can see your project                                      | "Start session" prompt with format rules. "Send files" picker that fills the composer with chosen files (size-capped), built on `tree` and `read`                                                                                |
-| 7   | Commands and full auto   | Close the loop                                                     | Allowlisted `spawn` runner. Command cards with "Run & send output". Full-auto loop with step limit, Stop and the step counter. Output truncation                                                                                 |
-| 8   | Hardening and release    | Safe to use daily                                                  | Security review against this doc. E2E smoke tests. Electron upgraded to a supported major. electron-builder mac and win packages. Extension zip. Docs pass                                                                       |
+| #   | Phase                    | Goal                                                               | Deliverables                                                                                                                                                                                                                                      |
+| --- | ------------------------ | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Monorepo setup           | `pnpm install && pnpm dev` runs both apps, which share one package | Workspace, strict TS, lint, format, tests, CI. `@bridge/shared` with types and the parser (tested). Hardened Electron shell. MV3 extension stub. Design tokens and logo. Docs                                                                     |
+| 2   | Local server and pairing | The extension and desktop connect securely                         | WS server on 127.0.0.1 with Origin and token checks. Pairing-code flow. Protocol envelope and schemas in shared (zod). Background connection with reconnect. Status pill live in both UIs                                                         |
+| 3   | Project and files        | The extension can read and write inside one folder, with undo      | Folder picker and recents. Path sandbox with 40+ attack tests. `tree`, `read`, `write`, `undo` over the socket. Atomic writes with conflict checks. Backups and op log in userData. Activity list with undo. Dev-only test field                  |
+| 4   | Chat integration         | Manual mode works end to end in the chat: read edits, send context | Start session prompt. Parser for FILE/READ/CONTEXT with partial detection. DOM adapter with fixtures. Diff cards in a shadow root with Apply, Reject, Undo, Apply all, conflict re-read. READ card. Composer insert. Send files with budget meter |
+| 5   | Modes and undo           | Auto-apply is safe to leave on                                     | Mode switch persisted and synced between the desktop and the side panel. Auto-apply with Undo on every card. Files-in-context tree. Undo of a whole message. Delete and rename                                                                    |
+| 6   | Commands and full auto   | Close the loop                                                     | Allowlisted `spawn` runner. Command cards with "Run & send output". Full-auto loop with step limit, Stop and the step counter. Output truncation                                                                                                  |
+| 7   | Hardening and release    | Safe to use daily                                                  | Security review against this doc. E2E smoke tests. Electron upgraded to a supported major. electron-builder mac and win packages. Extension zip. Docs pass                                                                                        |

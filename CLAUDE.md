@@ -12,7 +12,7 @@ pnpm workspaces · TypeScript (strict) · Electron + electron-vite + React · Ch
 
 - `apps/desktop`: `src/main` (Node, the only code that touches disk or spawns), `src/preload` (`window.bridge`), `src/renderer` (React)
 - `apps/extension`: `manifest.config.ts`, `src/content` (chatgpt.com), `src/background` (service worker), `src/sidepanel` (React)
-- `packages/shared`: `@bridge/shared` TS source (types, parser, logo geometry, `styles.css` tokens). No build step
+- `packages/shared`: `@bridge/shared` TS source (types, chat parser and prompts, diff helper, logo geometry, `tokens.css` + `styles.css`). No build step
 - `archive/prototype`: old prototype, reference only. Not built or linted. Don't import from it
 
 ## Commands

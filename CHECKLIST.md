@@ -29,7 +29,7 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [x] Desktop: `createWindowOptions()` tested for `contextIsolation`, `sandbox`, `nodeIntegration: false`, `webSecurity`
 - [x] Desktop: test that the production CSP has no `unsafe-inline` or `unsafe-eval`
 - [x] Extension: manifest tests (permissions exactly `storage` + `sidePanel`, chatgpt.com only, no `<all_urls>` or `host_permissions`)
-- [ ] Delete `archive/prototype/` once Phases 2–7 no longer need it for reference
+- [ ] Delete `archive/prototype/` once Phases 2–6 no longer need it for reference
 
 ## Phase 2: Local server and pairing
 
@@ -89,17 +89,33 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [x] Tests: 49 sandbox attack cases plus valid cases and real symlinks; write conflict/exists/atomic/EOL; undo modify/create/conflict/prune; tree caps and ignores; service; socket requests. Real temp folders, no fs mocks
 - [x] `e2e/project.cjs`: tree, read, write, undo and refusals against the real app and a dev build of the extension
 
-## Phase 4: Reading the chat
+## Phase 4: Chat integration (Manual mode)
 
-- [ ] `MutationObserver` on the conversation container. Selectors isolated in one module
-- [ ] Detect end of streaming before parsing a message
-- [ ] Parse each assistant message once, keyed by message id
-- [ ] Shadow-root mount point under a message for injected cards
-- [ ] Diff card for each `FileEdit`, diffed against `read`. Show `+N −M` and diff rows
-- [ ] Apply: `write` with the `baseHash` from the read. Reject: mark the card rejected, nothing written
-- [ ] Card error state with a human-readable reason (`FILE_ERROR_LABELS`)
-- [ ] Activity rows in the side panel: applied, waiting for review, blocked
-- [ ] Handle page navigation between conversations (SPA route changes)
+- [x] Old Phase 6 ("Sending context") folded in. Phases renumbered in PLAN.md: 5 Modes, 6 Commands, 7 Hardening
+- [x] `buildSessionPrompt({ projectName, tree })`: FILE/READ/CONTEXT rules, whole files only, tree outline capped near 1,500 entries with folders summarised
+- [x] `formatContextBlock` / `buildContextMessage` with `pickFence` (longer than any backtick run in the file)
+- [x] `parseChat`: plain and inline-code markers, list bullets, `__init__.py`, `@@READ` (one or several per line), skips `@@CONTEXT` and unmarked fences, stops at an unterminated fence, `suspectedPartial`, `fence` index per edit
+- [x] `diffFile` on jsdiff: new / modified / unchanged, CRLF-insensitive, hunks with 3 lines of context, 1s timeout fallback
+- [x] `selectors.ts` holds every chatgpt.com selector with fallbacks; `checkLayout` drives "Bridge can't read this page layout" in the side panel
+- [x] `messageToText` DOM → text adapter (assistant messages only; `code.textContent`, not the code block header)
+- [x] Fixtures in `apps/extension/fixtures/chatgpt/`: single edit, multiple edits, streaming, code block header, user message
+- [x] One debounced `MutationObserver`; parse only after the streaming marker goes and the action buttons appear; re-check on regenerate/edit; re-attach when `<main>` is replaced
+- [x] Block key `conversationId:messageId:blockIndex:contentHash`; cards re-inserted idempotently after re-renders
+- [x] Conversation id from `/c/<id>`; sessions bind when a new chat gets its id; client-side navigation followed by polling the URL
+- [x] Diff card in a closed shadow root after its code block, text-only rendering, badges (`new`, `modified`, `unchanged`, `conflict`, `blocked`, `partial?`), `+N −M`, collapsible diff capped at 400 rows with "Show all"
+- [x] Apply with `baseHash`; `conflict` re-reads and shows the new diff with an "updated since" note; Reject; Undo by `opId`; partial needs a second click
+- [x] Apply all for 2+ applicable files, in order, stops at the first error
+- [x] Card state in `chrome.storage.local` by block key (worker-owned), survives reload, pruned after 30 days
+- [x] READ card: requested paths with sizes or "blocked · reason", character count, **Send these files** into the composer (no submit)
+- [x] Composer insert: synthetic paste (`DataTransfer` text/plain), `execCommand('insertText')` fallback, never sends; warn above 30k characters
+- [x] Side panel: Start session (count shown first), "Session active" with short conversation id, applied/pending counts, files sent, End session (cards disabled)
+- [x] Side panel: Send files tree with checkboxes, filter, budget meter, max 50 files
+- [x] Worker: zod-validated messages; content-script requests only from frame 0 of `https://chatgpt.com` tabs, panel requests only from extension pages; file requests need an active session
+- [x] `write` carries `source: 'chat'`; desktop Activity shows "· via chat"
+- [x] Fonts from the extension via `FontFace`, system font fallback if blocked
+- [x] Tests: parser, prompts and fence picking, diff, adapter on fixtures (happy-dom), cards and Apply all, composer, card store and keys, sessions, sender checks
+- [x] `e2e/chat.cjs`: stand-in chatgpt.com from the fixtures, real app and extension build: start session, apply, undo, Apply all, READ send, conflict, reload, regenerate, end session
+- [ ] Manual run on the real chatgpt.com (README "Use it in the chat"); confirm the live page's CSP allows the extension fonts
 
 ## Phase 5: Modes and undo
 
@@ -109,14 +125,7 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [ ] Delete and rename operations (`@@DELETE path@@`), backed up like writes
 - [ ] Files-in-context tree in the side panel with `new` tags
 
-## Phase 6: Sending context
-
-- [ ] "Start session" inserts a prompt that teaches the `@@FILE` format
-- [ ] "Send files" picker (built on `tree` and `read`) fills the composer
-- [ ] Insert text into the composer without auto-sending
-- [ ] Activity row: "Sent N files to chat"
-
-## Phase 7: Commands and full auto
+## Phase 6: Commands and full auto
 
 - [ ] Allowlist of exact argv prefixes in one module, with tests
 - [ ] `spawn` with `shell: false`, cwd = root, timeout, output cap, scrubbed env
@@ -125,11 +134,12 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [ ] Step limit (default 10) and "Step N of M" counter
 - [ ] Stop button ends the loop immediately in both UIs
 
-## Phase 8: Hardening and release
+## Phase 7: Hardening and release
 
 - [ ] Security review against PLAN.md "Security model"
 - [x] Upgrade Electron to a supported major (34 → 44, done at the start of Phase 2)
 - [ ] E2E smoke test: the parser runs in the content script, apply and undo work against a temp project
+- [ ] Keep the pairing key out of content-script reach (`chrome.storage.local` access level, or move it)
 - [ ] electron-builder packages for macOS (dmg, zip) and Windows (nsis)
 - [ ] Extension zip for "Load unpacked" or store upload
 - [ ] README and docs pass. Remove placeholder copy
