@@ -96,7 +96,7 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 ## Phase 8: Hardening and release
 
 - [ ] Security review against PLAN.md "Security model"
-- [ ] Upgrade Electron to a supported major (currently 34)
+- [x] Upgrade Electron to a supported major (34 → 44, done at the start of Phase 2)
 - [ ] E2E smoke test: the parser runs in the content script, apply and undo work against a temp project
 - [ ] electron-builder packages for macOS (dmg, zip) and Windows (nsis)
 - [ ] Extension zip for "Load unpacked" or store upload

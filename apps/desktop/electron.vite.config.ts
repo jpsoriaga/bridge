@@ -1,12 +1,12 @@
 import { resolve } from 'path';
-import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
+import { defineConfig } from 'electron-vite';
 import type { Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import pkg from './package.json';
 
 // @bridge/shared ships TypeScript source, so it must be bundled rather than
 // externalized (Electron cannot require .ts at runtime).
-const externalize = externalizeDepsPlugin({ exclude: ['@bridge/shared'] });
+const build = { externalizeDeps: { exclude: ['@bridge/shared'] } };
 
 // Vite injects CSS through <style> tags during dev, which the production CSP
 // blocks. Relax style-src for the dev server only; builds keep the strict policy.
@@ -21,7 +21,7 @@ function devStyleCsp(): Plugin {
 
 export default defineConfig({
   main: {
-    plugins: [externalize],
+    build,
     resolve: {
       alias: {
         '@main': resolve('src/main')
@@ -29,7 +29,7 @@ export default defineConfig({
     }
   },
   preload: {
-    plugins: [externalize],
+    build,
     define: {
       __BRIDGE_VERSION__: JSON.stringify(pkg.version)
     }
