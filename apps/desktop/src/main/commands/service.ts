@@ -21,8 +21,10 @@ export interface CommandServiceOptions {
   allowlist: () => readonly string[];
   envPatterns: () => readonly string[];
   timeoutMs: () => number;
-  /** The environment commands start from. */
-  env?: () => Readonly<Record<string, string | undefined>>;
+  /** The environment commands start from (with the login shell's PATH, once it's read). */
+  env?: () =>
+    | Readonly<Record<string, string | undefined>>
+    | Promise<Readonly<Record<string, string | undefined>>>;
   platform?: NodeJS.Platform;
   /** A run was refused: for the activity list. */
   onRefused?: (argv: readonly string[], code: FileErrorCode) => void;
@@ -56,7 +58,7 @@ export class CommandService {
     if (this.options.runner.current) return fail('busy');
 
     const platform = this.options.platform ?? process.platform;
-    const env = filterEnv(this.options.env?.() ?? process.env, this.options.envPatterns());
+    const env = filterEnv((await this.options.env?.()) ?? process.env, this.options.envPatterns());
     const resolved = await resolveExecutable(params.argv[0]!, { root, env, platform });
     if (!resolved.ok) return refuse(resolved.code);
     if (

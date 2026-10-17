@@ -50,6 +50,7 @@ const api: BridgeApi = {
     ipcRenderer.invoke(IPC.setEnvPatterns, patterns) as Promise<SaveListResult>,
   setRunSettings: (settings) =>
     ipcRenderer.invoke(IPC.setRunSettings, settings) as Promise<boolean>,
+  setPathOverride: (path) => ipcRenderer.invoke(IPC.setPathOverride, path) as Promise<boolean>,
   cancelRun: () => ipcRenderer.invoke(IPC.cancelRun) as Promise<void>,
   stopLoop: () => ipcRenderer.invoke(IPC.stopLoop) as Promise<void>,
   onRunOutput: (listener) => {

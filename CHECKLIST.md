@@ -157,16 +157,21 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 
 ## Phase 6: App UI polish
 
+- [x] Phases renumbered in PLAN.md: 7 is security hardening, 8 is packaging and release
+- [x] Step 0: login shell PATH read once at startup (`$SHELL -ilc env`, 5s timeout, markers), fallback with a warning in Settings, PATH override field; tests for `.zshrc` junk, timeout, fallback
 - [ ] Desktop UI pass (not started)
 - [ ] Carried over from the old Phase 5: files-in-context tree with `new` tags in the side panel
 - [ ] Carried over from the old Phase 5: delete and rename (`@@DELETE path@@`), backed up like writes
 
-## Phase 7: Hardening and release
+## Phase 7: Security hardening
 
 - [ ] Security review against PLAN.md "Security model"
 - [x] Upgrade Electron to a supported major (34 → 44, done at the start of Phase 2)
 - [ ] E2E smoke test: the parser runs in the content script, apply and undo work against a temp project
 - [x] Keep the pairing key out of content-script reach (moved to the worker's IndexedDB at the start of Phase 5)
+
+## Phase 8: Packaging and release
+
 - [ ] electron-builder packages for macOS (dmg, zip) and Windows (nsis)
 - [ ] Extension zip for "Load unpacked" or store upload
 - [ ] README and docs pass. Remove placeholder copy

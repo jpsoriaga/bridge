@@ -11,7 +11,7 @@ import {
   type Mode
 } from '@bridge/shared';
 import type { ActivityEntry, DesktopState, OpenFolderResult, UndoOutcome } from '../../preload/api';
-import { CommandsSection, RunningCommand } from './Commands';
+import { CommandsSection, PathOverride, RunningCommand } from './Commands';
 import { Logo } from './Logo';
 import { AutoToast, LoopBar, LoopStatus } from './Loop';
 import { PatternList } from './PatternList';
@@ -542,6 +542,7 @@ export function App() {
                 invalidText="Use a variable name, with * as a wildcard."
                 save={(patterns) => window.bridge.setEnvPatterns(patterns)}
               />
+              <PathOverride key={state.commandPath.override} commandPath={state.commandPath} />
             </>
           )}
         </section>

@@ -43,6 +43,8 @@ export interface DesktopState {
   defaultEnvPatterns: readonly string[];
   envPatterns: string[];
   runSettings: RunSettings;
+  /** The PATH commands run with, and where it came from. */
+  commandPath: CommandPath;
   running: RunningCommand | null;
   /** The Full auto loop as the extension last reported it. */
   loop: LoopReport | null;
@@ -82,6 +84,19 @@ export interface RunningCommand {
   runId: string;
   command: string;
   startedAt: number;
+}
+
+/**
+ * Where commands' PATH comes from: the login shell (macOS, Linux), the app's own (Windows),
+ * the app's own because the login shell couldn't be read (`fallback`, with `warning`), or
+ * the user's override. `null` source: the login shell is still being read.
+ */
+export interface CommandPath {
+  source: 'login-shell' | 'inherited' | 'fallback' | 'override' | null;
+  path: string;
+  warning?: string;
+  /** The user's override, or '' for none. */
+  override: string;
 }
 
 /** Command and Full auto settings, edited only in the app. */
@@ -126,6 +141,8 @@ export interface BridgeApi {
   setGatedPatterns(patterns: string[]): Promise<SaveListResult>;
   setEnvPatterns(patterns: string[]): Promise<SaveListResult>;
   setRunSettings(settings: RunSettings): Promise<boolean>;
+  /** Replaces the PATH commands get. '' goes back to the login shell's. False if invalid. */
+  setPathOverride(path: string): Promise<boolean>;
   /** Cancels the running command, if any. */
   cancelRun(): Promise<void>;
   /** Stops the Full auto loop and cancels its command. Reverts nothing. */
@@ -152,6 +169,7 @@ export const IPC = {
   setGatedPatterns: 'bridge:set-gated-patterns',
   setEnvPatterns: 'bridge:set-env-patterns',
   setRunSettings: 'bridge:set-run-settings',
+  setPathOverride: 'bridge:set-path-override',
   cancelRun: 'bridge:cancel-run',
   stopLoop: 'bridge:stop-loop',
   runOutput: 'bridge:run-output'

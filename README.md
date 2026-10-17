@@ -192,7 +192,7 @@ Manual end-to-end scripts (Playwright, not in CI) live in [`e2e/`](e2e/README.md
 - **No cards in the chat**: check the side panel says **Session active** for this tab. Cards only appear once a reply has finished. If the chat tab was open before the extension was loaded or reloaded, reload the tab.
 - **Cards use the system font**: chatgpt.com's content security policy blocked the extension's fonts. Cards still work.
 - **A RUN card says "not allowed"**: the command isn't on the allowlist, or uses shell syntax. Add it in the app's **Commands** section if you want it.
-- **"That program isn't installed or isn't on the PATH"**: the app looks programs up on the PATH it was started with. On macOS, an app opened from the Dock may not see your shell's PATH; start it from a terminal, or allowlist the program's full path.
+- **"That program isn't installed or isn't on the PATH"**: on macOS and Linux the app reads your login shell's PATH once at startup, so it works when opened from the Dock too. If that failed, **Settings → Commands** says why; set **PATH for commands** there (paste the output of `echo $PATH`), or allowlist the program's full path.
 - **Full auto paused with "no new message appeared"**: the chat page didn't take the send (its send button may have changed). Check the message box and press **Resume**.
 - **Side panel stays on "Can't reach Bridge"**: the app answered but the handshake failed. If you unpaired in the app while Chrome was closed, click **Unpair** in the side panel and pair again. Otherwise the extension ID may not match: check that the extension was loaded from `apps/extension/dist` and that the ID on `chrome://extensions` is the one above.
 

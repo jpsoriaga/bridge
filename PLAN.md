@@ -202,8 +202,22 @@ Modes, the command runner and Full auto. Code: shared `commands.ts`, `loop.ts`, 
 Open points carried forward:
 
 - The send button, user-turn and error-banner selectors are best guesses from the page as of October 2026, checked only against the e2e stand-in. Check them on the live site (manual test script in `e2e/README.md`).
-- An Electron app started from the macOS Dock doesn't get the shell's PATH, so `pnpm` from nvm/Volta may be "not found". Starting the app from a terminal works; reading the login shell's PATH is a possible fix later.
+- ~~An Electron app started from the macOS Dock doesn't get the shell's PATH.~~ Fixed at the start of Phase 6 (see "Phase 6 decisions").
 - The Windows-only tests (the `.cmd` round-trip in `runner.test.ts`, batch-argument refusal in `service.test.ts`) skip on macOS and Linux and haven't run yet; they run on the Windows CI job.
+
+## Phase 6 decisions
+
+App UI polish, delete and rename, files in context, the file watcher, and edge cases.
+
+### Login shell PATH (Step 0)
+
+An app opened from the Dock or a desktop launcher gets only the system PATH, so `pnpm` from nvm, Volta or Homebrew is "not found". Code: desktop `src/main/commands/login-env.ts`.
+
+- At startup on macOS and Linux, main runs `$SHELL -ilc '<marker>; env; <marker>'` **once** (`loginEnvOnce`), with no stdin, in its own process group, and kills the group after 5s or 1 MB of output. The script is a constant; the random marker reaches it through the environment (`BRIDGE_ENV_MARKER`), so nothing is spliced into shell text. Only the lines between the two marker lines count, so whatever `.zshrc` prints is ignored. Only `PATH` is taken from it; the rest of the command environment is still the app's own, filtered as before.
+- `$SHELL` must be absolute (falling back to the account's shell from `os.userInfo()`). If anything fails (no shell, timeout, no markers, a PATH with no absolute entry), commands get the app's own PATH and Settings shows why, with the PATH override as the fix.
+- **PATH override** (Settings → Commands): replaces the PATH for commands. It must have at least one absolute entry and no control characters. Clearing it goes back to the login shell's. It doesn't change how executables are resolved: relative PATH entries are still skipped and programs inside the project are still refused.
+- Windows apps get the full PATH from the system, so the shell isn't run there (`inherited`).
+- The first command after launch waits for the read if it's still going.
 
 ## Modes
 
@@ -265,4 +279,5 @@ The "Start session" prompt (`buildSessionPrompt`) teaches the chat these rules: 
 | 4   | Chat integration           | Manual mode works end to end in the chat: read edits, send context | Start session prompt. Parser for FILE/READ/CONTEXT with partial detection. DOM adapter with fixtures. Diff cards in a shadow root with Apply, Reject, Undo, Apply all, conflict re-read. READ card. Composer insert. Send files with budget meter                                           |
 | 5   | Modes, commands, Full auto | Close the loop, safely                                             | Mode switch owned by the app, mirrored in the extension and on the cards. Auto-apply with Undo and Undo all. Gated files. Allowlisted `spawn` runner with env filter, timeout, tree kill, output cap. RUN cards. Full auto loop with step limit, Stop, pause reasons, step counter and chip |
 | 6   | App UI polish              | The app is pleasant to use daily                                   | Desktop UI pass. Carried over from the old Phase 5 and not started: files-in-context tree in the side panel, delete and rename (`@@DELETE path@@`)                                                                                                                                          |
-| 7   | Hardening and release      | Safe to use daily                                                  | Security review against this doc. E2E smoke tests. Electron upgraded to a supported major. electron-builder mac and win packages. Extension zip. Docs pass                                                                                                                                  |
+| 7   | Security hardening         | Safe to use daily                                                  | Security review against this doc. E2E smoke tests. Electron kept on a supported major                                                                                                                                                                                                       |
+| 8   | Packaging and release      | Installable without a dev setup                                    | electron-builder mac and win packages. Extension zip. Docs pass                                                                                                                                                                                                                             |

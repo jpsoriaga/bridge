@@ -7,7 +7,7 @@ import {
   MIN_RUN_TIMEOUT_MS,
   parseCommand
 } from '@bridge/shared';
-import type { DesktopState, RunSettings } from '../../preload/api';
+import type { CommandPath, DesktopState, RunSettings } from '../../preload/api';
 
 /** The last lines of the running command's output, kept here as it streams. */
 const OUTPUT_LINES = 300;
@@ -222,6 +222,75 @@ function RunSettingsForm({ settings }: { settings: RunSettings }) {
         Off by default, so failing tests go back to the chat to fix. On, Full auto stops at the
         first non-zero exit and waits for you.
       </p>
+      {error && (
+        <p className="error-text" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+const PATH_SOURCES: Record<Exclude<CommandPath['source'], null>, string> = {
+  'login-shell': 'From your login shell.',
+  inherited: 'Bridge’s own PATH.',
+  fallback: 'Bridge’s own PATH, because your login shell couldn’t be read.',
+  override: 'Your override.'
+};
+
+/** The PATH commands get, where it came from, and a field to override it. */
+export function PathOverride({ commandPath }: { commandPath: CommandPath }) {
+  const [draft, setDraft] = useState(commandPath.override);
+  const [error, setError] = useState<string | null>(null);
+  const save = (value: string) =>
+    void window.bridge.setPathOverride(value).then((ok) => {
+      setError(ok ? null : 'Use a PATH with at least one absolute folder, separated by “:”.');
+      if (ok) setDraft(value.trim());
+    });
+  return (
+    <div className="pattern-list">
+      <p className="label">PATH for commands</p>
+      <p className="hint">
+        {commandPath.source === null
+          ? 'Reading your login shell…'
+          : PATH_SOURCES[commandPath.source]}{' '}
+        <span className="mono path-value" title={commandPath.path}>
+          {commandPath.path || '(empty)'}
+        </span>
+      </p>
+      {commandPath.warning && commandPath.source === 'fallback' && (
+        <p className="hint" data-tone="warning" role="status">
+          {commandPath.warning} If a command says “not found”, set the PATH below. In a terminal,{' '}
+          <span className="mono">echo $PATH</span> prints yours.
+        </p>
+      )}
+      <form
+        className="pattern-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          save(draft);
+        }}
+      >
+        <input
+          className="input mono"
+          placeholder="/opt/homebrew/bin:/usr/bin:/bin"
+          aria-label="PATH override"
+          aria-invalid={error !== null}
+          value={draft}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            setError(null);
+          }}
+        />
+        <button type="submit" className="btn" disabled={draft.trim() === commandPath.override}>
+          Save
+        </button>
+        {commandPath.override && (
+          <button type="button" className="btn" onClick={() => save('')}>
+            Clear
+          </button>
+        )}
+      </form>
       {error && (
         <p className="error-text" role="alert">
           {error}

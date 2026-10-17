@@ -11,6 +11,7 @@ import {
   parseAllowlistEntry
 } from '@bridge/shared';
 import { isValidEnvPattern, MAX_ENV_PATTERNS } from './commands/env';
+import { isUsablePath } from './commands/login-env';
 
 export const MAX_DENY_PATTERNS = 50;
 export const MAX_DENY_PATTERN_LENGTH = 200;
@@ -41,6 +42,8 @@ export interface Settings {
   runTimeoutMs: number;
   stepLimit: number;
   pauseOnFailure: boolean;
+  /** The PATH commands get instead of the login shell's. Empty: no override. */
+  pathOverride: string;
 }
 
 /** An allowlist entry the user may save: a command shell-quote can split, with no shell syntax. */
@@ -115,7 +118,8 @@ export function settingsFile(path: string) {
         DEFAULT_RUN_TIMEOUT_MS
       ),
       stepLimit: clampInt(data.stepLimit, 1, MAX_STEP_LIMIT, DEFAULT_STEP_LIMIT),
-      pauseOnFailure: data.pauseOnFailure === true
+      pauseOnFailure: data.pauseOnFailure === true,
+      pathOverride: isUsablePath(data.pathOverride) ? data.pathOverride : ''
     };
     if (Number.isInteger(data.port)) settings.port = data.port as number;
     if (isAbsolutePath(data.project)) settings.project = data.project;

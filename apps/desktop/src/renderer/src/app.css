@@ -346,3 +346,8 @@
 .activity-note {
   font-size: var(--text-sm);
 }
+
+.path-value {
+  display: block;
+  overflow-wrap: anywhere;
+}

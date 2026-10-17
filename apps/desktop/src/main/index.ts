@@ -27,6 +27,7 @@ import {
 } from '@bridge/shared';
 import {
   IPC,
+  type CommandPath,
   type DesktopState,
   type OpenFolderResult,
   type RunningCommand,
@@ -35,6 +36,7 @@ import {
   type UndoOutcome
 } from '../preload/api';
 import { DEFAULT_ENV_DENYLIST, isValidEnvPattern, MAX_ENV_PATTERNS } from './commands/env';
+import { isUsablePath, loginEnvOnce, withPath, type LoginEnv } from './commands/login-env';
 import { CommandRunner } from './commands/runner';
 import { CommandService } from './commands/service';
 import { suggestAllowlist } from './commands/suggest';
@@ -66,6 +68,16 @@ let running: RunningCommand | null = null;
 /** Which loop run each command belongs to, for grouping its activity row. */
 const runLoops = new Map<string, string>();
 let loop: LoopReport | null = null;
+/** The login shell's PATH, read once per launch (macOS, Linux). */
+const loginEnv = loginEnvOnce();
+let login: LoginEnv | null = null;
+
+function commandPath(): CommandPath {
+  const override = settings.read().pathOverride;
+  if (override) return { source: 'override', path: override, override };
+  if (!login) return { source: null, path: process.env.PATH ?? '', override };
+  return { ...login, override };
+}
 
 function allowlist(): string[] | null {
   const key = projects.projectKey;
@@ -116,6 +128,7 @@ function desktopState(): DesktopState {
     defaultEnvPatterns: DEFAULT_ENV_DENYLIST,
     envPatterns: saved.envPatterns,
     runSettings: runSettings(),
+    commandPath: commandPath(),
     running,
     loop
   };
@@ -332,6 +345,14 @@ function registerIpc(): void {
     configChanged();
     return true;
   });
+  handle(IPC.setPathOverride, (value) => {
+    if (typeof value !== 'string') return false;
+    const path = value.trim();
+    if (path !== '' && !isUsablePath(path)) return false;
+    settings.update({ pathOverride: path });
+    broadcast();
+    return true;
+  });
   handle(IPC.cancelRun, () => {
     runner.cancelAll();
   });
@@ -345,6 +366,10 @@ function registerIpc(): void {
 async function startServer(): Promise<void> {
   const userData = app.getPath('userData');
   settings = settingsFile(join(userData, 'settings.json'));
+  void loginEnv().then((result) => {
+    login = result;
+    broadcast();
+  });
   modes = new ModeState(settings, configChanged);
   gated = new GatedFiles(settings.read().gatedPatterns);
   runner = new CommandRunner({
@@ -387,6 +412,11 @@ async function startServer(): Promise<void> {
     allowlist: () => allowlist() ?? [],
     envPatterns: () => settings.read().envPatterns,
     timeoutMs: () => settings.read().runTimeoutMs,
+    // Wait for the login shell's PATH on the first run, if it's still being read.
+    env: async () => {
+      await loginEnv();
+      return withPath(process.env, commandPath().path);
+    },
     onRefused: (argv, code) =>
       projects.record({ kind: 'failed', op: 'run', path: formatArgv(argv), code })
   });
