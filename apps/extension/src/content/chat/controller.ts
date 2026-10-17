@@ -245,7 +245,8 @@ export class ChatController {
         userMessage: match(SELECTORS.userMessage)
       },
       anyTurnActions: first(document, SELECTORS.turnActions) !== null,
-      bridgeHosts: all(document, [`[data-bridge-host]`]).length
+      bridgeHosts: all(document, [`[data-bridge-host]`]).length,
+      ...pageShape()
     };
   }
 
@@ -537,6 +538,74 @@ export class ChatController {
     for (const view of this.views.values()) this.remove(view);
     this.views.clear();
   }
+}
+
+/** An element as tag, id, role, data-* attributes and up to 4 classes. No text. */
+function shapeOf(el: Element): string {
+  let out = el.tagName.toLowerCase();
+  if (el.id) out += `#${el.id}`;
+  const role = el.getAttribute('role');
+  if (role) out += `[role=${role}]`;
+  for (const attr of el.attributes) {
+    if (
+      attr.name.startsWith('data-') &&
+      !attr.name.startsWith('data-start') &&
+      !attr.name.startsWith('data-end')
+    ) {
+      out += `[${attr.name}=${attr.value.slice(0, 40)}]`;
+    }
+  }
+  const classes = [...el.classList].slice(0, 4);
+  if (classes.length > 0) out += `.${classes.join('.')}`;
+  return out;
+}
+
+/**
+ * Where the newest Bridge marker sits on the page and what surrounds it, plus which data-*
+ * attributes and test ids the page uses: enough to write new selectors when the markup moves.
+ */
+function pageShape(): Record<string, unknown> {
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  let marker: Node | null = null;
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const parent = node.parentElement;
+    if (!parent || parent.closest('[contenteditable], [data-bridge-host], script, style')) continue;
+    if (/@@(?:RUN|READ|FILE|DONE)/.test(node.nodeValue ?? '')) marker = node;
+  }
+  const chain: string[] = [];
+  for (
+    let el = marker?.parentElement ?? null;
+    el && el !== document.body && chain.length < 18;
+    el = el.parentElement
+  ) {
+    chain.push(shapeOf(el));
+  }
+  // The block that holds the marker's whole reply: its children, one level down.
+  const reply = marker?.parentElement?.closest('[class*="markdown"], [class*="prose"]') ?? null;
+  const attributes = new Map<string, number>();
+  const testIds = new Map<string, number>();
+  for (const el of document.body.querySelectorAll('*')) {
+    for (const attr of el.attributes) {
+      if (attr.name.startsWith('data-'))
+        attributes.set(attr.name, (attributes.get(attr.name) ?? 0) + 1);
+    }
+    const id = el.getAttribute('data-testid');
+    if (id) testIds.set(id.replace(/\d+/g, 'N'), (testIds.get(id.replace(/\d+/g, 'N')) ?? 0) + 1);
+  }
+  const buttons = [...document.querySelectorAll('button[aria-label]')]
+    .map((b) => b.getAttribute('aria-label') ?? '')
+    .filter((label, i, list) => list.indexOf(label) === i)
+    .slice(0, 40);
+  return {
+    markerFound: marker !== null,
+    markerAncestors: chain,
+    replyChildren: reply ? [...reply.children].slice(0, 12).map(shapeOf) : null,
+    shadowHosts: [...document.querySelectorAll('*')].filter((el) => el.shadowRoot).length,
+    iframes: document.querySelectorAll('iframe').length,
+    dataAttributes: Object.fromEntries([...attributes].sort((a, b) => b[1] - a[1]).slice(0, 40)),
+    testIds: Object.fromEntries([...testIds].sort((a, b) => b[1] - a[1]).slice(0, 40)),
+    buttonLabels: buttons
+  };
 }
 
 /** Sends a request to the service worker. Undefined if it refused or isn't there. */
