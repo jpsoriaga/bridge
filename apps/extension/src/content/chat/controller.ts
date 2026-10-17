@@ -75,6 +75,7 @@ export class ChatController {
       conversationId: this.conversationId,
       layout: this.layout
     });
+    if (!reply) console.info('[Bridge] The extension didn’t answer. Reload this tab.');
     this.setSession(reply?.session ?? null);
   }
 

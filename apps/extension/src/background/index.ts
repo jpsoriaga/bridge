@@ -282,6 +282,11 @@ async function handlePanel(
     case 'session-end':
       await endSession(request.windowId);
       return null;
+    case 'reload-tab': {
+      const tabId = await activeTabId(request.windowId);
+      if (tabId !== null) await chrome.tabs.reload(tabId).catch(() => undefined);
+      return null;
+    }
     case 'get-tree':
       return connection.request('tree', {});
     case 'send-files':

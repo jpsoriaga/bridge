@@ -59,6 +59,9 @@ export const WorkerRequest = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('session-preview'), windowId: WindowId }),
   z.strictObject({ type: z.literal('session-start'), windowId: WindowId }),
   z.strictObject({ type: z.literal('session-end'), windowId: WindowId }),
+  // Reloads the panel's active tab, so a chat tab opened before Bridge (re)loaded gets the
+  // content script. Needs no permission and touches only that one tab.
+  z.strictObject({ type: z.literal('reload-tab'), windowId: WindowId }),
   z.strictObject({ type: z.literal('get-tree') }),
   z.strictObject({
     type: z.literal('send-files'),
@@ -121,6 +124,7 @@ export const EXTENSION_PAGE_REQUESTS: ReadonlySet<WorkerRequest['type']> = new S
   'session-preview',
   'session-start',
   'session-end',
+  'reload-tab',
   'get-tree',
   'send-files',
   'dev-file'

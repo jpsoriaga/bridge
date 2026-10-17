@@ -89,8 +89,18 @@ export function SessionSection({
         <p className="label">Session</p>
         <p className="value">No chat in this tab</p>
         <p className="hint">
-          Open a chat in this tab to start a session. If one is already open, reload it.
+          Open a chat in this tab to start a session. If one is already open, Bridge isn’t running
+          in it yet: chat tabs opened before Bridge was installed or reloaded need a reload.
         </p>
+        <button
+          type="button"
+          className="btn action"
+          onClick={() =>
+            void panelWindowId().then((windowId) => request({ type: 'reload-tab', windowId }))
+          }
+        >
+          Reload this tab
+        </button>
       </section>
     );
   }
