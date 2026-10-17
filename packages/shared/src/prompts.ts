@@ -1,4 +1,6 @@
+import { CHAT_OUTPUT_CHARS, formatArgv, truncateMiddle } from './commands';
 import type { TreeEntry } from './files';
+import type { RunResult } from './protocol';
 
 // Text Bridge puts into the chat composer. The chat reads these, so they're plain prose,
 // and nothing here names the chat's vendor.
@@ -130,10 +132,36 @@ export interface SessionPromptInput {
   tree: readonly TreeEntry[];
   /** The desktop stopped listing early (its own cap). */
   truncated?: boolean;
+  /** The commands the user allowed in the app. Empty: the chat is told not to ask for any. */
+  allowlist?: readonly string[];
+}
+
+function commandRules(allowlist: readonly string[]): string {
+  if (allowlist.length === 0) {
+    return "7. Bridge can't run commands in this project. Don't ask it to; tell me what to run instead.";
+  }
+  return [
+    '7. To run a command, write one marker per command on its own line, then wait for my reply with the output:',
+    '',
+    '`@@RUN pnpm test@@`',
+    '',
+    'Only these commands are allowed, optionally with extra arguments after them. Bridge refuses anything else, and any shell syntax (pipes, &&, ;, redirects, $, wildcards, VAR=value):',
+    '',
+    ...allowlist.map((entry) => `- \`${entry}\``),
+    '',
+    '8. When the task is finished and you need nothing more from me, end your reply with:',
+    '',
+    '`@@DONE@@`'
+  ].join('\n');
 }
 
 /** The instructions "Start session" puts in the composer. */
-export function buildSessionPrompt({ projectName, tree, truncated }: SessionPromptInput): string {
+export function buildSessionPrompt({
+  projectName,
+  tree,
+  truncated,
+  allowlist = []
+}: SessionPromptInput): string {
   const summary = summarizeTree(tree);
   const listing = summary.lines.join('\n');
   const fence = pickFence(listing);
@@ -160,10 +188,101 @@ export function buildSessionPrompt({ projectName, tree, truncated }: SessionProm
       '`@@READ src/app.ts@@`',
       '`@@READ package.json@@`',
       '',
-      "6. I'll send files as `@@CONTEXT path@@` blocks. Those are for reading, not edits."
+      "6. I'll send files as `@@CONTEXT path@@` blocks. Those are for reading, not edits.",
+      commandRules(allowlist)
     ].join('\n'),
     `Project files (${summary.total} ${summary.total === 1 ? 'entry' : 'entries'}${truncated ? ', list cut short' : ''}).${trimmed}`,
     `${fence}\n${listing}\n${fence}`,
     'Reply with a short confirmation and wait for my first request. Ask for any files you need with @@READ before you edit them.'
   ].join('\n\n');
+}
+
+/** How a command's run reads in the chat: the command, how it ended, and its output. */
+export function formatRunResult(
+  result: Pick<RunResult, 'argv' | 'status' | 'exitCode' | 'signal' | 'durationMs' | 'output'>,
+  maxOutput = CHAT_OUTPUT_CHARS
+): string {
+  const seconds = (result.durationMs / 1000).toFixed(1);
+  const ended =
+    result.status === 'timed-out'
+      ? `timed out after ${seconds}s`
+      : result.status === 'cancelled'
+        ? `cancelled after ${seconds}s`
+        : result.status === 'failed'
+          ? "couldn't start"
+          : result.exitCode !== null
+            ? `exit ${result.exitCode}, ${seconds}s`
+            : `ended by ${result.signal ?? 'a signal'}, ${seconds}s`;
+  const output = truncateMiddle(result.output.trimEnd(), maxOutput);
+  const fence = pickFence(output);
+  return `Output of \`${formatArgv(result.argv)}\` (${ended}):\n${fence}text\n${output || '(no output)'}\n${fence}`;
+}
+
+/** One command the loop dealt with: its result, or why it didn't run. */
+export type FollowUpRun =
+  | {
+      command: string;
+      result: Pick<RunResult, 'argv' | 'status' | 'exitCode' | 'signal' | 'durationMs' | 'output'>;
+    }
+  | { command: string; refused: string };
+
+export interface FollowUpInput {
+  applied: readonly string[];
+  /** Edits left on their cards, with a few words on why. */
+  skipped: readonly RefusedFile[];
+  files: readonly ContextFile[];
+  refused: readonly RefusedFile[];
+  runs: readonly FollowUpRun[];
+}
+
+/** Below this, command output in a trimmed follow-up is cut harder. */
+const TRIMMED_OUTPUT_CHARS = 2_000;
+
+function followUpText(input: FollowUpInput, outputChars: number, withFiles: boolean): string {
+  const parts: string[] = [];
+  const summary: string[] = [];
+  if (input.applied.length > 0) summary.push(`Applied: ${input.applied.join(', ')}.`);
+  if (input.skipped.length > 0) {
+    summary.push(`Not applied: ${input.skipped.map((f) => `${f.path} (${f.reason})`).join(', ')}.`);
+  }
+  if (summary.length > 0) parts.push(summary.join('\n'));
+  if (withFiles) {
+    const context = buildContextMessage([...input.files], [...input.refused]);
+    if (context) parts.push(context);
+  } else if (input.files.length > 0 || input.refused.length > 0) {
+    const paths = input.files.map((f) => f.path).join(', ');
+    parts.push(
+      `Bridge left out the files you asked for (${paths}) to keep this message small. Ask for fewer at a time with @@READ.`
+    );
+  }
+  for (const run of input.runs) {
+    parts.push(
+      'refused' in run
+        ? `Bridge didn't run \`${run.command}\`: ${run.refused}`
+        : formatRunResult(run.result, outputChars)
+    );
+  }
+  return parts.join('\n\n');
+}
+
+/**
+ * The message Full auto sends after acting on a reply: what was applied, the files the
+ * chat asked for, and command results. If it's over `budget` characters, command output
+ * is cut harder, then the files are left out with a note. Null if even that won't fit.
+ */
+export function buildFollowUp(
+  input: FollowUpInput,
+  budget = COMPOSER_WARN_CHARS
+): { text: string; trimmed: boolean } | null {
+  const full = followUpText(input, CHAT_OUTPUT_CHARS, true);
+  if (full.length <= budget) return { text: full, trimmed: false };
+  const note = '\n\n(Bridge trimmed this message to fit.)';
+  for (const [chars, files] of [
+    [TRIMMED_OUTPUT_CHARS, true],
+    [TRIMMED_OUTPUT_CHARS, false]
+  ] as const) {
+    const text = followUpText(input, chars, files) + note;
+    if (text.length <= budget) return { text, trimmed: true };
+  }
+  return null;
 }

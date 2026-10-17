@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import {
   CONNECTION_STATUS_TONES,
   PAIRING_CODE_LENGTH,
+  type BridgeConfig,
   type ConnectionStatus,
   type ProjectInfo
 } from '@bridge/shared';
@@ -10,15 +11,24 @@ import {
   type ChatPanelState,
   type PairResult,
   type PanelHello,
+  type PanelMessage,
   type StatusUpdate,
   type WorkerRequest
 } from '../messages';
 import { DevFileTester } from './DevFileTester';
+import {
+  appendOutput,
+  CommandSection,
+  LoopFooter,
+  LoopSection,
+  ModeSection,
+  type LiveRun
+} from './FullAuto';
 import { Logo } from './Logo';
 import { panelWindowId, request } from './request';
 import { SessionSection } from './SessionSection';
 
-const NO_CHAT: ChatPanelState = { tab: null, session: null };
+const NO_CHAT: ChatPanelState = { tab: null, session: null, loop: null };
 
 const STATUS_LABELS: Record<ConnectionStatus, string> = {
   'app-not-running': 'App not running',
@@ -28,17 +38,38 @@ const STATUS_LABELS: Record<ConnectionStatus, string> = {
   error: "Can't reach Bridge"
 };
 
-function useWorkerStatus(): StatusUpdate | null {
+function useWorker(): { update: StatusUpdate | null; live: LiveRun | null } {
   const [update, setUpdate] = useState<StatusUpdate | null>(null);
+  const [live, setLive] = useState<LiveRun | null>(null);
   useEffect(() => {
     const port = chrome.runtime.connect({ name: SIDE_PANEL_PORT });
-    port.onMessage.addListener((message: StatusUpdate) => setUpdate(message));
+    port.onMessage.addListener((message: PanelMessage) => {
+      switch (message.type) {
+        case 'status':
+          setUpdate(message);
+          break;
+        case 'run-output':
+          setLive((run) =>
+            run?.runId === message.runId && !run.result
+              ? { ...run, text: appendOutput(run.text, message.chunk) }
+              : { runId: message.runId, text: appendOutput('', message.chunk), result: null }
+          );
+          break;
+        case 'run-exit':
+          setLive({
+            runId: message.result.runId,
+            text: appendOutput('', message.result.output),
+            result: message.result
+          });
+          break;
+      }
+    });
     void panelWindowId().then((windowId) =>
       port.postMessage({ type: 'panel-window', windowId } satisfies PanelHello)
     );
     return () => port.disconnect();
   }, []);
-  return update;
+  return { update, live };
 }
 
 function pairError(result: Exclude<PairResult, { ok: true }>): string {
@@ -133,11 +164,15 @@ function ProjectSection({ project }: { project: ProjectInfo | null }) {
 function Body({
   status,
   project,
-  chat
+  config,
+  chat,
+  live
 }: {
   status: ConnectionStatus;
   project: ProjectInfo | null;
+  config: BridgeConfig | null;
   chat: ChatPanelState;
+  live: LiveRun | null;
 }) {
   const [busy, setBusy] = useState(false);
   const act = (message: WorkerRequest) => {
@@ -152,7 +187,10 @@ function Body({
       return (
         <>
           <ProjectSection project={project} />
+          <ModeSection config={config} />
           <SessionSection chat={chat} project={project} />
+          <LoopSection config={config} loop={chat.loop} />
+          <CommandSection config={config} live={live} />
           {import.meta.env.DEV && <DevFileTester />}
           <section>
             <p className="label">Desktop app</p>
@@ -216,8 +254,10 @@ function Body({
 }
 
 export function App() {
-  const update = useWorkerStatus();
+  const { update, live } = useWorker();
   const status = update?.status ?? null;
+  // A worker from an older build sends no chat state. Show "no chat" instead of crashing.
+  const chat = update?.chat ? { ...NO_CHAT, ...update.chat } : NO_CHAT;
 
   return (
     <div className="panel">
@@ -237,11 +277,13 @@ export function App() {
           <Body
             status={update.status}
             project={update.project}
-            // A worker from an older build sends no chat state. Show "no chat" instead of crashing.
-            chat={update.chat ?? NO_CHAT}
+            config={update.config ?? null}
+            chat={chat}
+            live={live}
           />
         )}
       </main>
+      {update?.status === 'connected' && <LoopFooter loop={chat.loop} />}
     </div>
   );
 }

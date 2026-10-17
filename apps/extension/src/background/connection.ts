@@ -10,11 +10,13 @@ import {
   PROTOCOL_VERSION,
   ServerMessage,
   UnpairChallengeResponse,
+  type BridgeConfig,
   type ClientMessage,
   type ConnectionStatus,
   type FileRequestType,
   type FileResult,
-  type ProjectInfo
+  type ProjectInfo,
+  type RunResult
 } from '@bridge/shared';
 import type { PairResult, RequestOutcome } from '../messages';
 import { Reconnector } from './backoff';
@@ -54,6 +56,12 @@ export interface ConnectionDeps {
   now?: () => number;
 }
 
+/** Events the desktop pushes about the running command, and its Stop for the loop. */
+export type DesktopEvent =
+  | { type: 'run-output'; runId: string; chunk: string }
+  | { type: 'run-exit'; result: RunResult }
+  | { type: 'loop-stop' };
+
 type Handshake =
   /** `backlog`: messages that arrived after auth_ok, before the socket was adopted. */
   | { kind: 'ok'; socket: WebSocket; backlog: MessageEvent[] }
@@ -88,6 +96,9 @@ export class Connection {
   private alarmSet = false;
   private projectInfo: ProjectInfo | null = null;
   private readonly projectListeners = new Set<(project: ProjectInfo | null) => void>();
+  private configInfo: BridgeConfig | null = null;
+  private readonly configListeners = new Set<(config: BridgeConfig | null) => void>();
+  private readonly eventListeners = new Set<(event: DesktopEvent) => void>();
   private readonly pending = new Map<
     string,
     {
@@ -118,6 +129,38 @@ export class Connection {
   onProject(listener: (project: ProjectInfo | null) => void): () => void {
     this.projectListeners.add(listener);
     return () => this.projectListeners.delete(listener);
+  }
+
+  /** The app's mode, allowlist and loop settings, from its last `status`. Null while disconnected. */
+  get config(): BridgeConfig | null {
+    return this.configInfo;
+  }
+
+  onConfig(listener: (config: BridgeConfig | null) => void): () => void {
+    this.configListeners.add(listener);
+    return () => this.configListeners.delete(listener);
+  }
+
+  /** Run output, run exits and the app's loop Stop. */
+  onEvent(listener: (event: DesktopEvent) => void): () => void {
+    this.eventListeners.add(listener);
+    return () => this.eventListeners.delete(listener);
+  }
+
+  /** A one-way message to the desktop (loop reports, session end). Dropped if not connected. */
+  notify<T extends 'loop_report' | 'session_end'>(
+    type: T,
+    payload: Extract<ClientMessage, { type: T }>['payload']
+  ): boolean {
+    const socket = this.socket;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    this.send(socket, {
+      v: PROTOCOL_VERSION,
+      id: this.deps.randomId(),
+      type,
+      payload
+    } as ClientMessage);
+    return true;
   }
 
   /**
@@ -409,9 +452,19 @@ export class Connection {
           break;
         case 'status':
           this.setProject(message.payload.project);
+          this.setConfig(message.payload.config);
           break;
         case 'response':
           this.settle(message.id, message.payload);
+          break;
+        case 'run_output':
+          this.emit({ type: 'run-output', ...message.payload });
+          break;
+        case 'run_exit':
+          this.emit({ type: 'run-exit', result: message.payload });
+          break;
+        case 'loop_stop':
+          this.emit({ type: 'loop-stop' });
           break;
         default:
           // pong and error need no action.
@@ -426,6 +479,7 @@ export class Connection {
       this.stopPing();
       this.failPending();
       this.setProject(null);
+      this.setConfig(null);
       if (event.code === CloseCode.unauthorized) {
         // Revoked or replaced by another pairing. This server already proved itself.
         void this.forgetKey();
@@ -470,6 +524,7 @@ export class Connection {
     this.stopPing();
     this.failPending();
     this.setProject(null);
+    this.setConfig(null);
     socket?.close(1000, 'client closing');
   }
 
@@ -509,6 +564,16 @@ export class Connection {
     if (JSON.stringify(project) === JSON.stringify(this.projectInfo)) return;
     this.projectInfo = project;
     for (const listener of this.projectListeners) listener(project);
+  }
+
+  private setConfig(config: BridgeConfig | null): void {
+    if (JSON.stringify(config) === JSON.stringify(this.configInfo)) return;
+    this.configInfo = config;
+    for (const listener of this.configListeners) listener(config);
+  }
+
+  private emit(event: DesktopEvent): void {
+    for (const listener of this.eventListeners) listener(event);
   }
 
   private setPaired(paired: boolean): void {

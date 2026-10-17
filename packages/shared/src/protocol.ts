@@ -1,8 +1,20 @@
 import { z } from 'zod';
-import { FileError, ProjectInfo, ReadParams, TreeParams, UndoParams, WriteParams } from './files';
+import {
+  FileError,
+  ProjectInfo,
+  ReadParams,
+  RunCancelParams,
+  RunId,
+  RunParams,
+  TreeParams,
+  UndoParams,
+  WriteParams
+} from './files';
+import { LoopReport, MAX_STEP_LIMIT } from './loop';
+import { MODES } from './types';
 
 /** Bumped when a message shape changes incompatibly. Both sides reject other versions. */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 /** The desktop listens on the first free port in `DEFAULT_PORT .. DEFAULT_PORT + PORT_RANGE - 1`. */
 export const DEFAULT_PORT = 47821;
@@ -108,10 +120,32 @@ export const AuthErrorMessage = message(
 );
 export const PingMessage = message('ping', empty);
 export const PongMessage = message('pong', empty);
-/** Sent after auth_ok and whenever the project changes. */
+export const ModeSchema = z.enum(MODES);
+export const MAX_ALLOWLIST_ENTRIES = 100;
+export const MAX_ALLOWLIST_ENTRY_CHARS = 200;
+
+/** What the app decides and the extension mirrors. Only the app can change any of it. */
+export const BridgeConfig = z.strictObject({
+  mode: ModeSchema,
+  /** Commands as written in the app, e.g. `pnpm test`. Each is an argv prefix. */
+  allowlist: z.array(z.string().max(MAX_ALLOWLIST_ENTRY_CHARS)).max(MAX_ALLOWLIST_ENTRIES),
+  /** Full auto: most messages Bridge sends on its own in one run before it pauses. */
+  stepLimit: z.number().int().min(1).max(MAX_STEP_LIMIT),
+  /** Full auto: pause on a non-zero exit instead of sending the output to the chat. */
+  pauseOnFailure: z.boolean(),
+  /** The command running now, if any. */
+  running: z.strictObject({ runId: RunId, argv: z.array(z.string()) }).nullable()
+});
+export type BridgeConfig = z.infer<typeof BridgeConfig>;
+
+/** Sent after auth_ok and whenever the project or the config changes. */
 export const StatusMessage = message(
   'status',
-  z.strictObject({ version: z.string().max(32), project: ProjectInfo.nullable() })
+  z.strictObject({
+    version: z.string().max(32),
+    project: ProjectInfo.nullable(),
+    config: BridgeConfig
+  })
 );
 
 // File requests. The reply is a `response` whose `id` is the request's `id`.
@@ -126,6 +160,40 @@ export const FileRequest = z.discriminatedUnion('type', [
   UndoRequest
 ]);
 export type FileRequest = z.infer<typeof FileRequest>;
+
+// Commands. `run` answers with a `response` holding the run id, then the desktop sends
+// `run_output` chunks and one `run_exit`.
+export const RunRequest = message('run', RunParams);
+export const RunCancelRequest = message('run_cancel', RunCancelParams);
+export const CommandRequest = z.discriminatedUnion('type', [RunRequest, RunCancelRequest]);
+export type CommandRequest = z.infer<typeof CommandRequest>;
+
+export const RUN_OUTPUT_CHUNK_CHARS = 16 * 1024;
+export const RunOutputMessage = message(
+  'run_output',
+  z.strictObject({ runId: RunId, chunk: z.string().max(RUN_OUTPUT_CHUNK_CHARS) })
+);
+
+export const RunResult = z.strictObject({
+  runId: RunId,
+  argv: z.array(z.string()),
+  /** `failed`: it never started (e.g. the program vanished from the PATH). */
+  status: z.enum(['exited', 'timed-out', 'cancelled', 'failed']),
+  exitCode: z.number().int().nullable(),
+  signal: z.string().max(32).nullable(),
+  durationMs: z.number().int().nonnegative(),
+  /** ANSI codes stripped. The first and last 100 KB if there was more. */
+  output: z.string().max(512 * 1024),
+  truncated: z.boolean()
+});
+export type RunResult = z.infer<typeof RunResult>;
+export const RunExitMessage = message('run_exit', RunResult);
+
+// Full auto. The extension reports the loop; the app can stop it.
+export const LoopReportMessage = message('loop_report', LoopReport);
+export const LoopStopMessage = message('loop_stop', empty);
+/** The extension ended a chat session. The app drops out of Full auto. */
+export const SessionEndMessage = message('session_end', empty);
 
 /** `result` is checked against `FILE_RESULTS[request type]` by the side that asked. */
 export const ResponseMessage = message(
@@ -152,7 +220,11 @@ export const ClientMessage = z.discriminatedUnion('type', [
   TreeRequest,
   ReadRequest,
   WriteRequest,
-  UndoRequest
+  UndoRequest,
+  RunRequest,
+  RunCancelRequest,
+  LoopReportMessage,
+  SessionEndMessage
 ]);
 export type ClientMessage = z.infer<typeof ClientMessage>;
 
@@ -165,7 +237,10 @@ export const ServerMessage = z.discriminatedUnion('type', [
   PongMessage,
   StatusMessage,
   ResponseMessage,
-  ErrorMessage
+  ErrorMessage,
+  RunOutputMessage,
+  RunExitMessage,
+  LoopStopMessage
 ]);
 export type ServerMessage = z.infer<typeof ServerMessage>;
 

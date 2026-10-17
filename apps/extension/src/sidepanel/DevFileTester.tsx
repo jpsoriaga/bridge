@@ -36,8 +36,8 @@ export function DevFileTester() {
                 type: 'write',
                 payload:
                   lastRead?.path === path
-                    ? { path, content, baseHash: lastRead.hash }
-                    : { path, content }
+                    ? { path, content, baseHash: lastRead.hash, trigger: 'click' }
+                    : { path, content, trigger: 'click' }
               };
     setBusy(true);
     void chrome.runtime

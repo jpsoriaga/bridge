@@ -233,3 +233,68 @@
 .meter[data-tone='warning'] .meter-fill {
   background: var(--warning);
 }
+
+/* Mode (read-only here; switched in the app) */
+.mode-badge {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: 24px;
+}
+.mode-badge[data-mode='full-auto'] {
+  border-color: color-mix(in srgb, var(--warning) 35%, transparent);
+  color: var(--warning);
+}
+
+/* Command output */
+.command-line {
+  overflow: hidden;
+  font-size: var(--text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.command-output {
+  max-height: 240px;
+  margin: var(--space-3) 0 0;
+  padding: var(--space-3);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.hint[data-tone='danger'] {
+  color: var(--danger);
+}
+
+/* Sticky footer while Full auto runs: step counter and Stop */
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+.panel-body {
+  flex: 1;
+}
+.panel-footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+.step-count {
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}

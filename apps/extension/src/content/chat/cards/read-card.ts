@@ -2,8 +2,10 @@ import {
   buildContextMessage,
   COMPOSER_WARN_CHARS,
   FILE_ERROR_LABELS,
+  type ContextFile,
   type FileErrorCode,
-  type ReadResult
+  type ReadResult,
+  type RefusedFile
 } from '@bridge/shared';
 import type { ReadCardRecord, RequestOutcome } from '../../../messages';
 import { insertIntoComposer } from '../composer';
@@ -30,6 +32,9 @@ export class ReadCard {
   /** The files went into the composer at least once. */
   sent = false;
   private disabled = false;
+  /** A read failed because the app wasn't there, not because the file was refused. */
+  private unreachable = false;
+  private reading: Promise<void> = Promise.resolve();
 
   constructor(
     readonly key: string,
@@ -42,9 +47,42 @@ export class ReadCard {
   }
 
   /** Restores a saved state, then reads each file to show what would be sent. */
-  async init(record?: ReadCardRecord): Promise<void> {
+  init(record?: ReadCardRecord): Promise<void> {
     this.sent = record?.state === 'sent';
     if (!record) void this.persist();
+    this.reading = this.readAll();
+    return this.reading;
+  }
+
+  /** Waits for every file to be read. */
+  ready(): Promise<void> {
+    return this.reading;
+  }
+
+  /** What Full auto sends: the files, the refusals, and whether the app was unreachable. */
+  contents(): { files: ContextFile[]; refused: RefusedFile[]; disconnected: boolean } {
+    return {
+      files: this.entries.flatMap((e) =>
+        e.status === 'ok' ? [{ path: e.path, content: e.content }] : []
+      ),
+      refused: this.entries.flatMap((e) =>
+        e.status === 'refused' ? [{ path: e.path, reason: e.reason }] : []
+      ),
+      disconnected: this.unreachable
+    };
+  }
+
+  /** Full auto sent these files in its follow-up. */
+  markSent(): void {
+    if (this.sent) return;
+    this.sent = true;
+    void this.persist();
+    this.onSent(this.entries.flatMap((e) => (e.status === 'ok' ? [e.path] : [])));
+    this.render();
+  }
+
+  private async readAll(): Promise<void> {
+    this.unreachable = false;
     this.render();
     for (const [i, path] of this.paths.entries()) {
       const outcome = await this.ask<RequestOutcome<ReadResult>>({ type: 'chat-read', path });
@@ -64,6 +102,7 @@ export class ReadCard {
         };
       } else {
         this.error = failureText(outcome?.error);
+        this.unreachable = true;
         this.entries[i] = { path, status: 'refused', reason: 'not read' };
       }
       this.render();

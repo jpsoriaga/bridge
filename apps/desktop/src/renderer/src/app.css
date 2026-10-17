@@ -181,7 +181,7 @@
   overflow-y: auto;
 }
 
-.protected {
+.pattern-list {
   margin-top: var(--space-5);
 }
 
@@ -206,4 +206,143 @@
   flex: 1;
   min-width: 0;
   height: 32px;
+}
+
+/* Sticky bottom: toast, the Full auto bar, the version footer. */
+.bottom {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+}
+.bottom .footer {
+  position: static;
+}
+
+.loop-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-5);
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+.step-count {
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.loop-status {
+  margin-top: var(--space-4);
+}
+.loop-status .status {
+  font-size: var(--text-sm);
+  color: var(--fg);
+}
+.panel .hint[data-tone='warning'] {
+  color: var(--warning);
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 480px;
+  margin: 0 auto var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  font-size: var(--text-sm);
+}
+.toast-text {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.toast-hint {
+  flex: none;
+  margin-left: auto;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+}
+
+/* Commands */
+.command-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.command-output {
+  max-height: 320px;
+  margin: var(--space-3) 0 0;
+  padding: var(--space-3);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.check input {
+  accent-color: var(--fg);
+}
+.suggestions li {
+  justify-content: flex-start;
+}
+.run-settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+.field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+}
+.field-input {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.field .input {
+  width: 88px;
+  height: 32px;
+}
+.unit {
+  min-width: 64px;
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+}
+
+/* A Full auto run in Activity: its rows under one heading. */
+.activity-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--border-strong);
+}
+.activity-group-head {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--fg-muted);
+}
+.activity-note {
+  font-size: var(--text-sm);
 }

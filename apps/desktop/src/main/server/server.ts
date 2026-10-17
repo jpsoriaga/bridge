@@ -12,8 +12,11 @@ import {
   UnpairRequest,
   parseMessage,
   serverMessage,
+  type BridgeConfig,
+  type CommandRequest,
   type FileOutcome,
   type FileRequest,
+  type LoopReport,
   type HealthResponse,
   type PairFailure,
   type PairSuccess,
@@ -42,8 +45,18 @@ export interface BridgeServerOptions {
   onChange?: () => void;
   /** Answers tree/read/write/undo. Without it every file request gets `no-project`. */
   files?: (request: FileRequest) => Promise<FileOutcome<unknown>>;
+  /** Answers run/run_cancel. Without it every command gets `no-project`. */
+  commands?: (request: CommandRequest) => Promise<FileOutcome<unknown>>;
   /** The open project, sent in every `status`. */
   project?: () => ProjectInfo | null;
+  /** Mode, allowlist and loop settings, sent in every `status`. */
+  config?: () => BridgeConfig;
+  /** The extension reported its Full auto loop. */
+  onLoopReport?: (report: LoopReport) => void;
+  /** The extension ended a chat session. */
+  onSessionEnd?: () => void;
+  /** The pairing was revoked or replaced: the old extension is gone. */
+  onUnpaired?: () => void;
   allowedOrigins?: ReadonlySet<string>;
   authTimeoutMs?: number;
   idleTimeoutMs?: number;
@@ -82,7 +95,21 @@ export function createBridgeServer(options: BridgeServerOptions) {
       ok: false,
       error: { code: 'no-project', message: FILE_ERROR_MESSAGES['no-project'] }
     }),
+    commands = async () => ({
+      ok: false,
+      error: { code: 'no-project', message: FILE_ERROR_MESSAGES['no-project'] }
+    }),
     project = () => null,
+    config = () => ({
+      mode: 'manual',
+      allowlist: [],
+      stepLimit: 10,
+      pauseOnFailure: false,
+      running: null
+    }),
+    onLoopReport = () => {},
+    onSessionEnd = () => {},
+    onUnpaired = () => {},
     allowedOrigins = ALLOWED_ORIGINS,
     authTimeoutMs = AUTH_TIMEOUT_MS,
     idleTimeoutMs = IDLE_TIMEOUT_MS,
@@ -129,11 +156,12 @@ export function createBridgeServer(options: BridgeServerOptions) {
   }
 
   const statusMessage = () =>
-    serverMessage(randomUUID(), 'status', { version, project: project() });
+    serverMessage(randomUUID(), 'status', { version, project: project(), config: config() });
 
   function revoke(): void {
     pairing.unpair();
     closeSessions(CloseCode.unauthorized, 'revoked');
+    onUnpaired();
     onChange();
   }
 
@@ -144,10 +172,12 @@ export function createBridgeServer(options: BridgeServerOptions) {
     if (!body.success) {
       return reply.code(400).send({ error: 'invalid_request' } satisfies PairFailure);
     }
+    const wasPaired = pairing.isPaired;
     const result = pairing.redeem(body.data.code);
     if (result.ok) {
       // One paired extension at a time: the previous token is already replaced.
       closeSessions(CloseCode.unauthorized, 'replaced');
+      if (wasPaired) onUnpaired();
       onChange();
       return { token: result.token } satisfies PairSuccess;
     }
@@ -282,13 +312,25 @@ export function createBridgeServer(options: BridgeServerOptions) {
           case 'read':
           case 'write':
           case 'undo':
+          case 'run':
+          case 'run_cancel':
             // The reply carries the request's id.
-            void files(message)
+            void (
+              message.type === 'run' || message.type === 'run_cancel'
+                ? commands(message)
+                : files(message)
+            )
               .catch((): FileOutcome<unknown> => ({
                 ok: false,
                 error: { code: 'io-error', message: FILE_ERROR_MESSAGES['io-error'] }
               }))
               .then((outcome) => send(serverMessage(message.id, 'response', outcome)));
+            break;
+          case 'loop_report':
+            onLoopReport(message.payload);
+            break;
+          case 'session_end':
+            onSessionEnd();
             break;
           default:
             break;
@@ -333,11 +375,16 @@ export function createBridgeServer(options: BridgeServerOptions) {
     /** Revokes the token and drops any open socket. */
     unpair: revoke,
 
-    /** Tells the connected extension about a project change. */
+    /** Tells the connected extension about a project or config change. */
     pushStatus(): void {
-      const message = JSON.stringify(statusMessage());
+      this.broadcast(statusMessage());
+    },
+
+    /** Sends a message (run output, loop_stop) to every authenticated socket. */
+    broadcast(message: ServerMessage): void {
+      const text = JSON.stringify(message);
       for (const socket of sessions) {
-        if (socket.readyState === socket.OPEN) socket.send(message);
+        if (socket.readyState === socket.OPEN) socket.send(text);
       }
     },
 

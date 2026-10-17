@@ -6,7 +6,7 @@ Bridge lets the ChatGPT web chat edit a project on your computer. The chat write
 
 It runs entirely on your machine. The desktop app listens only on `127.0.0.1`, and nothing is sent anywhere else.
 
-> **Status:** Phase 4 of 7 (chat integration, Manual mode) is done. Start a session from the side panel, and every whole-file edit the chat writes shows up as a diff card with Apply, Reject and Undo. You can send files to the chat, and send the ones it asks for, with a click. Nothing is sent or applied on its own. Auto-apply and commands come next. See [CHECKLIST.md](CHECKLIST.md).
+> **Status:** Phase 5 of 7 (modes, commands, Full auto) is done. Edits show as diff cards with Apply, Reject and Undo; Auto-apply writes them for you with undo; commands on your allowlist run from RUN cards; and the opt-in Full auto mode can carry a task across several messages on its own, within a step limit. App UI polish is next. See [CHECKLIST.md](CHECKLIST.md).
 
 ## How it works
 
@@ -30,7 +30,8 @@ chatgpt.com ──▶ Chrome extension ──WebSocket (127.0.0.1)──▶ Brid
 
 3. The extension parses finished replies with the shared parser and shows a diff card under each block, or a card listing the files it asked for.
 4. You click **Apply**. The desktop app checks the path against the project sandbox and writes the file. Every write can be undone.
-5. Three modes will control how much happens automatically: **Manual** (today), **Auto-apply** and **Full auto**.
+5. The chat can also ask to run a command with `` `@@RUN pnpm test@@` ``. Only commands on the allowlist you set in the app ever run.
+6. Three modes control how much happens on its own: **Manual**, **Auto-apply** and **Full auto** (see [Modes](#modes)).
 
 [PLAN.md](PLAN.md) has the full architecture and security model.
 
@@ -108,6 +109,45 @@ Card states survive a page reload. Writes from cards show in the app's **Activit
 
 If the side panel says **Bridge can't read this page layout**, the chat page changed in a way Bridge doesn't recognise. Nothing is parsed until the selectors are updated (see `apps/extension/src/content/chat/selectors.ts`).
 
+## Modes
+
+You switch modes in the desktop app. The side panel and every card show the current one. The app enforces it: the extension can only ask.
+
+| Mode           | Edits                                                                                                  | Commands                                                                  | Sending                           |
+| -------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- | --------------------------------- |
+| **Manual**     | Diff cards; nothing is written until you click Apply                                                   | RUN cards; **Run** on a click, **Send output** puts the result in the box | You press send                    |
+| **Auto-apply** | Written as soon as a reply finishes. Each card says **Auto-applied** with Undo; **Undo all** per reply | As in Manual                                                              | You press send                    |
+| **Full auto**  | As in Auto-apply                                                                                       | Allowlisted commands run on their own                                     | Bridge sends the follow-up itself |
+
+In every mode, Bridge leaves these for your click: files that look partial, that changed on disk, that the sandbox refuses, that are over 1 MB, and **gated files**. Gated files can change what a command does: `package.json`, lockfiles, `.npmrc`, `.yarnrc*`, `pnpm-workspace.yaml`, `.github/workflows/`, `.husky/` and other hook folders, `Dockerfile`, `Makefile`. Add your own under **Settings → Gated files**. This only blocks the most direct routes: running the tests still runs test code the chat wrote.
+
+Auto-apply is remembered. Full auto is not: it turns off when you restart Bridge, end the session, unpair or switch projects.
+
+## Commands and the allowlist
+
+The first time you open a project, the app's **Commands** section suggests commands from its `package.json` scripts (`pnpm test`, `pnpm lint`, …) plus `git status` and `git diff`. Tick the ones you want and click **Allow**. Nothing runs until you do. You can add and remove commands there at any time. Nothing in the chat or the extension can change the list.
+
+- An entry is a program plus the start of its arguments: `pnpm test` also allows `pnpm test -- --run src/a.test.ts`, but not `pnpm testx`. Extra arguments are passed as they are, so allow only programs whose arguments you're comfortable with (some, like `git diff --output=<file>`, can write files).
+- There is no shell. Pipes, `&&`, `;`, redirects, `$`, backticks, wildcards and `FOO=1 cmd` are refused, and so is anything longer than 1,000 characters.
+- Programs are found on your `PATH`. One that resolves inside the project (say `node_modules/.bin` on your `PATH`) is refused; to run a project script, allowlist its exact path, like `./scripts/check.sh`.
+- Commands run in the project folder with your environment, minus anything that looks like a secret (`*TOKEN*`, `*SECRET*`, `*KEY*`, `*PASSWORD*`, `AWS_*`, `OPENAI_*`, …; add more under **Settings → Hidden from commands**), with `CI=1` and `FORCE_COLOR=0`.
+- One command at a time. The timeout is 120 seconds by default (up to 10 minutes) and kills everything the command started. Output is kept up to 200 KB (start and end), and the chat gets about 8,000 characters of it.
+
+Output streams live on the RUN card, in the side panel and in the app, where **Cancel** stops it.
+
+## Full auto
+
+> **Read this before turning it on.** Full auto clicks the chat's send button for you. Automating the chat this way may break its provider's terms of use and put your account at risk. The commands it runs execute code the model may have written (tests, build scripts), with your user's permissions. It's opt-in and at your own risk, and the app asks you to confirm every time you turn it on.
+
+When a reply finishes, Bridge applies its edits, reads the files it asked for, runs its allowlisted commands one after another, and sends one follow-up message with the results. It checks that the message really appeared, then waits for the next reply. It ends when a reply asks for nothing or says `` `@@DONE@@` ``.
+
+It pauses and waits for you on a gated, partial, conflicting or blocked edit; a command that isn't allowed; a failed command if you turned on **Pause on failure** (off by default, so test failures go back to the chat to fix); a follow-up too big to send even trimmed; an error or limit banner on the page; a lost connection to the app; or when you leave the conversation. Click **Resume** in the side panel to carry on.
+
+- **Step limit:** 10 messages per run by default (up to 25, in the app's Commands section). The panel and a chip on the page show `3 / 10`. At the limit it pauses and offers **Continue for 10 more**.
+- **Pace:** at least 3 seconds between messages it sends, and no other delay.
+- **Stop:** in the side panel, in the app, and on the page chip. It halts the loop and cancels the running command at once. It reverts nothing; every edit can still be undone.
+- Every step shows in the app's **Activity**, grouped by run.
+
 ## Project structure
 
 ```
@@ -151,6 +191,9 @@ Manual end-to-end scripts (Playwright, not in CI) live in [`e2e/`](e2e/README.md
 - **Desktop says "Server error"**: something else is using every port from 47821 to 47830. Free one and restart Bridge.
 - **No cards in the chat**: check the side panel says **Session active** for this tab. Cards only appear once a reply has finished. If the chat tab was open before the extension was loaded or reloaded, reload the tab.
 - **Cards use the system font**: chatgpt.com's content security policy blocked the extension's fonts. Cards still work.
+- **A RUN card says "not allowed"**: the command isn't on the allowlist, or uses shell syntax. Add it in the app's **Commands** section if you want it.
+- **"That program isn't installed or isn't on the PATH"**: the app looks programs up on the PATH it was started with. On macOS, an app opened from the Dock may not see your shell's PATH; start it from a terminal, or allowlist the program's full path.
+- **Full auto paused with "no new message appeared"**: the chat page didn't take the send (its send button may have changed). Check the message box and press **Resume**.
 - **Side panel stays on "Can't reach Bridge"**: the app answered but the handshake failed. If you unpaired in the app while Chrome was closed, click **Unpair** in the side panel and pair again. Otherwise the extension ID may not match: check that the extension was loaded from `apps/extension/dist` and that the ID on `chrome://extensions` is the one above.
 
 ## Docs

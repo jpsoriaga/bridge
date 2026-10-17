@@ -97,7 +97,7 @@ describe('messageToText on saved chat pages', () => {
     if (!user) throw new Error('no user message');
     const { text, codeBlocks } = messageToText(user);
     expect(codeBlocks).toEqual([]);
-    expect(parseChat(text)).toEqual({ edits: [], reads: [] });
+    expect(parseChat(text)).toEqual({ edits: [], reads: [], runs: [], done: false });
   });
 
   it('skips Bridge cards injected into the message', () => {

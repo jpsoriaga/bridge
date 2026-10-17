@@ -8,6 +8,8 @@ export const SELECTORS = {
   assistantMessage: ['[data-message-author-role="assistant"]'],
   /** Any message, to tell "no messages yet" from "can't find messages". */
   anyMessage: ['[data-message-author-role]'],
+  /** One user message. Full auto counts these to see that its send went through. */
+  userMessage: ['[data-message-author-role="user"]'],
   /** One turn (a user or assistant message plus its action buttons). */
   turn: [
     'article[data-testid^="conversation-turn-"]',
@@ -34,8 +36,31 @@ export const SELECTORS = {
     '[contenteditable="true"][data-virtualkeyboard="true"]',
     'textarea#prompt-textarea',
     'form textarea'
+  ],
+  /** The composer's send button. Full auto clicks it; nothing else does. */
+  sendButton: [
+    '[data-testid="send-button"]',
+    'button#composer-submit-button',
+    'button[aria-label="Send prompt"]',
+    'form button[type="submit"]'
+  ],
+  /**
+   * Where the page shows an error or a usage limit. Full auto pauses when one of these is
+   * visible and its text reads like an error (`ERROR_TEXT`). Best guesses from the page's
+   * markup; check them against the live site (see the fixtures README).
+   */
+  errorBanner: [
+    '[data-testid="conversation-error"]',
+    '[data-testid*="error-message"]',
+    '.text-token-text-error',
+    '[class*="text-red"]',
+    '[role="alert"]'
   ]
 } as const;
+
+/** Text that marks an error or limit banner, so a stray red element doesn't pause the loop. */
+export const ERROR_TEXT =
+  /something went wrong|error (?:in|generating|occurred)|network error|you['’]ve reached|usage (?:limit|cap)|rate limit|too many requests|try again later|message (?:limit|cap)/i;
 
 /** The message element's own id attribute. Falls back to the position on the page. */
 export const MESSAGE_ID_ATTRIBUTE = 'data-message-id';
@@ -115,6 +140,28 @@ export function checkLayout(doc: Document = document): LayoutHealth {
   const turns = all(doc, SELECTORS.turn).length;
   if (turns > 0 && all(doc, SELECTORS.anyMessage).length === 0) return 'unknown';
   return 'ok';
+}
+
+export function findSendButton(doc: Document = document): HTMLButtonElement | null {
+  const found = first(doc, SELECTORS.sendButton);
+  return found instanceof HTMLButtonElement ? found : null;
+}
+
+export function userMessageCount(doc: Document = document): number {
+  const root = findConversation(doc) ?? doc;
+  return all(root, SELECTORS.userMessage).length;
+}
+
+/** The text of a visible error or limit banner, or null. */
+export function pageError(doc: Document = document): string | null {
+  for (const selector of SELECTORS.errorBanner) {
+    for (const element of doc.querySelectorAll(selector)) {
+      if (element.closest(`[${BRIDGE_HOST_ATTRIBUTE}]`)) continue;
+      const text = (element.textContent ?? '').replace(/\s+/g, ' ').trim();
+      if (text && ERROR_TEXT.test(text)) return text.slice(0, 200);
+    }
+  }
+  return null;
 }
 
 /** The conversation id from `/c/<id>` (also under `/g/<gpt>/c/<id>`), or null. */

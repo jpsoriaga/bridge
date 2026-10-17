@@ -17,3 +17,5 @@ update a fixture here. Keep one scenario per file.
 | `streaming.html`      | A reply still streaming: `result-streaming`, no action buttons      |
 | `code-header.html`    | Code block header ("typescript", Copy) inside `<pre>`, nested fence |
 | `user-message.html`   | A user turn containing `@@CONTEXT` and a typed `@@FILE` block       |
+
+Full auto (Phase 5) also relies on `SELECTORS.sendButton`, `SELECTORS.userMessage` and `SELECTORS.errorBanner` (with `ERROR_TEXT`). There are no saved fixtures for these yet: the e2e stand-in page imitates them. When checking the live site, save the composer's send button and an error or usage-limit banner too.

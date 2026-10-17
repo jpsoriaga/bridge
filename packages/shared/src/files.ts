@@ -10,7 +10,10 @@ export const MAX_PATH_LENGTH = 1024;
 export const TREE_MAX_ENTRIES = 5_000;
 export const TREE_MAX_DEPTH = 12;
 
-/** Every reason a file operation can fail. Rejections never include an absolute path. */
+/**
+ * Every reason a request (file operation or command) can fail. Rejections never include
+ * an absolute path.
+ */
 export const FILE_ERROR_CODES = [
   'no-project',
   // Sandbox: the path itself.
@@ -30,7 +33,17 @@ export const FILE_ERROR_CODES = [
   // Undo.
   'unknown-op',
   'already-undone',
-  'io-error'
+  'io-error',
+  // Modes: an automatic write or run the current mode doesn't allow, or a gated file.
+  'mode',
+  'gated',
+  // Commands.
+  'invalid-command',
+  'not-allowlisted',
+  'command-not-found',
+  'project-binary',
+  'busy',
+  'unknown-run'
 ] as const;
 export const FileErrorCode = z.enum(FILE_ERROR_CODES);
 export type FileErrorCode = z.infer<typeof FileErrorCode>;
@@ -42,6 +55,17 @@ const RelPath = z
   .min(1)
   .max(4 * MAX_PATH_LENGTH);
 export const OpId = z.string().regex(/^[0-9a-z-]{1,64}$/);
+export const RunId = z.string().regex(/^[0-9a-z-]{1,64}$/);
+/** One Full auto run. Writes and runs it makes carry it, so the app can group them. */
+export const LoopId = z.string().regex(/^[\w-]{1,64}$/);
+
+/**
+ * `click`: the user pressed a button for this. `auto`: Bridge did it on its own (Auto-apply,
+ * Full auto). The desktop refuses `auto` writes in Manual mode and `auto` runs outside
+ * Full auto.
+ */
+export const Trigger = z.enum(['click', 'auto']);
+export type Trigger = z.infer<typeof Trigger>;
 
 export const ProjectInfo = z.strictObject({
   name: z.string().max(256),
@@ -61,9 +85,19 @@ export const WriteParams = z.strictObject({
   /** Required to modify an existing file, absent to create one. From `read`. */
   baseHash: Sha256Hex.optional(),
   /** `chat`: applied from a diff card. The desktop's activity list says "via chat". */
-  source: z.literal('chat').optional()
+  source: z.literal('chat').optional(),
+  trigger: Trigger,
+  loopId: LoopId.optional()
 });
 export const UndoParams = z.strictObject({ opId: OpId });
+/** One command as argv. The desktop re-checks every word and the allowlist. */
+export const RunParams = z.strictObject({
+  argv: z.array(z.string().max(1_000)).min(1).max(100),
+  trigger: Trigger,
+  loopId: LoopId.optional()
+});
+export const RunCancelParams = z.strictObject({ runId: RunId });
+export type RunParams = z.infer<typeof RunParams>;
 export type ReadParams = z.infer<typeof ReadParams>;
 export type WriteParams = z.infer<typeof WriteParams>;
 export type UndoParams = z.infer<typeof UndoParams>;
@@ -94,6 +128,9 @@ export const WriteResult = z.strictObject({
   hash: Sha256Hex
 });
 export const UndoResult = z.strictObject({ opId: OpId, path: z.string() });
+export const RunStarted = z.strictObject({ runId: RunId });
+export const RunCancelResult = z.strictObject({ cancelled: z.boolean() });
+export type RunStarted = z.infer<typeof RunStarted>;
 export type TreeResult = z.infer<typeof TreeResult>;
 export type ReadResult = z.infer<typeof ReadResult>;
 export type WriteResult = z.infer<typeof WriteResult>;
@@ -110,7 +147,9 @@ export const FILE_RESULTS = {
   tree: TreeResult,
   read: ReadResult,
   write: WriteResult,
-  undo: UndoResult
+  undo: UndoResult,
+  run: RunStarted,
+  run_cancel: RunCancelResult
 } as const;
 export type FileRequestType = keyof typeof FILE_RESULTS;
 export type FileResult<T extends FileRequestType> = z.infer<(typeof FILE_RESULTS)[T]>;
@@ -133,7 +172,16 @@ export const FILE_ERROR_MESSAGES: Record<FileErrorCode, string> = {
   exists: 'A file already exists at that path.',
   'unknown-op': 'Bridge has no record of that change.',
   'already-undone': 'That change was already undone.',
-  'io-error': 'Bridge could not complete the file operation.'
+  'io-error': 'Bridge could not complete the file operation.',
+  mode: 'Bridge’s current mode doesn’t do that on its own. Click to do it.',
+  gated: 'That file can change what commands do, so it needs a click in every mode.',
+  'invalid-command': 'Bridge runs single commands only, with no shell features.',
+  'not-allowlisted': 'That command isn’t on the allowlist. Add it in the Bridge app.',
+  'command-not-found': 'That program isn’t installed or isn’t on the PATH.',
+  'project-binary':
+    'Bridge doesn’t run programs from inside the project unless they’re allowlisted.',
+  busy: 'Another command is still running.',
+  'unknown-run': 'That command isn’t running.'
 };
 
 /** A few words for each code, for activity rows and card meta lines. */
@@ -152,5 +200,13 @@ export const FILE_ERROR_LABELS: Record<FileErrorCode, string> = {
   exists: 'already exists',
   'unknown-op': 'unknown change',
   'already-undone': 'already undone',
-  'io-error': 'disk error'
+  'io-error': 'disk error',
+  mode: 'needs a click',
+  gated: 'gated file',
+  'invalid-command': 'invalid command',
+  'not-allowlisted': 'not allowed',
+  'command-not-found': 'not found',
+  'project-binary': 'project program',
+  busy: 'busy',
+  'unknown-run': 'not running'
 };

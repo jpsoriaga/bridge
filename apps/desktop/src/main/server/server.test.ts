@@ -1,13 +1,24 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import {
   BRIDGE_EXTENSION_ID,
   CloseCode,
   parseMessage,
+  PROTOCOL_VERSION,
   proofInput,
-  ServerMessage
+  ServerMessage,
+  type Mode,
+  type RunResult
 } from '@bridge/shared';
+import { CommandRunner } from '../commands/runner';
+import { CommandService } from '../commands/service';
+import { GatedFiles, guardedFiles, ModeState } from '../policy';
+import { ProjectService } from '../project/service';
+import { tempProject } from '../project/test-utils';
+import { settingsFile } from '../settings';
 import { AUTH_TIMEOUT_MS, MAX_WS_PAYLOAD_BYTES } from './config';
 import { memoryTokenStore, Pairing } from './pairing';
 import { createBridgeServer, type BridgeServer } from './server';
@@ -113,9 +124,19 @@ function connect(options: { origin?: string; host?: string } = {}): Promise<Clie
   });
 }
 
-const hello = (n: string) => ({ v: 2, id: 'h1', type: 'hello', payload: { nonce: n } });
-const auth = (proof: string) => ({ v: 2, id: 'a1', type: 'auth', payload: { proof } });
-const ping = (id = 'p1') => ({ v: 2, id, type: 'ping', payload: {} });
+const hello = (n: string) => ({
+  v: PROTOCOL_VERSION,
+  id: 'h1',
+  type: 'hello',
+  payload: { nonce: n }
+});
+const auth = (proof: string) => ({
+  v: PROTOCOL_VERSION,
+  id: 'a1',
+  type: 'auth',
+  payload: { proof }
+});
+const ping = (id = 'p1') => ({ v: PROTOCOL_VERSION, id, type: 'ping', payload: {} });
 
 /** Sends hello and returns the server's challenge after checking its proof. */
 async function challenge(client: Client, key: string, n = nonce()) {
@@ -361,7 +382,7 @@ describe('WebSocket auth', () => {
   it('never needs the token on the socket', async () => {
     const key = await pair();
     const client = await connect();
-    client.sendJson({ v: 2, id: 'a1', type: 'auth', payload: { token: key } });
+    client.sendJson({ v: PROTOCOL_VERSION, id: 'a1', type: 'auth', payload: { token: key } });
     expect(await client.next()).toMatchObject({ payload: { reason: 'expected_hello' } });
     expect((await client.closed).code).toBe(CloseCode.protocolError);
   });
@@ -498,14 +519,19 @@ describe('file requests', () => {
   it('answers with a response carrying the request id', async () => {
     const client = await authedClient(await pair());
     await client.next(); // status
-    client.sendJson({ v: 2, id: 'read-7', type: 'read', payload: { path: 'a.txt' } });
+    client.sendJson({
+      v: PROTOCOL_VERSION,
+      id: 'read-7',
+      type: 'read',
+      payload: { path: 'a.txt' }
+    });
     expect(await client.next()).toEqual({
-      v: 2,
+      v: PROTOCOL_VERSION,
       id: 'read-7',
       type: 'response',
       payload: { ok: true, result: { content: 'hi', hash: 'a'.repeat(64), eol: 'lf' } }
     });
-    client.sendJson({ v: 2, id: 'read-8', type: 'read', payload: { path: '.env' } });
+    client.sendJson({ v: PROTOCOL_VERSION, id: 'read-8', type: 'read', payload: { path: '.env' } });
     expect(await client.next()).toMatchObject({
       id: 'read-8',
       payload: { ok: false, error: { code: 'denied' } }
@@ -517,7 +543,7 @@ describe('file requests', () => {
   it('refuses file requests before auth', async () => {
     await pair();
     const client = await connect();
-    client.sendJson({ v: 2, id: 'r', type: 'read', payload: { path: 'a.txt' } });
+    client.sendJson({ v: PROTOCOL_VERSION, id: 'r', type: 'read', payload: { path: 'a.txt' } });
     expect(await client.next()).toMatchObject({ payload: { reason: 'expected_hello' } });
     expect((await client.closed).code).toBe(CloseCode.protocolError);
   });
@@ -525,7 +551,12 @@ describe('file requests', () => {
   it('drops malformed file requests', async () => {
     const client = await authedClient(await pair());
     await client.next(); // status
-    client.sendJson({ v: 2, id: 'w', type: 'write', payload: { path: 'a', content: 1 } });
+    client.sendJson({
+      v: PROTOCOL_VERSION,
+      id: 'w',
+      type: 'write',
+      payload: { path: 'a', content: 1 }
+    });
     expect(await client.next()).toMatchObject({
       type: 'error',
       payload: { code: 'invalid_message' }
@@ -538,7 +569,12 @@ describe('file requests', () => {
     const client = await authedClient(await pair());
     await client.next(); // status
     const content = '\n'.repeat(1024 * 1024);
-    client.sendJson({ v: 2, id: 'big', type: 'write', payload: { path: 'b.txt', content } });
+    client.sendJson({
+      v: PROTOCOL_VERSION,
+      id: 'big',
+      type: 'write',
+      payload: { path: 'b.txt', content, trigger: 'click' }
+    });
     expect(await client.next()).toMatchObject({ id: 'big', type: 'response' });
     client.ws.close();
     await client.closed;
@@ -555,5 +591,261 @@ describe('file requests', () => {
     });
     client.ws.close();
     await client.closed;
+  });
+});
+
+describe('modes, commands and the loop (real project, real runner)', () => {
+  let t: ReturnType<typeof tempProject>;
+  let modes: ModeState;
+  let runner: CommandRunner;
+  let exits: RunResult[];
+  let loopReports: unknown[];
+  let sessionEnds: number;
+  let unpaired: number;
+
+  beforeEach(async () => {
+    await server.close();
+    t = tempProject('bridge-server-modes-');
+    t.write('src/a.ts', 'old\n');
+    t.write('package.json', '{}\n');
+    const userData = join(t.base, 'userData');
+    mkdirSync(userData);
+    const settings = settingsFile(join(userData, 'settings.json'));
+    const projects = new ProjectService({
+      settings,
+      backupsDir: join(userData, 'backups'),
+      homeDir: join(t.base, 'home'),
+      protectedDirs: [userData]
+    });
+    await projects.open(t.root);
+    modes = new ModeState(settings);
+    exits = [];
+    loopReports = [];
+    sessionEnds = 0;
+    unpaired = 0;
+    runner = new CommandRunner({
+      onOutput: (runId, chunk) =>
+        server.broadcast({
+          v: PROTOCOL_VERSION,
+          id: 'o',
+          type: 'run_output',
+          payload: { runId, chunk }
+        }),
+      onExit: (result) => {
+        exits.push(result);
+        server.broadcast({ v: PROTOCOL_VERSION, id: 'x', type: 'run_exit', payload: result });
+      }
+    });
+    const commands = new CommandService({
+      runner,
+      root: () => projects.root,
+      mode: () => modes.mode,
+      allowlist: () => ['node -e'],
+      envPatterns: () => [],
+      timeoutMs: () => 10_000,
+      env: () => ({ PATH: dirname(process.execPath), SystemRoot: process.env.SystemRoot ?? '' })
+    });
+    pairing = new Pairing({ store: memoryTokenStore(), now: () => clock });
+    server = createBridgeServer({
+      pairing,
+      version: '9.9.9',
+      project: () => projects.project,
+      files: guardedFiles(
+        projects,
+        () => modes.mode,
+        () => new GatedFiles()
+      ),
+      commands: (request) =>
+        request.type === 'run'
+          ? commands.run(request.payload)
+          : Promise.resolve(commands.cancel(request.payload.runId)),
+      config: () => ({
+        mode: modes.mode,
+        allowlist: ['node -e'],
+        stepLimit: 10,
+        pauseOnFailure: false,
+        running: runner.current
+      }),
+      onLoopReport: (report) => loopReports.push(report),
+      onSessionEnd: () => {
+        sessionEnds += 1;
+        modes.dropFullAuto();
+      },
+      onUnpaired: () => {
+        unpaired += 1;
+        modes.dropFullAuto();
+      }
+    });
+    port = await server.listen([0]);
+    host = `127.0.0.1:${port}`;
+  });
+
+  afterEach(() => {
+    runner.cancelAll();
+    t.cleanup();
+  });
+
+  let seq = 0;
+  /** Sends a request and returns its response, skipping anything else that arrives first. */
+  async function ask(client: Client, type: string, payload: unknown) {
+    const id = `req-${++seq}`;
+    client.sendJson({ v: PROTOCOL_VERSION, id, type, payload });
+    for (;;) {
+      const message = await client.next();
+      if (message.type === 'response' && message.id === id) return message.payload;
+    }
+  }
+  const write = (path: string, trigger: 'click' | 'auto', content = 'new\n') => ({
+    path,
+    content,
+    trigger
+  });
+
+  async function setUp(mode: Mode) {
+    modes.set(mode);
+    const client = await authedClient(await pair());
+    const status = await client.next();
+    expect(status).toMatchObject({ type: 'status', payload: { config: { mode } } });
+    return client;
+  }
+
+  async function readHash(client: Client, path: string) {
+    const read = await ask(client, 'read', { path });
+    if (!read.ok) throw new Error(read.error.code);
+    return (read.result as { hash: string }).hash;
+  }
+
+  it('rejects automatic writes in Manual mode, and accepts the same write on a click', async () => {
+    const client = await setUp('manual');
+    const baseHash = await readHash(client, 'src/a.ts');
+    expect(await ask(client, 'write', { ...write('src/a.ts', 'auto'), baseHash })).toMatchObject({
+      ok: false,
+      error: { code: 'mode' }
+    });
+    expect(await ask(client, 'write', { ...write('src/a.ts', 'click'), baseHash })).toMatchObject({
+      ok: true
+    });
+    client.ws.close();
+    await client.closed;
+  });
+
+  it('accepts automatic writes in Auto-apply, except to a gated file', async () => {
+    const client = await setUp('auto-apply');
+    const baseHash = await readHash(client, 'src/a.ts');
+    expect(await ask(client, 'write', { ...write('src/a.ts', 'auto'), baseHash })).toMatchObject({
+      ok: true
+    });
+    const pkgHash = await readHash(client, 'package.json');
+    expect(
+      await ask(client, 'write', {
+        ...write('package.json', 'auto', '{"x":1}\n'),
+        baseHash: pkgHash
+      })
+    ).toMatchObject({ ok: false, error: { code: 'gated' } });
+    expect(
+      await ask(client, 'write', { ...write('.github/workflows/ci.yml', 'auto') })
+    ).toMatchObject({ ok: false, error: { code: 'gated' } });
+    // A click on the gated file goes through.
+    expect(
+      await ask(client, 'write', {
+        ...write('package.json', 'click', '{"x":1}\n'),
+        baseHash: pkgHash
+      })
+    ).toMatchObject({ ok: true });
+    client.ws.close();
+    await client.closed;
+  });
+
+  it('rejects automatic runs outside Full auto, and runs them in Full auto', async () => {
+    const client = await setUp('auto-apply');
+    const run = { argv: ['node', '-e', 'console.log("ran")'], trigger: 'auto' };
+    expect(await ask(client, 'run', run)).toMatchObject({ ok: false, error: { code: 'mode' } });
+    modes.set('full-auto');
+    const started = await ask(client, 'run', run);
+    expect(started).toMatchObject({ ok: true, result: { runId: expect.any(String) } });
+    // Output then the exit arrive as events.
+    let exit: ServerMessage | undefined;
+    while (!exit) {
+      const message = await client.next();
+      if (message.type === 'run_exit') exit = message;
+    }
+    expect(exit.payload).toMatchObject({ status: 'exited', exitCode: 0, output: 'ran\n' });
+    client.ws.close();
+    await client.closed;
+  });
+
+  it('rejects a command that isn’t allowlisted even on a click', async () => {
+    const client = await setUp('full-auto');
+    for (const argv of [
+      ['node', '--version'],
+      ['git', 'status'],
+      ['sh', '-c', 'id']
+    ]) {
+      expect(await ask(client, 'run', { argv, trigger: 'click' })).toMatchObject({
+        ok: false,
+        error: { code: 'not-allowlisted' }
+      });
+    }
+    expect(exits).toEqual([]);
+    client.ws.close();
+    await client.closed;
+  });
+
+  it('cancels a run on request', async () => {
+    const client = await setUp('manual');
+    const started = await ask(client, 'run', {
+      argv: ['node', '-e', 'setInterval(() => {}, 1000)'],
+      trigger: 'click'
+    });
+    if (!started.ok) throw new Error(started.error.code);
+    const { runId } = started.result as { runId: string };
+    expect(await ask(client, 'run_cancel', { runId })).toEqual({
+      ok: true,
+      result: { cancelled: true }
+    });
+    let exit: ServerMessage | undefined;
+    while (!exit) {
+      const message = await client.next();
+      if (message.type === 'run_exit') exit = message;
+    }
+    expect(exit.payload).toMatchObject({ runId, status: 'cancelled' });
+    client.ws.close();
+    await client.closed;
+  });
+
+  it('passes loop reports on, and drops Full auto on session_end', async () => {
+    const client = await setUp('full-auto');
+    client.sendJson({
+      v: PROTOCOL_VERSION,
+      id: 'l1',
+      type: 'loop_report',
+      payload: { loopId: 'loop-1', state: 'acting', step: 1, limit: 10 }
+    });
+    client.sendJson({ v: PROTOCOL_VERSION, id: 's1', type: 'session_end', payload: {} });
+    await vi.waitFor(() => expect(sessionEnds).toBe(1));
+    expect(loopReports).toEqual([{ loopId: 'loop-1', state: 'acting', step: 1, limit: 10 }]);
+    expect(modes.mode).toBe('manual');
+    client.ws.close();
+    await client.closed;
+  });
+
+  it('drops Full auto when unpaired from the app, from the extension, or by pairing again', async () => {
+    await pair();
+    modes.set('full-auto');
+    server.unpair();
+    expect(unpaired).toBe(1);
+    expect(modes.mode).toBe('manual');
+
+    const key = await pair();
+    modes.set('full-auto');
+    expect(await unpairWith(key)).toBe(204);
+    expect(unpaired).toBe(2);
+    expect(modes.mode).toBe('manual');
+
+    await pair();
+    modes.set('full-auto');
+    await pair();
+    expect(unpaired).toBe(3);
+    expect(modes.mode).toBe('manual');
   });
 });

@@ -3,7 +3,8 @@ import {
   buildSessionPrompt,
   FILE_ERROR_LABELS,
   summarizeTree,
-  type FileErrorCode
+  type FileErrorCode,
+  type LoopReport
 } from '@bridge/shared';
 import {
   PanelHello,
@@ -12,6 +13,7 @@ import {
   WorkerRequest,
   type ChatSyncReply,
   type InsertResult,
+  type PanelMessage,
   type RequestOutcome,
   type SendFilesResult,
   type SessionError,
@@ -121,6 +123,18 @@ async function chatTab(
   return { ok: true, tabId };
 }
 
+/** The tab that started each running command, so its card gets the output. */
+const runTabs = new Map<string, number>();
+/** Each chat tab's Full auto loop, as it last reported. */
+const loops = new Map<number, LoopReport>();
+const loopActive = (report: LoopReport | undefined) =>
+  report !== undefined && report.state !== 'idle' && report.state !== 'stopped';
+
+/** Every chatgpt.com tab with Bridge's content script running in it. */
+async function chatTabIds(): Promise<number[]> {
+  return sessions.tabIds();
+}
+
 async function sessionPrompt(): Promise<
   { ok: true; text: string; total: number; shown: number } | { ok: false; error: SessionError }
 > {
@@ -133,7 +147,12 @@ async function sessionPrompt(): Promise<
   const { total, shown } = summarizeTree(entries);
   return {
     ok: true,
-    text: buildSessionPrompt({ projectName: project.name, tree: entries, truncated }),
+    text: buildSessionPrompt({
+      projectName: project.name,
+      tree: entries,
+      truncated,
+      allowlist: connection.config?.allowlist ?? []
+    }),
     total,
     shown
   };
@@ -164,6 +183,8 @@ async function endSession(windowId: number): Promise<void> {
   if (tabId === null) return;
   await sessions.end(tabId);
   void tellTab(tabId, { type: 'session-changed', session: 'ended' });
+  // The app drops out of Full auto when a session ends.
+  connection.notify('session_end', {});
 }
 
 async function sendFiles(paths: string[], windowId: number): Promise<SendFilesResult> {
@@ -193,10 +214,12 @@ async function sendFiles(paths: string[], windowId: number): Promise<SendFilesRe
   return { ok: true, chars: inserted.chars, sent, refused };
 }
 
-/** File requests from a card in the chat. Refused unless that tab's session is active. */
+/** File and command requests from a card in the chat. Refused unless that tab's session is active. */
 async function chatFile(
   tabId: number,
-  request: WorkerRequestOf<'chat-read' | 'chat-write' | 'chat-undo'>
+  request: WorkerRequestOf<
+    'chat-read' | 'chat-write' | 'chat-undo' | 'chat-run' | 'chat-run-cancel'
+  >
 ): Promise<RequestOutcome<unknown>> {
   if (!(await sessions.isActive(tabId))) {
     return { ok: false, error: { code: 'no-session', message: 'No Bridge session in this chat.' } };
@@ -211,29 +234,64 @@ async function chatFile(
         path: request.path,
         content: request.content,
         ...(request.baseHash !== undefined && { baseHash: request.baseHash }),
-        source: 'chat'
+        source: 'chat',
+        trigger: request.trigger,
+        ...(request.loopId !== undefined && { loopId: request.loopId })
       });
     case 'chat-undo':
       return connection.request('undo', { opId: request.opId });
+    case 'chat-run': {
+      const outcome = await connection.request('run', {
+        argv: request.argv,
+        trigger: request.trigger,
+        ...(request.loopId !== undefined && { loopId: request.loopId })
+      });
+      if (outcome.ok) runTabs.set(outcome.result.runId, tabId);
+      return outcome;
+    }
+    case 'chat-run-cancel':
+      return connection.request('run_cancel', { runId: request.runId });
   }
 }
 
 async function handleChat(
   tabId: number,
   request: WorkerRequestOf<
-    'chat-sync' | 'chat-read' | 'chat-write' | 'chat-undo' | 'chat-sent' | 'card-get' | 'card-set'
+    | 'chat-sync'
+    | 'chat-read'
+    | 'chat-write'
+    | 'chat-undo'
+    | 'chat-sent'
+    | 'card-get'
+    | 'card-set'
+    | 'chat-run'
+    | 'chat-run-cancel'
+    | 'chat-loop'
   >
 ): Promise<unknown> {
   switch (request.type) {
     case 'chat-sync': {
       void connection.connect();
+      if (request.start) forgetLoop(tabId, 'The chat page reloaded.');
       const session = await sessions.sync(tabId, request.conversationId, request.layout);
-      return { connected: connection.current === 'connected', session } satisfies ChatSyncReply;
+      return {
+        connected: connection.current === 'connected',
+        session,
+        config: connection.config
+      } satisfies ChatSyncReply;
     }
     case 'chat-read':
     case 'chat-write':
     case 'chat-undo':
+    case 'chat-run':
+    case 'chat-run-cancel':
       return chatFile(tabId, request);
+    case 'chat-loop':
+      // The loop reports every change. The app logs it; the panel shows it.
+      loops.set(tabId, request.report);
+      connection.notify('loop_report', request.report);
+      notifyPanels();
+      return null;
     case 'chat-sent':
       await sessions.addSent(tabId, request.paths);
       return null;
@@ -281,6 +339,16 @@ async function handlePanel(
       return connection.request('tree', {});
     case 'send-files':
       return sendFiles(request.paths, request.windowId);
+    case 'loop-control': {
+      const tabId = await activeTabId(request.windowId);
+      if (tabId !== null) void tellTab(tabId, { type: 'loop-control', action: request.action });
+      return null;
+    }
+    case 'run-cancel': {
+      const running = connection.config?.running;
+      if (running) await connection.request('run_cancel', { runId: running.runId });
+      return null;
+    }
     case 'dev-file': {
       // The side panel's test field only exists in dev builds, and so does this path.
       if (!import.meta.env.DEV) return undefined;
@@ -305,6 +373,8 @@ function route(sender: Sender, request: WorkerRequest): Promise<unknown> {
 
 // Side panels: push status, project and the active tab's session on every change.
 const panelPushers = new Set<() => void>();
+/** Live command output goes to every open panel as it arrives. */
+const panelRelays = new Set<(message: PanelMessage) => void>();
 function notifyPanels(): void {
   for (const push of panelPushers) push();
 }
@@ -326,7 +396,10 @@ chrome.runtime.onConnect.addListener((port) => {
   const push = () => {
     const mine = ++version;
     void activeTabId(windowId)
-      .then((tabId) => sessions.panelState(tabId))
+      .then(async (tabId) => ({
+        ...(await sessions.panelState(tabId)),
+        loop: tabId === null ? null : (loops.get(tabId) ?? null)
+      }))
       .then((chat) => {
         // A slower, older push must not overwrite a newer one.
         if (mine !== version) return;
@@ -334,6 +407,7 @@ chrome.runtime.onConnect.addListener((port) => {
           type: 'status',
           status: connection.current,
           project: connection.project,
+          config: connection.config,
           chat
         } satisfies StatusUpdate);
       })
@@ -341,7 +415,20 @@ chrome.runtime.onConnect.addListener((port) => {
   };
   push();
   panelPushers.add(push);
-  const unsubscribers = [connection.onStatus(push), connection.onProject(push)];
+  const relay = (message: PanelMessage) => {
+    try {
+      port.postMessage(message);
+    } catch {
+      // The panel closed.
+    }
+  };
+  panelRelays.add(relay);
+  const unsubscribers = [
+    connection.onStatus(push),
+    connection.onProject(push),
+    connection.onConfig(push),
+    () => panelRelays.delete(relay)
+  ];
   port.onDisconnect.addListener(() => {
     panelPushers.delete(push);
     unsubscribers.forEach((off) => off());
@@ -353,7 +440,61 @@ chrome.runtime.onConnect.addListener((port) => {
 sessions.onChange(notifyPanels);
 chrome.tabs.onActivated.addListener(notifyPanels);
 chrome.windows.onFocusChanged.addListener(notifyPanels);
-chrome.tabs.onRemoved.addListener((tabId) => void sessions.removeTab(tabId));
+/**
+ * A tab's content script is gone (closed or reloaded), and its loop with it. Tell the app
+ * the run stopped, and stop any command it started.
+ */
+function forgetLoop(tabId: number, why: string): void {
+  const report = loops.get(tabId);
+  loops.delete(tabId);
+  if (report && loopActive(report)) {
+    connection.notify('loop_report', {
+      ...report,
+      state: 'stopped',
+      event: { kind: 'stopped', text: why }
+    });
+  }
+  for (const [runId, owner] of runTabs) {
+    if (owner === tabId) void connection.request('run_cancel', { runId });
+  }
+  notifyPanels();
+}
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  void sessions.removeTab(tabId);
+  forgetLoop(tabId, 'The chat tab closed.');
+});
+
+// The app's mode and allowlist, and the connection itself, are mirrored in every chat tab.
+connection.onConfig((config) => {
+  void chatTabIds().then((ids) => {
+    for (const id of ids) void tellTab(id, { type: 'bridge-config', config });
+  });
+});
+
+connection.onEvent((event) => {
+  switch (event.type) {
+    case 'run-output': {
+      const tabId = runTabs.get(event.runId);
+      if (tabId !== undefined) void tellTab(tabId, event);
+      for (const relay of panelRelays) relay(event);
+      break;
+    }
+    case 'run-exit': {
+      const tabId = runTabs.get(event.result.runId);
+      runTabs.delete(event.result.runId);
+      if (tabId !== undefined) void tellTab(tabId, event);
+      for (const relay of panelRelays) relay(event);
+      break;
+    }
+    case 'loop-stop':
+      // Stop from the app: every tab with a running loop halts.
+      for (const [tabId, report] of loops) {
+        if (loopActive(report)) void tellTab(tabId, { type: 'loop-control', action: 'stop' });
+      }
+      break;
+  }
+});
 
 chrome.runtime.onMessage.addListener((raw: unknown, messageSender, sendResponse) => {
   const sender = classifySender(messageSender, chrome.runtime.id, extensionPage);

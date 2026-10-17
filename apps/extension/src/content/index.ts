@@ -21,5 +21,17 @@ chrome.runtime.onMessage.addListener((raw: unknown, sender, sendResponse) => {
       controller.setSession(message.session);
       sendResponse(null);
       return false;
+    case 'bridge-config':
+      controller.setConfig(message.config);
+      return false;
+    case 'run-output':
+      controller.runEvent(message.runId, { type: 'output', chunk: message.chunk });
+      return false;
+    case 'run-exit':
+      controller.runEvent(message.result.runId, { type: 'exit', result: message.result });
+      return false;
+    case 'loop-control':
+      controller.loopControl(message.action);
+      return false;
   }
 });

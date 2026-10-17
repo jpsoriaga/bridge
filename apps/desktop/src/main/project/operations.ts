@@ -124,10 +124,13 @@ export async function atomicWrite(
   }
 }
 
+/** A write as the sandbox sees it. `trigger` only labels the op; the server checks it. */
+export type WriteInput = Omit<WriteParams, 'trigger'> & Partial<Pick<WriteParams, 'trigger'>>;
+
 export async function writeFile(
   sandbox: Sandbox,
   history: History,
-  params: WriteParams,
+  params: WriteInput,
   writeFs: WriteFs = realFs
 ): Promise<WriteResult> {
   if (Buffer.byteLength(params.content, 'utf8') > MAX_FILE_BYTES) {
@@ -157,7 +160,9 @@ export async function writeFile(
       kind: 'modify',
       beforeHash: params.baseHash,
       afterHash,
-      ...(params.source && { source: params.source })
+      ...(params.source && { source: params.source }),
+      ...(params.trigger === 'auto' && { trigger: 'auto' as const }),
+      ...(params.loopId && { loopId: params.loopId })
     });
     return { opId, kind: 'modify', hash: afterHash };
   }
@@ -178,7 +183,9 @@ export async function writeFile(
     kind: 'create',
     beforeHash: null,
     afterHash,
-    ...(params.source && { source: params.source })
+    ...(params.source && { source: params.source }),
+    ...(params.trigger === 'auto' && { trigger: 'auto' as const }),
+    ...(params.loopId && { loopId: params.loopId })
   });
   return { opId, kind: 'create', hash: afterHash };
 }

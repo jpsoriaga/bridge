@@ -19,11 +19,13 @@ function turn(name, messageId) {
     : article;
 }
 
-// A stand-in for the chat page: <main>, and a contenteditable composer whose paste handler
-// behaves like ProseMirror's (takes text/plain, prevents the default).
+// A stand-in for the chat page: <main>, a contenteditable composer whose paste handler
+// behaves like ProseMirror's (takes text/plain, prevents the default), and a send button
+// that turns the composer's text into a user turn, as the page does.
 const SHELL = `<!doctype html><html class="light"><head><meta charset="utf-8"><title>Chat</title></head>
 <body><main class="relative h-full w-full flex-1"></main>
-<form><div id="prompt-textarea" contenteditable="true" class="ProseMirror"><p><br></p></div></form>
+<form><div id="prompt-textarea" contenteditable="true" class="ProseMirror"><p><br></p></div>
+<button id="send" data-testid="send-button" type="button" aria-label="Send prompt">Send</button></form>
 <script>
   const composer = document.getElementById('prompt-textarea');
   composer.addEventListener('paste', (event) => {
@@ -31,7 +33,34 @@ const SHELL = `<!doctype html><html class="light"><head><meta charset="utf-8"><t
     composer.textContent += event.clipboardData.getData('text/plain');
   });
   document.querySelector('form').addEventListener('submit', () => { window.__submitted = true; });
+  document.getElementById('send').addEventListener('click', () => {
+    const text = composer.textContent;
+    if (!text.trim()) return;
+    window.__sends = (window.__sends || []).concat([{ text, at: Date.now() }]);
+    composer.textContent = '';
+    const main = document.querySelector('main');
+    const n = main.querySelectorAll('[data-message-author-role="user"]').length;
+    main.insertAdjacentHTML('beforeend', '<article data-testid="conversation-turn-u' + n + '"><div data-message-author-role="user" data-message-id="u-' + n + '"><div class="whitespace-pre-wrap"></div></div></article>');
+    main.lastElementChild.querySelector('.whitespace-pre-wrap').textContent = text;
+  });
 </script></body></html>`;
+
+const escapeHtml = (text) =>
+  text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/** A finished assistant turn in the page's markup, built from markdown-ish parts. */
+function assistantTurn(messageId, parts) {
+  const body = parts
+    .map((part) =>
+      part.file
+        ? `<p><code>@@FILE ${part.file}@@</code></p><pre><code>${escapeHtml(part.content)}</code></pre>`
+        : part.run
+          ? `<p><code>@@RUN ${part.run}@@</code></p>`
+          : `<p>${escapeHtml(part.text)}</p>`
+    )
+    .join('');
+  return `<article data-testid="conversation-turn-${messageId}"><div data-message-author-role="assistant" data-message-id="${messageId}"><div class="markdown prose">${body}</div></div><div><button data-testid="copy-turn-action-button" aria-label="Copy"></button></div></article>`;
+}
 
 /** Every node under the page, closed shadow roots included, from CDP. */
 async function piercedTree(cdp) {
@@ -110,6 +139,15 @@ async function waitFor(what, fn, timeout = 10_000) {
   write('src/greet.ts', 'export const greet = () => "hi";\n');
   write('pyproject.toml', '[project]\nname = "demo"\n');
   write('.env', 'SECRET=1\n');
+  write('package.json', '{ "name": "chat-app", "scripts": { "test": "node check.js" } }\n');
+  write('src/value.ts', 'export const value = "broken";\n');
+  // The "test suite" for Full auto: passes once src/value.ts says fixed.
+  write(
+    'check.js',
+    "const v = require('fs').readFileSync('src/value.ts', 'utf8');\n" +
+      "if (v.includes('fixed')) { console.log('PASS'); process.exit(0); }\n" +
+      "console.log('FAIL: value is ' + v.trim()); process.exit(1);\n"
+  );
   const appData = tempDir('app-data');
   fs.writeFileSync(
     path.join(appData, 'settings.json'),
@@ -118,6 +156,18 @@ async function waitFor(what, fn, timeout = 10_000) {
 
   const { app, win } = await launchApp(appData);
   await win.locator('.project-name').filter({ hasText: 'chat-app' }).waitFor();
+
+  // First open: the app suggests commands from package.json; nothing runs until confirmed.
+  await win.getByRole('button', { name: 'Allow 3 commands' }).click();
+  await win.getByLabel('Add an allowed command').fill('node check.js');
+  await win.getByLabel('Add an allowed command').press('Enter');
+  await win.locator('.patterns .mono').filter({ hasText: 'node check.js' }).waitFor();
+  const allowed = await win.locator('.patterns .mono').allInnerTexts();
+  step(`allowlist confirmed in the app: ${allowed.join(', ')}`);
+  // Full auto's confirmation is a native dialog; answer "Turn on Full auto" for the test.
+  await app.evaluate(({ dialog }) => {
+    dialog.showMessageBox = async () => ({ response: 1, checkboxChecked: false });
+  });
   const { ctx, sw, extId } = await launchChrome(EXT);
   await ctx.route('https://chatgpt.com/**', (route) =>
     route.fulfill({ status: 200, contentType: 'text/html', body: SHELL })
@@ -163,6 +213,9 @@ async function waitFor(what, fn, timeout = 10_000) {
     throw new Error('session prompt not inserted: ' + prompt.slice(0, 200));
   }
   if (/openai|chatgpt|codex/i.test(prompt)) throw new Error('vendor name in prompt');
+  if (!prompt.includes('`@@RUN pnpm test@@`') || !prompt.includes('- `node check.js`')) {
+    throw new Error('allowlist not in prompt: ' + prompt.slice(-600));
+  }
   if (await chat.evaluate(() => window.__submitted === true)) throw new Error('form submitted');
   step(`session prompt inserted (${started.chars} chars), not sent`);
   await clearComposer();
@@ -230,9 +283,9 @@ async function waitFor(what, fn, timeout = 10_000) {
   // 2. Two edits plus a READ request: Apply all, then Send these files.
   await addTurn(turn('multiple-edits.html'));
   await waitFor('apply all', async () =>
-    (await cardText(cdp, 'apply-all', 0)).includes('Apply all (2)')
+    (await cardText(cdp, 'message-bar', 0)).includes('Apply all (2)')
   );
-  await clickInCard(chat, cdp, 'apply-all', 0, 'Apply all (2)');
+  await clickInCard(chat, cdp, 'message-bar', 0, 'Apply all (2)');
   await waitFor(
     'both written',
     () => fs.existsSync(file('pkg/__init__.py')) && fs.existsSync(file('pkg/client.py'))
@@ -317,12 +370,136 @@ async function waitFor(what, fn, timeout = 10_000) {
   );
   step('regenerated reply got a fresh pending card');
 
-  // 6. End session: cards stay but are disabled, and the worker refuses chat writes.
+  // 6. Auto-apply: a new reply's edits are written on their own; a gated file waits.
+  await win.getByRole('radio', { name: 'Auto-apply' }).click();
+  await win.getByRole('radio', { name: 'Auto-apply', checked: true }).waitFor();
+  const cardsBefore = (await hosts(cdp, 'diff-card')).length;
+  await addTurn(
+    assistantTurn('a1b2c3d4-0101-4000-8000-000000000101', [
+      { text: 'Two helpers and a dependency:' },
+      { file: 'src/one.ts', content: 'export const one = 1;\n' },
+      { file: 'src/two.ts', content: 'export const two = 2;\n' },
+      { file: 'package.json', content: '{ "name": "chat-app", "dependencies": { "x": "1" } }\n' }
+    ])
+  );
+  await waitFor(
+    'auto-applied',
+    () => fs.existsSync(file('src/one.ts')) && fs.existsSync(file('src/two.ts'))
+  );
+  await waitFor('cards say Auto-applied', async () => {
+    const texts = await Promise.all([0, 1].map((i) => cardText(cdp, 'diff-card', cardsBefore + i)));
+    return texts.every((t) => t.includes('Auto-applied'));
+  });
+  const gatedCard = await waitFor('gated card held', async () => {
+    const t = await cardText(cdp, 'diff-card', cardsBefore + 2);
+    return t.includes('needs your click') ? t : null;
+  });
+  if (fs.readFileSync(file('package.json'), 'utf8').includes('dependencies')) {
+    throw new Error('gated file was auto-applied');
+  }
+  step(
+    'Auto-apply wrote src/one.ts and src/two.ts; package.json waits: ' +
+      gatedCard.match(/This file[^.]*\./)?.[0]
+  );
+  await win
+    .getByText(/Created · auto/)
+    .first()
+    .waitFor();
+  step('desktop activity labels them "auto"');
+  const bars = await hosts(cdp, 'message-bar');
+  await clickInCard(chat, cdp, 'message-bar', bars.length - 1, 'Undo all (2)');
+  await waitFor(
+    'undone all',
+    () => !fs.existsSync(file('src/one.ts')) && !fs.existsSync(file('src/two.ts'))
+  );
+  step('Undo all removed both auto-applied files');
+
+  // 7. Full auto: turned on in the app (confirmed), then a 2-step run to @@DONE@@.
+  await win.getByRole('radio', { name: 'Full auto' }).click();
+  await win.getByRole('radio', { name: 'Full auto', checked: true }).waitFor();
+  step('Full auto on after the confirmation');
+  const sends = () => chat.evaluate(() => window.__sends ?? []);
+  const sentBefore = (await sends()).length;
+  await addTurn(
+    assistantTurn('a1b2c3d4-0201-4000-8000-000000000201', [
+      { text: 'Let me check the tests first.' },
+      { run: 'node check.js' }
+    ])
+  );
+  const sendOne = await waitFor(
+    'first auto-send',
+    async () => {
+      const all = await sends();
+      return all.length > sentBefore ? all[sentBefore] : null;
+    },
+    30_000
+  );
+  if (
+    !sendOne.text.includes('Output of `node check.js` (exit 1') ||
+    !sendOne.text.includes('FAIL: value is')
+  ) {
+    throw new Error('unexpected first follow-up: ' + sendOne.text);
+  }
+  step('step 1 sent the failing output: ' + sendOne.text.split('\n')[0]);
+  // The chip shows the step counter on the page.
+  await waitFor('chip', async () => (await cardText(cdp, 'loop-chip', 0)).includes('1 / 10'));
+  step('page chip: ' + (await cardText(cdp, 'loop-chip', 0)));
+
+  // The next reply comes back at once; the loop still waits 3s before its next send.
+  await addTurn(
+    assistantTurn('a1b2c3d4-0202-4000-8000-000000000202', [
+      { text: 'Fixing the value.' },
+      { file: 'src/value.ts', content: 'export const value = "fixed";\n' },
+      { run: 'node check.js' }
+    ])
+  );
+  const sendTwo = await waitFor(
+    'second auto-send',
+    async () => {
+      const all = await sends();
+      return all.length > sentBefore + 1 ? all[sentBefore + 1] : null;
+    },
+    30_000
+  );
+  if (!fs.readFileSync(file('src/value.ts'), 'utf8').includes('fixed')) {
+    throw new Error('Full auto did not apply the edit');
+  }
+  if (!sendTwo.text.includes('Applied: src/value.ts.') || !sendTwo.text.includes('(exit 0')) {
+    throw new Error('unexpected second follow-up: ' + sendTwo.text);
+  }
+  const gap = sendTwo.at - sendOne.at;
+  if (gap < 3000) throw new Error(`auto-sends only ${gap}ms apart`);
+  step(`step 2 applied the fix and sent the passing output, ${gap}ms after step 1`);
+
+  await addTurn(
+    assistantTurn('a1b2c3d4-0203-4000-8000-000000000203', [
+      { text: 'The tests pass.' },
+      { text: '@@DONE@@' }
+    ])
+  );
+  await win.getByText('The chat said it’s done.').first().waitFor({ timeout: 10_000 });
+  if ((await sends()).length !== sentBefore + 2) throw new Error('sent after @@DONE@@');
+  const loopRows = await win.locator('.activity-group').first().innerText();
+  step(
+    '@@DONE@@ ended the run; app activity groups it: ' +
+      loopRows.split('\n').slice(0, 2).join(' | ')
+  );
+
+  if (shots) {
+    await chat.screenshot({ path: path.join(shots, 'full-auto.png'), fullPage: true });
+    await panel.setViewportSize({ width: 360, height: 1100 });
+    await panel.screenshot({ path: path.join(shots, 'panel-full-auto.png'), fullPage: true });
+    await win.screenshot({ path: path.join(shots, 'app.png'), fullPage: true });
+  }
+
+  // 8. End session: cards stay but are disabled, and the worker refuses chat writes.
   await ask({ type: 'session-end' });
   await waitFor('disabled', async () =>
     (await cardText(cdp, 'diff-card', 0)).includes('Session ended')
   );
   step('End session disabled the cards');
+  await win.getByRole('radio', { name: 'Manual', checked: true }).waitFor();
+  step('End session turned Full auto back to Manual in the app');
 
   const panelState = await panel.evaluate(
     () =>

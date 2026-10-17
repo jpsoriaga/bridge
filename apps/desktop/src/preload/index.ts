@@ -6,8 +6,10 @@ import {
   type DesktopState,
   type OpenFolderResult,
   type PairingCode,
+  type SaveListResult,
   type UndoOutcome
 } from './api';
+import type { Mode } from '@bridge/shared';
 
 declare const __BRIDGE_VERSION__: string;
 
@@ -38,7 +40,26 @@ const api: BridgeApi = {
   undo: (opId) => ipcRenderer.invoke(IPC.undo, opId) as Promise<UndoOutcome>,
   undoLast: () => ipcRenderer.invoke(IPC.undoLast) as Promise<UndoOutcome>,
   setDenyPatterns: (patterns) =>
-    ipcRenderer.invoke(IPC.setDenyPatterns, patterns) as Promise<boolean>
+    ipcRenderer.invoke(IPC.setDenyPatterns, patterns) as Promise<boolean>,
+  setMode: (mode) => ipcRenderer.invoke(IPC.setMode, mode) as Promise<Mode>,
+  setAllowlist: (entries) =>
+    ipcRenderer.invoke(IPC.setAllowlist, entries) as Promise<SaveListResult>,
+  setGatedPatterns: (patterns) =>
+    ipcRenderer.invoke(IPC.setGatedPatterns, patterns) as Promise<SaveListResult>,
+  setEnvPatterns: (patterns) =>
+    ipcRenderer.invoke(IPC.setEnvPatterns, patterns) as Promise<SaveListResult>,
+  setRunSettings: (settings) =>
+    ipcRenderer.invoke(IPC.setRunSettings, settings) as Promise<boolean>,
+  cancelRun: () => ipcRenderer.invoke(IPC.cancelRun) as Promise<void>,
+  stopLoop: () => ipcRenderer.invoke(IPC.stopLoop) as Promise<void>,
+  onRunOutput: (listener) => {
+    const handler = (_event: IpcRendererEvent, chunk: { runId: string; text: string }) =>
+      listener(chunk);
+    ipcRenderer.on(IPC.runOutput, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.runOutput, handler);
+    };
+  }
 };
 
 contextBridge.exposeInMainWorld('bridge', api);

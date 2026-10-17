@@ -41,7 +41,7 @@ If `pnpm dev` fails with `electron.app` undefined, the shell has `ELECTRON_RUN_A
 
 1. The local server binds **127.0.0.1 only**, checks `Origin`, and requires the pairing token.
 2. **Path sandbox** on every chat-supplied path: no absolute paths, no `..`, no symlinks that resolve outside the root, nothing under `.git`, no `.env*` files.
-3. Commands use **`spawn` with `shell: false`** and an exact-argv **allowlist**. Never build a shell string.
+3. Commands use **`spawn` with `shell: false`** and an argv-prefix **allowlist** the user sets in the app. Never build a shell string. The one exception is Windows: `.cmd`/`.bat` shims can't be spawned without a shell, so `CommandRunner` uses `cross-spawn` there (only when `process.platform === 'win32'`), which escapes every argument for `cmd.exe`, and Bridge refuses cmd metacharacters in arguments to batch files. See PLAN.md, "Phase 5 decisions".
 4. Electron: `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`, strict CSP. Preload exposes only narrow, typed, validated methods.
 5. **No telemetry**, analytics or non-loopback network calls.
 6. **No Codex or OpenAI branding** in names, UI, icons or copy. Say "the chat".

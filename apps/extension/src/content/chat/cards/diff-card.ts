@@ -2,10 +2,14 @@ import {
   diffFile,
   FILE_ERROR_LABELS,
   FILE_ERROR_MESSAGES,
+  MAX_FILE_BYTES,
+  MODE_LABELS,
   type FileDiff,
   type FileErrorCode,
+  type Mode,
   type ParsedEdit,
   type ReadResult,
+  type Trigger,
   type UndoResult,
   type WriteResult
 } from '@bridge/shared';
@@ -50,6 +54,27 @@ export function failureText(error: Failure | undefined): string {
 export type Badge = 'new' | 'modified' | 'unchanged' | 'conflict' | 'blocked' | 'partial?';
 
 /**
+ * How an apply ended. `confirm`: a suspected partial file needs a second click. `held`: an
+ * automatic apply left it for a click (partial, conflict, blocked, gated, too big).
+ */
+export type ApplyOutcome = 'applied' | 'confirm' | 'held' | 'failed' | 'not-applicable';
+
+/** Why an edit waits for a click instead of being applied on its own. */
+export type Hold = 'gated' | 'partial' | 'conflict' | 'blocked';
+
+const HOLD_TEXT: Record<Hold, string> = {
+  gated: 'gated file',
+  partial: 'may be partial',
+  conflict: 'changed on disk',
+  blocked: 'blocked'
+};
+
+/** A small mode label at the start of a card's hint line. */
+export function modeTag(mode: Mode | null): HTMLElement | null {
+  return mode ? h('span', { class: 'mode' }, MODE_LABELS[mode]) : null;
+}
+
+/**
  * One `@@FILE` block's card. It reads the file when it appears, shows the diff, and
  * applies with the hash it read, so a file edited since gets `conflict` instead of being
  * overwritten. Everything from the chat is rendered as text.
@@ -72,6 +97,12 @@ export class DiffCard {
   private opId: string | undefined;
   private kind: 'create' | 'modify' | undefined;
   private counts = { added: 0, removed: 0 };
+  /** Applied by Auto-apply or Full auto, not a click. */
+  auto = false;
+  /** Why Auto-apply or Full auto left this card for a click. */
+  hold: Hold | null = null;
+  private mode: Mode | null = null;
+  private loading: Promise<void> = Promise.resolve();
 
   constructor(
     readonly key: string,
@@ -88,6 +119,7 @@ export class DiffCard {
       this.state = record.state;
       this.opId = record.opId;
       this.kind = record.kind;
+      this.auto = record.auto === true;
       this.counts = { added: record.added ?? 0, removed: record.removed ?? 0 };
       this.render();
       return;
@@ -119,8 +151,40 @@ export class DiffCard {
     this.render();
   }
 
+  /** The app's mode, for the label on the card. Null while disconnected. */
+  setMode(mode: Mode | null): void {
+    if (this.mode === mode) return;
+    this.mode = mode;
+    this.render();
+  }
+
+  /** Waits for the read this card started when it appeared (or the latest re-read). */
+  ready(): Promise<void> {
+    return this.loading;
+  }
+
+  /** Why an automatic apply would leave this card alone, or null if it would apply it. */
+  autoHold(): Hold | null {
+    if (this.blocked) return 'blocked';
+    if (this.conflict) return 'conflict';
+    if (this.edit.suspectedPartial) return 'partial';
+    if (new TextEncoder().encode(this.edit.content).length > MAX_FILE_BYTES) return 'blocked';
+    return this.hold;
+  }
+
+  /** A few words on why it's held, for the follow-up message. */
+  get holdText(): string {
+    const hold = this.hold ?? this.autoHold();
+    return hold ? HOLD_TEXT[hold] : 'not applied';
+  }
+
   /** Reads the file and recomputes the diff. */
-  async load(): Promise<void> {
+  load(): Promise<void> {
+    this.loading = this.read();
+    return this.loading;
+  }
+
+  private async read(): Promise<void> {
     this.busy = 'read';
     this.render();
     const outcome = await this.ask<RequestOutcome<ReadResult>>({
@@ -149,15 +213,24 @@ export class DiffCard {
   }
 
   /**
-   * Writes the file. A suspected partial file needs a second click. Resolves true once
-   * written; false if it needs another click, conflicted, or failed.
+   * Writes the file. On a click, a suspected partial file needs a second click. An
+   * automatic apply (`trigger: 'auto'`) never confirms anything: it leaves partial,
+   * conflicting, blocked, gated and oversized files on the card for a click (`held`).
    */
-  async apply(): Promise<boolean> {
-    if (!this.applicable || !this.diff) return false;
-    if (this.edit.suspectedPartial && !this.confirmingPartial) {
+  async apply(options: { trigger?: Trigger; loopId?: string } = {}): Promise<ApplyOutcome> {
+    const trigger = options.trigger ?? 'click';
+    if (!this.applicable || !this.diff) return 'not-applicable';
+    if (trigger === 'auto') {
+      const hold = this.autoHold();
+      if (hold) {
+        this.hold = hold;
+        this.render();
+        return 'held';
+      }
+    } else if (this.edit.suspectedPartial && !this.confirmingPartial) {
       this.confirmingPartial = true;
       this.render();
-      return false;
+      return 'confirm';
     }
     this.busy = 'apply';
     this.error = null;
@@ -166,7 +239,9 @@ export class DiffCard {
       type: 'chat-write',
       path: this.edit.path,
       content: this.edit.content,
-      ...(this.base && { baseHash: this.base.hash })
+      ...(this.base && { baseHash: this.base.hash }),
+      trigger,
+      ...(options.loopId && { loopId: options.loopId })
     });
     this.busy = null;
     this.confirmingPartial = false;
@@ -175,24 +250,35 @@ export class DiffCard {
       this.state = 'applied';
       this.opId = outcome.result.opId;
       this.kind = outcome.result.kind;
+      this.auto = trigger === 'auto';
       this.conflict = false;
+      this.hold = null;
       void this.persist();
       this.render();
       this.onChange();
-      return true;
+      return 'applied';
     }
     const code = outcome?.error.code;
     if (code === 'conflict' || code === 'exists') {
       // Someone changed the file after the diff was shown. Show the new diff instead.
       this.conflict = true;
+      if (trigger === 'auto') this.hold = 'conflict';
       await this.load();
-      return false;
+      return trigger === 'auto' ? 'held' : 'failed';
+    }
+    if (code === 'gated' || code === 'mode') {
+      // The app wants a click for this one. It stays pending, with a note saying why.
+      this.hold = code === 'gated' ? 'gated' : null;
+      this.error = code === 'mode' ? failureText(outcome?.error) : null;
+      this.render();
+      this.onChange();
+      return 'held';
     }
     if (code && BLOCKING.has(code)) this.blocked = FILE_ERROR_LABELS[code as FileErrorCode];
     this.error = failureText(outcome?.error);
     this.render();
     this.onChange();
-    return false;
+    return 'failed';
   }
 
   reject(): void {
@@ -235,6 +321,7 @@ export class DiffCard {
       updatedAt: Date.now(),
       ...(this.opId && { opId: this.opId }),
       ...(this.kind && { kind: this.kind }),
+      ...(this.auto && this.state === 'applied' && { auto: true as const }),
       added: this.counts.added,
       removed: this.counts.removed
     };
@@ -341,7 +428,11 @@ export class DiffCard {
     let tone: string | undefined;
     if (this.disabled) hint = 'Session ended. Start a new one to apply.';
     else if (this.blocked) hint = 'Bridge won’t write this file.';
-    else if (this.confirmingPartial) {
+    else if (this.hold === 'gated') {
+      hint =
+        'This file can change what commands do, so it needs your click in every mode. Review it, then Apply.';
+      tone = 'warning';
+    } else if (this.confirmingPartial) {
       hint =
         'This looks like part of a file. Applying replaces the whole file. Click again to apply anyway.';
       tone = 'warning';
@@ -384,7 +475,7 @@ export class DiffCard {
     return h(
       'div',
       { class: 'footer' },
-      h('p', { class: 'hint', attrs: { 'data-tone': tone } }, hint),
+      h('p', { class: 'hint', attrs: { 'data-tone': tone } }, modeTag(this.mode), hint),
       retry,
       reject,
       apply
@@ -445,7 +536,11 @@ export class DiffCard {
           path,
           this.meta(),
           h('span', { class: 'spacer' }),
-          h('span', { class: 'word', attrs: { 'data-tone': 'success' } }, 'Applied'),
+          h(
+            'span',
+            { class: 'word', attrs: { 'data-tone': 'success' } },
+            this.auto ? 'Auto-applied' : 'Applied'
+          ),
           undo
         ),
         this.messageLine()

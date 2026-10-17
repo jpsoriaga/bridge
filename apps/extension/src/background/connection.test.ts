@@ -5,6 +5,7 @@ import {
   DEFAULT_PORT,
   proofInput,
   serverMessage,
+  type BridgeConfig,
   type ConnectionStatus
 } from '@bridge/shared';
 import {
@@ -17,6 +18,13 @@ import {
 const TOKEN = 'b'.repeat(64);
 const KEY = createHash('sha256').update(TOKEN).digest('hex');
 const OTHER_KEY = 'c'.repeat(64);
+const CONFIG: BridgeConfig = {
+  mode: 'manual',
+  allowlist: ['pnpm test'],
+  stepLimit: 10,
+  pauseOnFailure: false,
+  running: null
+};
 
 const sign = (key: string, ...args: Parameters<typeof proofInput>) =>
   createHmac('sha256', Buffer.from(key, 'hex'))
@@ -557,7 +565,11 @@ describe('file requests', () => {
     servers.set(DEFAULT_PORT, {
       key: KEY,
       afterAuth: [
-        serverMessage('s', 'status', { version: '1', project: { name: 'app', path: '~/app' } })
+        serverMessage('s', 'status', {
+          version: '1',
+          project: { name: 'app', path: '~/app' },
+          config: CONFIG
+        })
       ]
     });
     const { connection } = makeConnection();
@@ -566,13 +578,78 @@ describe('file requests', () => {
     await connection.connect();
     expect(connection.project).toEqual({ name: 'app', path: '~/app' });
 
-    sockets[0]!.receive(serverMessage('s2', 'status', { version: '1', project: null }));
+    sockets[0]!.receive(
+      serverMessage('s2', 'status', { version: '1', project: null, config: CONFIG })
+    );
     expect(connection.project).toBeNull();
     sockets[0]!.receive(
-      serverMessage('s3', 'status', { version: '1', project: { name: 'b', path: '/b' } })
+      serverMessage('s3', 'status', {
+        version: '1',
+        project: { name: 'b', path: '/b' },
+        config: CONFIG
+      })
     );
     sockets[0]!.close(1001);
     expect(connection.project).toBeNull();
     expect(seen).toEqual([{ name: 'app', path: '~/app' }, null, { name: 'b', path: '/b' }, null]);
+  });
+
+  it('mirrors the app’s config, and forgets it when the socket closes', async () => {
+    servers.set(DEFAULT_PORT, {
+      key: KEY,
+      afterAuth: [serverMessage('s', 'status', { version: '1', project: null, config: CONFIG })]
+    });
+    const { connection } = makeConnection();
+    const seen: unknown[] = [];
+    connection.onConfig((c) => seen.push(c?.mode ?? null));
+    await connection.connect();
+    expect(connection.config).toEqual(CONFIG);
+    sockets[0]!.receive(
+      serverMessage('s2', 'status', {
+        version: '1',
+        project: null,
+        config: { ...CONFIG, mode: 'full-auto' }
+      })
+    );
+    expect(connection.config?.mode).toBe('full-auto');
+    sockets[0]!.close(1001);
+    expect(connection.config).toBeNull();
+    expect(seen).toEqual(['manual', 'full-auto', null]);
+  });
+
+  it('passes on run output, run exits and the app’s loop Stop', async () => {
+    servers.set(DEFAULT_PORT, { key: KEY });
+    const { connection } = makeConnection();
+    const events: unknown[] = [];
+    connection.onEvent((e) => events.push(e.type));
+    await connection.connect();
+    sockets[0]!.receive(serverMessage('o', 'run_output', { runId: 'r-1', chunk: 'hi' }));
+    sockets[0]!.receive(
+      serverMessage('x', 'run_exit', {
+        runId: 'r-1',
+        argv: ['pnpm', 'test'],
+        status: 'exited',
+        exitCode: 0,
+        signal: null,
+        durationMs: 5,
+        output: 'hi',
+        truncated: false
+      })
+    );
+    sockets[0]!.receive(serverMessage('l', 'loop_stop', {}));
+    expect(events).toEqual(['run-output', 'run-exit', 'loop-stop']);
+  });
+
+  it('sends loop reports one way, and drops them while disconnected', async () => {
+    servers.set(DEFAULT_PORT, { key: KEY });
+    const { connection } = makeConnection();
+    const report = { loopId: 'loop-1', state: 'acting', step: 1, limit: 10 } as const;
+    expect(connection.notify('loop_report', report)).toBe(false);
+    await connection.connect();
+    expect(connection.notify('loop_report', report)).toBe(true);
+    expect(connection.notify('session_end', {})).toBe(true);
+    expect(sockets[0]!.sent.map((m) => m.type)).toEqual(
+      expect.arrayContaining(['loop_report', 'session_end'])
+    );
   });
 });

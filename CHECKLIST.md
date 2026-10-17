@@ -123,22 +123,41 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [x] Card fonts on their own `web_accessible_resources` entry with `use_dynamic_url: true`; e2e checks Geist loads and the static URL is refused
 - [x] READ card state (`pending` / `sent`) saved by block key like diff cards
 
-## Phase 5: Modes and undo
+## Phase 5: Modes, commands and Full auto
 
-- [ ] Mode persisted in desktop and synced to the side panel
-- [ ] Auto-apply writes on end-of-message. The card shows Applied + Undo
-- [ ] Undo all edits from one message
-- [ ] Delete and rename operations (`@@DELETE path@@`), backed up like writes
-- [ ] Files-in-context tree in the side panel with `new` tags
+- [x] Phases renumbered in PLAN.md: old 5 (modes) and 6 (commands, full auto) merged into 5; 6 is app UI polish
+- [x] Protocol v3: `write` carries `trigger` (+ `loopId`); `run`, `run_cancel`, `run_output`, `run_exit`, `loop_report`, `loop_stop`, `session_end`; `status` carries the config
+- [x] Mode held by the app (`ModeState`), mirrored in the side panel and on the cards; Manual and Auto-apply persist, Full auto never does
+- [x] Full auto behind a native confirm dialog (terms risk, model-written code, opt-in at own risk); resets on restart, End session, unpairing, project switch
+- [x] Server rejects `auto` writes in Manual, `auto` writes to gated files, `auto` runs outside Full auto, and any command not allowlisted even on a click
+- [x] Gated files in one list (`DEFAULT_GATED_FILES`) plus user patterns; limits documented in PLAN.md
+- [x] Auto-apply on new replies: skips partial, conflict, blocked, gated, over 1 MB; "Auto-applied" + Undo; Undo all per message; toast and "auto" Activity rows in the app
+- [x] `@@RUN` and `@@DONE@@` in `parseChat` and the session prompt (which lists the allowlist)
+- [x] `parseCommand` on shell-quote: rejects operators, `$`/backticks, globs, comments, env assignments, newlines, >1,000 chars; desktop re-checks argv
+- [x] Allowlist of argv prefixes per project, edited only in the app; defaults suggested from `package.json` and confirmed by the user
+- [x] Executable resolved on PATH; project-local binaries refused unless that exact path is allowlisted
+- [x] `spawn` with `shell: false`, no stdin, cwd = root; `cross-spawn` on Windows only; batch-file metacharacters refused
+- [x] Env filter (`*TOKEN*`, `*SECRET*`, `*KEY*`, `*PASSWORD*`, `AWS_*`, `OPENAI_*`, …) plus user patterns; `CI=1`, `FORCE_COLOR=0`
+- [x] One command at a time; timeout (120s default, max 10 min) kills the process tree; 200 KB head+tail output cap; ANSI stripped; ~8k chat cut marked `[truncated]`
+- [x] Live output to the app, the side panel and the RUN card
+- [x] RUN cards: badge, Run (allowlisted only), Cancel, capped live output, Send output (no submit), "Add it to the allowlist in the Bridge app"
+- [x] Full auto loop state machine: apply, read, run, one follow-up, click send, check the new user turn; ends on no actions or `@@DONE@@`
+- [x] Pause reasons: held edits, command not allowed, failure (opt-in), too big, page error banner, disconnected, navigated, step limit, send not seen; Resume
+- [x] Step limit 10 (max 25), `3 / 10` in the side panel and a page chip; Continue for N more
+- [x] At least 3s between auto-sends, no other delay
+- [x] Stop in the side panel, the app and the page chip: cancels the command, halts the loop, reverts nothing
+- [x] Every loop step in the app's Activity, grouped by run; tab close or reload reports the run stopped
+- [x] Desktop UI: mode switch, allowlist editor with suggestions, gated files and env editors, timeout/step limit/pause on failure, live output, loop status, Stop
+- [x] Tests: argv parsing and near-miss allowlist matches, env filter, executable resolution, process tree kill, output cap, Windows escaping, server enforcement, gated files, Full auto resets, loop state machine (fake page), parser
+- [x] `e2e/chat.cjs`: allowlist confirmed in the app, Auto-apply with a gated file and Undo all, a 2-step Full auto run to `@@DONE@@`, End session back to Manual
+- [ ] Windows CI run of the `.cmd` round-trip and batch-argument tests (written; skip on macOS/Linux)
+- [ ] Manual run on the real chatgpt.com: send button, user turns and error banner selectors (see `e2e/README.md`)
 
-## Phase 6: Commands and full auto
+## Phase 6: App UI polish
 
-- [ ] Allowlist of exact argv prefixes in one module, with tests
-- [ ] `spawn` with `shell: false`, cwd = root, timeout, output cap, scrubbed env
-- [ ] Command card with "Run & send output". Output is pasted back to the chat
-- [ ] Full-auto loop: apply, run, send output, wait for the reply
-- [ ] Step limit (default 10) and "Step N of M" counter
-- [ ] Stop button ends the loop immediately in both UIs
+- [ ] Desktop UI pass (not started)
+- [ ] Carried over from the old Phase 5: files-in-context tree with `new` tags in the side panel
+- [ ] Carried over from the old Phase 5: delete and rename (`@@DELETE path@@`), backed up like writes
 
 ## Phase 7: Hardening and release
 

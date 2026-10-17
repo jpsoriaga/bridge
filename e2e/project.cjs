@@ -87,14 +87,19 @@ const SHOTS = process.env.E2E_SCREENSHOTS;
 
   const modify = await file({
     type: 'write',
-    payload: { path: 'src/index.ts', content: 'export const a = 2;\n', baseHash: read.result.hash }
+    payload: {
+      trigger: 'click',
+      path: 'src/index.ts',
+      content: 'export const a = 2;\n',
+      baseHash: read.result.hash
+    }
   });
   step(
     `write (modify): ${modify.result.kind} → disk ${JSON.stringify(fs.readFileSync(path.join(project, 'src/index.ts'), 'utf8'))}`
   );
   const create = await file({
     type: 'write',
-    payload: { path: 'src/new/util.ts', content: 'export {};\n' }
+    payload: { trigger: 'click', path: 'src/new/util.ts', content: 'export {};\n' }
   });
   step(
     `write (create): ${create.result.kind}, exists=${fs.existsSync(path.join(project, 'src/new/util.ts'))}`
@@ -102,26 +107,39 @@ const SHOTS = process.env.E2E_SCREENSHOTS;
   const win1 = await file({ type: 'read', payload: { path: 'win.txt' } });
   await file({
     type: 'write',
-    payload: { path: 'win.txt', content: 'uno\ndos\n', baseHash: win1.result.hash }
+    payload: {
+      trigger: 'click',
+      path: 'win.txt',
+      content: 'uno\ndos\n',
+      baseHash: win1.result.hash
+    }
   });
   step(`CRLF kept: ${JSON.stringify(fs.readFileSync(path.join(project, 'win.txt'), 'utf8'))}`);
 
   await expectCode(
     {
       type: 'write',
-      payload: { path: 'src/index.ts', content: 'stale', baseHash: read.result.hash }
+      payload: {
+        trigger: 'click',
+        path: 'src/index.ts',
+        content: 'stale',
+        baseHash: read.result.hash
+      }
     },
     'conflict'
   );
   await expectCode(
-    { type: 'write', payload: { path: 'src/new/util.ts', content: 'again' } },
+    { type: 'write', payload: { trigger: 'click', path: 'src/new/util.ts', content: 'again' } },
     'exists'
   );
   await expectCode({ type: 'read', payload: { path: '../../etc/passwd' } }, 'traversal');
   await expectCode({ type: 'read', payload: { path: '/etc/passwd' } }, 'absolute-path');
   await expectCode({ type: 'read', payload: { path: '.env' } }, 'denied');
   await expectCode({ type: 'read', payload: { path: '.GIT/config' } }, 'denied');
-  await expectCode({ type: 'write', payload: { path: '.env.local', content: 'x' } }, 'denied');
+  await expectCode(
+    { type: 'write', payload: { trigger: 'click', path: '.env.local', content: 'x' } },
+    'denied'
+  );
   if (fs.existsSync(path.join(project, '.env.local'))) throw new Error('.env.local was written');
 
   // The desktop activity list: writes with Undo, and the blocked requests.

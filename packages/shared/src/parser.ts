@@ -1,11 +1,13 @@
 import type { FileEdit } from './types';
 
 /**
- * A marker line: `@@FILE path@@`, `@@READ path@@` or `@@CONTEXT path@@`. Checked after
- * removing inline-code backticks and a list bullet, so `` `@@FILE a.ts@@` `` and
- * `- @@READ a.ts@@` both count.
+ * A marker line: `@@FILE path@@`, `@@READ path@@`, `@@CONTEXT path@@` or `@@RUN command@@`.
+ * Checked after removing inline-code backticks and a list bullet, so `` `@@FILE a.ts@@` ``
+ * and `- @@READ a.ts@@` both count.
  */
-const MARKER = /^@@(FILE|READ|CONTEXT)\s+((?:(?!@@)[^`])+?)\s*@@$/;
+const MARKER = /^@@(FILE|READ|CONTEXT|RUN)\s+((?:(?!@@)[^`])+?)\s*@@$/;
+/** `@@DONE@@`: the chat says the task is finished. Ends a Full auto run. */
+const DONE = /^@@DONE\s*@@$/;
 const FENCE_OPEN = /^(`{3,}|~{3,})[^`]*$/;
 const BULLET = /^(?:[-*+]|\d{1,3}[.)])\s+/;
 /** A line made only of `@@READ path@@` markers, for when line breaks were lost. */
@@ -30,15 +32,27 @@ export interface ChatParse {
   edits: ParsedEdit[];
   /** Paths the chat asked to see with `@@READ path@@`, without repeats, in order. */
   reads: string[];
+  /**
+   * Commands the chat asked to run with `@@RUN command@@`, one per marker, as written and
+   * without repeats, in order. Turning them into argv (and refusing shell syntax) is
+   * `parseCommand`'s job; allowing them is the desktop's.
+   */
+  runs: string[];
+  /** The reply has a `@@DONE@@` line. */
+  done: boolean;
 }
 
-type Marker = { kind: 'FILE' | 'READ' | 'CONTEXT'; path: string };
+type Marker = { kind: 'FILE' | 'READ' | 'CONTEXT' | 'RUN'; path: string };
+
+/** The line without a list bullet and inline-code backticks around the whole of it. */
+function unwrap(line: string): string {
+  const text = line.trim().replace(BULLET, '');
+  const code = /^(`+)(.*)\1$/.exec(text);
+  return code ? (code[2] ?? '').trim() : text;
+}
 
 function markerOf(line: string): Marker | null {
-  let text = line.trim().replace(BULLET, '');
-  const code = /^(`+)(.*)\1$/.exec(text);
-  if (code) text = (code[2] ?? '').trim();
-  const match = MARKER.exec(text);
+  const match = MARKER.exec(unwrap(line));
   if (!match?.[1] || !match[2]) return null;
   return { kind: match[1] as Marker['kind'], path: match[2] };
 }
@@ -76,19 +90,23 @@ function readFence(lines: string[], open: number): { body: string[]; close: numb
  *   ```
  *
  *   `@@READ relative/path.ts@@`
+ *   `@@RUN pnpm test@@`
+ *   `@@DONE@@`
  *
  * The marker may be plain or in inline code, and the fence may follow it after up to two
  * blank lines. A fence closes on a line of the same character at least as long as the
  * opener, so a file that contains ``` can be wrapped in ````. A fence that never closes
  * ends parsing: that's a reply still streaming or cut off. Fences without a marker, and
- * `@@CONTEXT` blocks (files sent to the chat), are skipped, so a `@@FILE` or `@@READ` line
- * inside them is never an edit or a request. Paths are returned as written; checking them
- * is the desktop sandbox's job.
+ * `@@CONTEXT` blocks (files sent to the chat), are skipped, so a marker line inside them
+ * (an example, or a file that mentions `@@RUN`) is never an edit, a request or a command.
+ * Paths and commands are returned as written; checking them is the desktop's job.
  */
 export function parseChat(text: string): ChatParse {
   const lines = text.replace(/\r\n?/g, '\n').split('\n');
   const edits: ParsedEdit[] = [];
   const reads: string[] = [];
+  const runs: string[] = [];
+  let done = false;
   let fences = 0;
 
   let i = 0;
@@ -100,6 +118,18 @@ export function parseChat(text: string): ChatParse {
       marker?.kind === 'READ' ? [marker.path] : readsOn(line.trim().replace(BULLET, ''));
     if (requested.length > 0) {
       for (const path of requested) if (!reads.includes(path)) reads.push(path);
+      i += 1;
+      continue;
+    }
+
+    if (marker?.kind === 'RUN') {
+      if (!runs.includes(marker.path)) runs.push(marker.path);
+      i += 1;
+      continue;
+    }
+
+    if (DONE.test(unwrap(line))) {
+      done = true;
       i += 1;
       continue;
     }
@@ -139,7 +169,7 @@ export function parseChat(text: string): ChatParse {
     i += 1;
   }
 
-  return { edits, reads };
+  return { edits, reads, runs, done };
 }
 
 /** The `@@FILE` edits in `text`. See `parseChat`. */

@@ -19,6 +19,10 @@ export interface OpRecord {
   undoneAt?: number;
   /** `chat`: applied from a diff card in the chat. */
   source?: 'chat';
+  /** `auto`: Bridge applied it on its own (Auto-apply or Full auto), not a click. */
+  trigger?: 'auto';
+  /** The Full auto run that made it. */
+  loopId?: string;
 }
 
 interface LogFile {
@@ -42,7 +46,9 @@ function isOpRecord(value: unknown): value is OpRecord {
     typeof op.afterHash === 'string' &&
     HASH.test(op.afterHash) &&
     (op.undoneAt === undefined || typeof op.undoneAt === 'number') &&
-    (op.source === undefined || op.source === 'chat')
+    (op.source === undefined || op.source === 'chat') &&
+    (op.trigger === undefined || op.trigger === 'auto') &&
+    (op.loopId === undefined || (typeof op.loopId === 'string' && /^[\w-]{1,64}$/.test(op.loopId)))
   );
 }
 

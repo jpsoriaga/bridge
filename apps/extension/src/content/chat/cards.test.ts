@@ -1,10 +1,12 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ParsedEdit, ReadResult, WriteResult } from '@bridge/shared';
+import type { BridgeConfig, ParsedEdit, ReadResult, RunResult, WriteResult } from '@bridge/shared';
 import type { RequestOutcome, WorkerRequest } from '../../messages';
-import { ApplyAllBar, applyAllTargets } from './cards/apply-all';
+import { applyAllTargets, MessageBar, undoAllTargets } from './cards/message-bar';
 import { DiffCard, type Ask } from './cards/diff-card';
 import { ReadCard } from './cards/read-card';
+import { RunCard } from './cards/run-card';
+import { autoApply, editSummary } from './controller';
 import { insertIntoComposer } from './composer';
 
 const HASH_A = 'a'.repeat(64);
@@ -21,7 +23,10 @@ const edit = (path: string, content: string, suspectedPartial = false): ParsedEd
 function fakeWorker(files: Record<string, { content: string; hash: string }>) {
   const calls: WorkerRequest[] = [];
   let ops = 0;
+  let runs = 0;
   const writeOverride = new Map<string, RequestOutcome<WriteResult>>();
+  /** Paths the "app" refuses to write without a click. */
+  const gated = new Set<string>(['package.json']);
   const ask = vi.fn(async (request: WorkerRequest) => {
     calls.push(request);
     switch (request.type) {
@@ -37,6 +42,9 @@ function fakeWorker(files: Record<string, { content: string; hash: string }>) {
       case 'chat-write': {
         const forced = writeOverride.get(request.path);
         if (forced) return forced;
+        if (request.trigger === 'auto' && gated.has(request.path)) {
+          return { ok: false, error: { code: 'gated', message: 'gated' } };
+        }
         const file = files[request.path];
         if (file && file.hash !== request.baseHash) {
           return { ok: false, error: { code: 'conflict', message: 'changed' } };
@@ -50,11 +58,16 @@ function fakeWorker(files: Record<string, { content: string; hash: string }>) {
       }
       case 'chat-undo':
         return { ok: true, result: { opId: request.opId, path: 'x' } };
+      case 'chat-run':
+        runs += 1;
+        return { ok: true, result: { runId: `run-${runs}` } };
+      case 'chat-run-cancel':
+        return { ok: true, result: { cancelled: true } };
       default:
         return true;
     }
   });
-  return { ask: ask as unknown as Ask, calls, files, writeOverride };
+  return { ask: ask as unknown as Ask, calls, files, writeOverride, gated };
 }
 
 async function card(worker: ReturnType<typeof fakeWorker>, e: ParsedEdit, onChange = () => {}) {
@@ -70,13 +83,15 @@ describe('DiffCard', () => {
     expect(c.badges).toEqual(['modified']);
     expect(c.applicable).toBe(true);
 
-    expect(await c.apply()).toBe(true);
+    expect(await c.apply()).toBe('applied');
     expect(c.state).toBe('applied');
+    expect(c.auto).toBe(false);
     expect(worker.calls).toContainEqual({
       type: 'chat-write',
       path: 'a.ts',
       content: 'new\n',
-      baseHash: HASH_A
+      baseHash: HASH_A,
+      trigger: 'click'
     });
     // Saved as pending when it appeared, then as applied with the op id.
     const saved = worker.calls.filter((c) => c.type === 'card-set');
@@ -92,7 +107,12 @@ describe('DiffCard', () => {
     const c = await card(worker, edit('new.ts', 'x\n'));
     expect(c.badges).toEqual(['new']);
     await c.apply();
-    expect(worker.calls).toContainEqual({ type: 'chat-write', path: 'new.ts', content: 'x\n' });
+    expect(worker.calls).toContainEqual({
+      type: 'chat-write',
+      path: 'new.ts',
+      content: 'x\n',
+      trigger: 'click'
+    });
   });
 
   it('re-reads and shows the new diff on conflict', async () => {
@@ -100,12 +120,12 @@ describe('DiffCard', () => {
     const c = await card(worker, edit('a.ts', 'new\n'));
     // Edited on disk after the card read it.
     worker.files['a.ts'] = { content: 'edited\n', hash: 'c'.repeat(64) };
-    expect(await c.apply()).toBe(false);
+    expect(await c.apply()).toBe('failed');
     expect(c.state).toBe('pending');
     expect(c.badges).toEqual(['conflict']);
     expect(worker.calls.filter((r) => r.type === 'chat-read')).toHaveLength(2);
     // The second Apply uses the new hash and goes through.
-    expect(await c.apply()).toBe(true);
+    expect(await c.apply()).toBe('applied');
   });
 
   it('marks an unchanged file as not applicable', async () => {
@@ -113,14 +133,14 @@ describe('DiffCard', () => {
     const c = await card(worker, edit('a.ts', 'same\n'));
     expect(c.badges).toEqual(['unchanged']);
     expect(c.applicable).toBe(false);
-    expect(await c.apply()).toBe(false);
+    expect(await c.apply()).toBe('not-applicable');
   });
 
   it('shows a refused path as blocked and never writes it', async () => {
     const worker = fakeWorker({});
     const c = await card(worker, edit('.env', 'SECRET=1\n'));
     expect(c.badges).toEqual(['blocked']);
-    expect(await c.apply()).toBe(false);
+    expect(await c.apply()).toBe('not-applicable');
     expect(worker.calls.some((r) => r.type === 'chat-write')).toBe(false);
   });
 
@@ -128,9 +148,9 @@ describe('DiffCard', () => {
     const worker = fakeWorker({ 'a.ts': { content: 'old\n', hash: HASH_A } });
     const c = await card(worker, edit('a.ts', '// ...rest unchanged\n', true));
     expect(c.badges).toEqual(['modified', 'partial?']);
-    expect(await c.apply()).toBe(false);
+    expect(await c.apply()).toBe('confirm');
     expect(worker.calls.some((r) => r.type === 'chat-write')).toBe(false);
-    expect(await c.apply()).toBe(true);
+    expect(await c.apply()).toBe('applied');
   });
 
   it('undoes by op id, and rejects without writing', async () => {
@@ -187,9 +207,9 @@ describe('Apply all', () => {
       ok: false,
       error: { code: 'io-error', message: 'disk' }
     });
-    const bar = new ApplyAllBar(cards);
+    const bar = new MessageBar(cards);
     expect(bar.visible).toBe(true);
-    await bar.run();
+    await bar.applyAll();
     expect(cards.map((c) => c.state)).toEqual(['applied', 'pending', 'pending']);
     expect(
       worker.calls.filter((r) => r.type === 'chat-write').map((r) => 'path' in r && r.path)
@@ -204,7 +224,236 @@ describe('Apply all', () => {
       await card(worker, edit('same.ts', 's\n'))
     ];
     expect(applyAllTargets(cards).map((c) => c.edit.path)).toEqual(['a.ts']);
-    expect(new ApplyAllBar(cards).visible).toBe(false);
+    expect(new MessageBar(cards).visible).toBe(false);
+  });
+});
+
+describe('Auto-apply', () => {
+  it('applies in order with trigger auto, and the card says Auto-applied', async () => {
+    const worker = fakeWorker({ 'a.ts': { content: 'old\n', hash: HASH_A } });
+    const cards = [
+      await card(worker, edit('a.ts', 'new\n')),
+      await card(worker, edit('b.ts', 'b\n'))
+    ];
+    await autoApply(cards, 'loop-1');
+    expect(cards.map((c) => c.state)).toEqual(['applied', 'applied']);
+    expect(cards.every((c) => c.auto)).toBe(true);
+    const writes = worker.calls.filter((r) => r.type === 'chat-write');
+    expect(writes.map((r) => r.type === 'chat-write' && [r.path, r.trigger, r.loopId])).toEqual([
+      ['a.ts', 'auto', 'loop-1'],
+      ['b.ts', 'auto', 'loop-1']
+    ]);
+    const saved = worker.calls.flatMap((r) => (r.type === 'card-set' ? [r.record] : []));
+    expect(saved.at(-1)).toMatchObject({ state: 'applied', auto: true });
+    expect(cards[0]!.host.isConnected).toBe(false);
+  });
+
+  it('leaves partial, conflicting, blocked, gated and oversized edits for a click', async () => {
+    const worker = fakeWorker({
+      'a.ts': { content: 'old\n', hash: HASH_A },
+      'package.json': { content: '{}\n', hash: HASH_A }
+    });
+    const partial = await card(worker, edit('p.ts', '// ...rest unchanged\n', true));
+    const blocked = await card(worker, edit('.env', 'X=1\n'));
+    const gated = await card(worker, edit('package.json', '{"x":1}\n'));
+    const big = await card(worker, edit('big.ts', 'x'.repeat(1024 * 1024 + 1)));
+    const conflict = await card(worker, edit('a.ts', 'new\n'));
+    worker.files['a.ts'] = { content: 'edited\n', hash: 'c'.repeat(64) };
+    const fine = await card(worker, edit('ok.ts', 'ok\n'));
+    const cards = [partial, blocked, gated, big, conflict, fine];
+
+    await autoApply(cards);
+    expect(cards.map((c) => c.state)).toEqual([
+      'pending',
+      'pending',
+      'pending',
+      'pending',
+      'pending',
+      'applied'
+    ]);
+    const written = worker.calls.flatMap((r) => (r.type === 'chat-write' ? [r.path] : []));
+    // Partial, blocked and oversized never reach the app; gated and conflict are refused by it.
+    expect(written).toEqual(['package.json', 'a.ts', 'ok.ts']);
+    expect(editSummary(cards)).toEqual({
+      applied: ['ok.ts'],
+      held: [
+        { path: 'p.ts', hold: 'partial', reason: 'may be partial' },
+        { path: '.env', hold: 'blocked', reason: 'blocked' },
+        { path: 'package.json', hold: 'gated', reason: 'gated file' },
+        { path: 'big.ts', hold: 'blocked', reason: 'blocked' },
+        { path: 'a.ts', hold: 'conflict', reason: 'changed on disk' }
+      ]
+    });
+
+    // Each still applies on a click: the gated file too.
+    expect(await gated.apply()).toBe('applied');
+    expect(gated.auto).toBe(false);
+  });
+
+  it('never touches cards already applied, rejected or undone', async () => {
+    const worker = fakeWorker({});
+    const a = await card(worker, edit('a.ts', 'a\n'));
+    const b = await card(worker, edit('b.ts', 'b\n'));
+    b.reject();
+    await a.apply();
+    const before = worker.calls.filter((r) => r.type === 'chat-write').length;
+    await autoApply([a, b]);
+    expect(worker.calls.filter((r) => r.type === 'chat-write')).toHaveLength(before);
+  });
+});
+
+describe('Undo all', () => {
+  it('undoes a reply’s applied edits newest first, and shows with two or more', async () => {
+    const worker = fakeWorker({});
+    const cards = [
+      await card(worker, edit('a.ts', 'a\n')),
+      await card(worker, edit('b.ts', 'b\n')),
+      await card(worker, edit('c.ts', 'c\n'))
+    ];
+    await autoApply(cards);
+    const bar = new MessageBar(cards);
+    expect(undoAllTargets(cards).map((c) => c.edit.path)).toEqual(['c.ts', 'b.ts', 'a.ts']);
+    expect(bar.visible).toBe(true);
+    await bar.undoAll();
+    expect(cards.map((c) => c.state)).toEqual(['undone', 'undone', 'undone']);
+    expect(worker.calls.flatMap((r) => (r.type === 'chat-undo' ? [r.opId] : []))).toEqual([
+      'op-3',
+      'op-2',
+      'op-1'
+    ]);
+    expect(bar.visible).toBe(false);
+  });
+});
+
+const CONFIG: BridgeConfig = {
+  mode: 'manual',
+  allowlist: ['pnpm test'],
+  stepLimit: 10,
+  pauseOnFailure: false,
+  running: null
+};
+
+const exit = (runId: string, exitCode: number, output = 'ok\n'): RunResult => ({
+  runId,
+  argv: ['pnpm', 'test'],
+  status: 'exited',
+  exitCode,
+  signal: null,
+  durationMs: 2500,
+  output,
+  truncated: false
+});
+
+describe('RunCard', () => {
+  beforeEach(() => {
+    document.body.innerHTML =
+      '<main></main><form><div id="prompt-textarea" contenteditable="true" class="ProseMirror"></div></form>';
+    const composer = document.getElementById('prompt-textarea')!;
+    composer.addEventListener('paste', (event) => {
+      event.preventDefault();
+      composer.textContent += (event as ClipboardEvent).clipboardData?.getData('text/plain') ?? '';
+    });
+  });
+
+  const runCard = (worker: ReturnType<typeof fakeWorker>, command: string) => {
+    const registered: string[] = [];
+    const c = new RunCard(command, worker.ask, (runId) => registered.push(runId));
+    c.setConfig(CONFIG);
+    return { card: c, registered };
+  };
+
+  it.each([
+    ['pnpm test', 'allowlisted', null],
+    ['pnpm test -- --run', 'allowlisted', null],
+    ['pnpm testx', 'not allowed', 'it isn’t on the allowlist in the Bridge app'],
+    ['git push', 'not allowed', 'it isn’t on the allowlist in the Bridge app'],
+    [
+      'pnpm test && rm -rf /',
+      'not allowed',
+      'Bridge runs one command at a time, without |, &&, ;, < or >.'
+    ]
+  ])('badges %j as %s', (command, badge, refusal) => {
+    const { card: c } = runCard(fakeWorker({}), command);
+    expect(c.badge).toBe(badge);
+    expect(c.refusal()).toBe(refusal);
+  });
+
+  it('runs with a click, streams output, and ends with the exit badge', async () => {
+    const worker = fakeWorker({});
+    const { card: c, registered } = runCard(worker, 'pnpm test');
+    const done = c.run();
+    await vi.waitFor(() => expect(registered).toEqual(['run-1']));
+    expect(worker.calls).toContainEqual({
+      type: 'chat-run',
+      argv: ['pnpm', 'test'],
+      trigger: 'click'
+    });
+    expect(c.badge).toBe('running');
+    c.onOutput('FAIL a.test.ts\n');
+    c.onExit(exit('run-1', 1, 'FAIL a.test.ts\n'));
+    expect(await done).toMatchObject({ ok: true, result: { exitCode: 1 } });
+    expect(c.badge).toBe('exit 1');
+  });
+
+  it.each([
+    [{ status: 'timed-out', exitCode: null }, 'timed out'],
+    [{ status: 'cancelled', exitCode: null }, 'cancelled'],
+    [{ status: 'exited', exitCode: 0 }, 'exit 0']
+  ] as const)('shows %j as %s', async (patch, badge) => {
+    const { card: c } = runCard(fakeWorker({}), 'pnpm test');
+    const done = c.run();
+    await vi.waitFor(() => expect(c.running).toBe(true));
+    await new Promise((r) => setTimeout(r, 0));
+    c.onExit({ ...exit('run-1', 0), ...patch });
+    await done;
+    expect(c.badge).toBe(badge);
+  });
+
+  it('cancels by run id', async () => {
+    const worker = fakeWorker({});
+    const { card: c, registered } = runCard(worker, 'pnpm test');
+    void c.run();
+    await vi.waitFor(() => expect(registered).toHaveLength(1));
+    await c.cancel();
+    expect(worker.calls).toContainEqual({ type: 'chat-run-cancel', runId: 'run-1' });
+  });
+
+  it('never asks to run a command that isn’t allowed', async () => {
+    const worker = fakeWorker({});
+    const { card: c } = runCard(worker, 'git push');
+    expect(await c.run()).toMatchObject({ ok: false });
+    expect(worker.calls.some((r) => r.type === 'chat-run')).toBe(false);
+  });
+
+  it('Send output inserts the result into the composer without sending', async () => {
+    const worker = fakeWorker({});
+    const { card: c, registered } = runCard(worker, 'pnpm test');
+    let submitted = false;
+    document.querySelector('form')!.addEventListener('submit', () => (submitted = true));
+    const done = c.run();
+    await vi.waitFor(() => expect(registered).toHaveLength(1));
+    c.onExit(exit('run-1', 1, 'FAIL\n'));
+    await done;
+    (c as unknown as { sendOutput(): void }).sendOutput();
+    const text = document.getElementById('prompt-textarea')!.textContent ?? '';
+    expect(text).toContain('Output of `pnpm test` (exit 1, 2.5s):');
+    expect(text).toContain('FAIL');
+    expect(submitted).toBe(false);
+  });
+
+  it('says why when the app refuses it', async () => {
+    const worker = fakeWorker({});
+    (worker.ask as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => ({
+      ok: false,
+      error: { code: 'busy', message: 'busy' }
+    }));
+    const { card: c } = runCard(worker, 'pnpm test');
+    expect(await c.run()).toEqual({
+      ok: false,
+      disconnected: false,
+      message: 'Another command is still running.'
+    });
+    expect(c.badge).toBe('allowlisted');
   });
 });
 

@@ -82,6 +82,16 @@ export class ProjectService {
     return this.current?.info ?? null;
   }
 
+  /** The open project's real path. Main-process only; never sent to the extension. */
+  get root(): string | null {
+    return this.current?.sandbox.root ?? null;
+  }
+
+  /** Stable id of the open project, for per-project settings. */
+  get projectKey(): string | null {
+    return this.current ? projectId(this.current.sandbox.root) : null;
+  }
+
   get recentProjects(): ProjectInfo[] {
     return this.options.settings.read().recentProjects.map((path) => this.describe(path));
   }
@@ -195,6 +205,30 @@ export class ProjectService {
     }
   }
 
+  /** Adds a row for something that isn't a write: a command, a Full auto step, a refusal. */
+  record(entry: Omit<ActivityEntry, 'id' | 'time'>): void {
+    if (!this.current) return;
+    this.sessionEvents.unshift({ id: randomUUID(), time: Date.now(), ...entry });
+    this.sessionEvents.length = Math.min(this.sessionEvents.length, MAX_SESSION_EVENTS);
+    this.options.onActivity?.();
+  }
+
+  /** A write the server refused before the sandbox (mode or gated file). */
+  refuse(op: FileRequest['type'], path: unknown, code: FileErrorCode) {
+    return this.fail(op, path, code);
+  }
+
+  /** A small text file at the project root (e.g. package.json), through the sandbox. */
+  async readText(path: string): Promise<string | null> {
+    const project = this.current;
+    if (!project) return null;
+    try {
+      return (await readFile(project.sandbox, path)).content;
+    } catch {
+      return null;
+    }
+  }
+
   /** The newest write that can still be undone. */
   lastUndoable(): string | null {
     return this.current?.history.lastUndoable()?.opId ?? null;
@@ -214,7 +248,9 @@ export class ProjectService {
       path: op.path,
       opId: op.opId,
       undone: op.undoneAt !== undefined,
-      ...(op.source && { source: op.source })
+      ...(op.source && { source: op.source }),
+      ...(op.trigger && { trigger: op.trigger }),
+      ...(op.loopId && { loopId: op.loopId })
     }));
     return [...writes, ...this.sessionEvents]
       .sort((a, b) => b.time - a.time)

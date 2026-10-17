@@ -1,9 +1,16 @@
 import { z } from 'zod';
 import {
+  BridgeConfig,
+  LoopId,
+  LoopReport,
   OpId,
   ReadParams,
+  RunId,
+  RunParams,
+  RunResult,
   Sha256Hex,
   TreeParams,
+  Trigger,
   UndoParams,
   WriteParams,
   PairingCode,
@@ -38,6 +45,8 @@ export const DiffCardRecord = z.strictObject({
   kind: z.enum(['create', 'modify']).optional(),
   added: z.number().int().nonnegative().optional(),
   removed: z.number().int().nonnegative().optional(),
+  /** Applied by Auto-apply or Full auto rather than a click. The card says "Auto-applied". */
+  auto: z.literal(true).optional(),
   /** Epoch ms. Records older than 30 days are pruned. */
   updatedAt: z.number().int().nonnegative()
 });
@@ -84,20 +93,40 @@ export const WorkerRequest = z.discriminatedUnion('type', [
     windowId: WindowId,
     paths: z.array(ChatPath).min(1).max(MAX_FILES_PER_SEND)
   }),
+  // The Full auto loop in the panel's active tab. `continue` adds another step limit's worth.
+  z.strictObject({
+    type: z.literal('loop-control'),
+    windowId: WindowId,
+    action: z.enum(['stop', 'resume', 'continue'])
+  }),
+  // Cancels the command running now, whoever started it.
+  z.strictObject({ type: z.literal('run-cancel') }),
 
   // Content script on chatgpt.com.
   z.strictObject({
     type: z.literal('chat-sync'),
     conversationId: ConversationId.nullable(),
-    layout: LayoutHealth
+    layout: LayoutHealth,
+    /** The content script just started (a load or reload): any loop it had is gone. */
+    start: z.literal(true).optional()
   }),
   z.strictObject({ type: z.literal('chat-read'), path: ChatPath }),
   z.strictObject({
     type: z.literal('chat-write'),
     path: ChatPath,
     content: WriteParams.shape.content,
-    baseHash: Sha256Hex.optional()
+    baseHash: Sha256Hex.optional(),
+    trigger: Trigger,
+    loopId: LoopId.optional()
   }),
+  z.strictObject({
+    type: z.literal('chat-run'),
+    argv: RunParams.shape.argv,
+    trigger: Trigger,
+    loopId: LoopId.optional()
+  }),
+  z.strictObject({ type: z.literal('chat-run-cancel'), runId: RunId }),
+  z.strictObject({ type: z.literal('chat-loop'), report: LoopReport }),
   z.strictObject({ type: z.literal('chat-undo'), opId: OpId }),
   z.strictObject({
     type: z.literal('chat-sent'),
@@ -128,7 +157,10 @@ export const CONTENT_SCRIPT_REQUESTS: ReadonlySet<WorkerRequest['type']> = new S
   'chat-undo',
   'chat-sent',
   'card-get',
-  'card-set'
+  'card-set',
+  'chat-run',
+  'chat-run-cancel',
+  'chat-loop'
 ]);
 
 /** The requests only the extension's own pages (the side panel) may make. */
@@ -143,6 +175,8 @@ export const EXTENSION_PAGE_REQUESTS: ReadonlySet<WorkerRequest['type']> = new S
   'reload-tab',
   'get-tree',
   'send-files',
+  'loop-control',
+  'run-cancel',
   'dev-file'
 ]);
 
@@ -152,6 +186,14 @@ export const TabMessage = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('session-changed'),
     session: z.enum(['active', 'ended']).nullable()
+  }),
+  // The app's mode and allowlist, whenever they or the connection change. Null: not connected.
+  z.strictObject({ type: z.literal('bridge-config'), config: BridgeConfig.nullable() }),
+  z.strictObject({ type: z.literal('run-output'), runId: RunId, chunk: z.string() }),
+  z.strictObject({ type: z.literal('run-exit'), result: RunResult }),
+  z.strictObject({
+    type: z.literal('loop-control'),
+    action: z.enum(['stop', 'resume', 'continue'])
   })
 ]);
 export type TabMessage = z.infer<typeof TabMessage>;
@@ -167,6 +209,8 @@ export type SessionState = 'active' | 'ended';
 export interface ChatSyncReply {
   connected: boolean;
   session: SessionState | null;
+  /** The app's mode and allowlist while connected. */
+  config: BridgeConfig | null;
 }
 
 export type PairResult =
@@ -206,6 +250,8 @@ export interface ChatPanelState {
     applied: number;
     pending: number;
   } | null;
+  /** The Full auto loop in this tab, as it last reported. */
+  loop: LoopReport | null;
 }
 
 /** Pushed to the side panel over its `chrome.runtime` port. */
@@ -214,8 +260,16 @@ export interface StatusUpdate {
   status: ConnectionStatus;
   /** The desktop's open project while connected, else null. */
   project: ProjectInfo | null;
+  /** The app's mode, allowlist and running command while connected, else null. */
+  config: BridgeConfig | null;
   chat: ChatPanelState;
 }
+
+/** Live command output for the side panel, over the same port. */
+export type PanelRunMessage =
+  { type: 'run-output'; runId: string; chunk: string } | { type: 'run-exit'; result: RunResult };
+
+export type PanelMessage = StatusUpdate | PanelRunMessage;
 
 /** A file request's outcome, plus the ways it can fail before the desktop answers. */
 export type RequestOutcome<T> =

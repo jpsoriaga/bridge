@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState } from 'react';
 import {
   CONNECTION_STATUS_TONES,
   DEFAULT_PORT,
@@ -11,7 +11,10 @@ import {
   type Mode
 } from '@bridge/shared';
 import type { ActivityEntry, DesktopState, OpenFolderResult, UndoOutcome } from '../../preload/api';
+import { CommandsSection, RunningCommand } from './Commands';
 import { Logo } from './Logo';
+import { AutoToast, LoopBar, LoopStatus } from './Loop';
+import { PatternList } from './PatternList';
 
 const STATUS_LABELS: Record<ConnectionStatus, string> = {
   'app-not-running': 'Not running',
@@ -160,7 +163,7 @@ const formatTime = (time: number) =>
 
 function describe(entry: ActivityEntry): { meta: string; tone?: 'success' | 'danger' } {
   const reason = entry.code ? FILE_ERROR_LABELS[entry.code] : '';
-  const via = entry.source === 'chat' ? ' · via chat' : '';
+  const via = entry.trigger === 'auto' ? ' · auto' : entry.source === 'chat' ? ' · via chat' : '';
   switch (entry.kind) {
     case 'create':
       return entry.undone
@@ -173,11 +176,90 @@ function describe(entry: ActivityEntry): { meta: string; tone?: 'success' | 'dan
     case 'rejected':
       return { meta: `Blocked ${entry.op ?? 'request'} · ${reason}`, tone: 'danger' };
     case 'failed':
+      if (entry.code === 'gated' || entry.code === 'mode') {
+        return { meta: `Left for a click · ${reason}` };
+      }
       return {
-        meta: `${entry.op === 'undo' ? 'Undo' : 'Write'} failed · ${reason}`,
+        meta: `${entry.op === 'undo' ? 'Undo' : entry.op === 'run' ? 'Command refused' : 'Write'}${entry.op === 'run' ? '' : ' failed'} · ${reason}`,
         tone: 'danger'
       };
+    case 'run': {
+      const run = entry.run;
+      const seconds = run ? ` · ${(run.durationMs / 1000).toFixed(1)}s` : '';
+      if (!run) return { meta: `Ran${via}` };
+      if (run.status === 'exited') {
+        return run.exitCode === 0
+          ? { meta: `Passed${seconds}${via}`, tone: 'success' }
+          : { meta: `Exit ${run.exitCode ?? '?'}${seconds}${via}`, tone: 'danger' };
+      }
+      return {
+        meta: `${run.status === 'timed-out' ? 'Timed out' : run.status === 'cancelled' ? 'Cancelled' : 'Couldn’t start'}${seconds}${via}`,
+        tone: run.status === 'cancelled' ? undefined : 'danger'
+      };
+    }
+    case 'loop':
+      return { meta: 'Full auto' };
   }
+}
+
+/** Activity rows, with each Full auto run's rows gathered under its newest one. */
+type ActivityItem =
+  | { kind: 'row'; entry: ActivityEntry }
+  | { kind: 'loop'; loopId: string; entries: ActivityEntry[] };
+
+export function groupActivity(entries: readonly ActivityEntry[]): ActivityItem[] {
+  const items: ActivityItem[] = [];
+  const groups = new Map<string, Extract<ActivityItem, { kind: 'loop' }>>();
+  for (const entry of entries) {
+    if (!entry.loopId) {
+      items.push({ kind: 'row', entry });
+      continue;
+    }
+    let group = groups.get(entry.loopId);
+    if (!group) {
+      group = { kind: 'loop', loopId: entry.loopId, entries: [] };
+      groups.set(entry.loopId, group);
+      items.push(group);
+    }
+    group.entries.push(entry);
+  }
+  return items;
+}
+
+function ActivityRow({
+  entry,
+  busy,
+  run
+}: {
+  entry: ActivityEntry;
+  busy: boolean;
+  run: (action: () => Promise<UndoOutcome>) => void;
+}) {
+  const { meta, tone } = describe(entry);
+  const title = entry.kind === 'loop' ? (entry.text ?? '') : entry.path || '(no path)';
+  return (
+    <li className="activity-row" data-undone={entry.undone === true}>
+      <span className="dot" data-tone={tone} />
+      <span className="activity-text">
+        <span className={entry.kind === 'loop' ? 'activity-note' : 'activity-path'} title={title}>
+          {title}
+        </span>
+        <span className="activity-meta">
+          {formatTime(entry.time)} · {meta}
+        </span>
+      </span>
+      {entry.opId && !entry.undone && (
+        <button
+          type="button"
+          className="btn"
+          disabled={busy}
+          onClick={() => run(() => window.bridge.undo(entry.opId!))}
+        >
+          Undo
+        </button>
+      )}
+    </li>
+  );
 }
 
 function ActivitySection({
@@ -224,32 +306,27 @@ function ActivitySection({
         </p>
       ) : (
         <ul className="activity activity-scroll">
-          {entries.map((entry) => {
-            const { meta, tone } = describe(entry);
-            return (
-              <li key={entry.id} className="activity-row" data-undone={entry.undone === true}>
-                <span className="dot" data-tone={tone} />
-                <span className="activity-text">
-                  <span className="activity-path" title={entry.path}>
-                    {entry.path || '(no path)'}
-                  </span>
-                  <span className="activity-meta">
-                    {formatTime(entry.time)} · {meta}
-                  </span>
-                </span>
-                {entry.opId && !entry.undone && (
-                  <button
-                    type="button"
-                    className="btn"
-                    disabled={busy}
-                    onClick={() => run(() => window.bridge.undo(entry.opId!))}
-                  >
-                    Undo
-                  </button>
-                )}
+          {groupActivity(entries).map((item) =>
+            item.kind === 'row' ? (
+              <ActivityRow key={item.entry.id} entry={item.entry} busy={busy} run={run} />
+            ) : (
+              <li key={item.loopId} className="activity-group">
+                <p className="activity-group-head">
+                  Full auto run ·{' '}
+                  {
+                    item.entries.filter((e) => e.kind === 'loop' && e.text?.startsWith('Sent'))
+                      .length
+                  }{' '}
+                  messages sent
+                </p>
+                <ul className="activity">
+                  {item.entries.map((entry) => (
+                    <ActivityRow key={entry.id} entry={entry} busy={busy} run={run} />
+                  ))}
+                </ul>
               </li>
-            );
-          })}
+            )
+          )}
         </ul>
       )}
       {error && (
@@ -258,68 +335,6 @@ function ActivitySection({
         </p>
       )}
     </section>
-  );
-}
-
-function ProtectedFiles({ state }: { state: DesktopState }) {
-  const [draft, setDraft] = useState('');
-  const [error, setError] = useState<string | null>(null);
-
-  const save = (patterns: string[]) =>
-    window.bridge.setDenyPatterns(patterns).then((ok) => {
-      setError(ok ? null : 'Use one .gitignore-style pattern, without "!" or "#".');
-      return ok;
-    });
-
-  const add = (event: FormEvent) => {
-    event.preventDefault();
-    const pattern = draft.trim();
-    if (!pattern) return;
-    void save([...state.denyPatterns, pattern]).then((ok) => ok && setDraft(''));
-  };
-
-  return (
-    <div className="protected">
-      <p className="label">Protected files</p>
-      <p className="hint">
-        Never read, written or listed:{' '}
-        <span className="mono">{state.defaultDenyPatterns.join('  ')}</span>
-      </p>
-      {state.denyPatterns.length > 0 && (
-        <ul className="patterns">
-          {state.denyPatterns.map((pattern) => (
-            <li key={pattern}>
-              <span className="mono">{pattern}</span>
-              <button
-                type="button"
-                className="btn"
-                onClick={() => void save(state.denyPatterns.filter((p) => p !== pattern))}
-              >
-                Remove
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      <form className="pattern-form" onSubmit={add}>
-        <input
-          className="input mono"
-          placeholder="secrets/ or *.sqlite"
-          aria-label="Add a protected pattern"
-          aria-invalid={error !== null}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-        />
-        <button type="submit" className="btn" disabled={!draft.trim()}>
-          Add
-        </button>
-      </form>
-      {error && (
-        <p className="error-text" role="alert">
-          {error}
-        </p>
-      )}
-    </div>
   );
 }
 
@@ -405,8 +420,46 @@ function ExtensionSection({ state }: { state: DesktopState }) {
   );
 }
 
+function ModeSection({ state }: { state: DesktopState }) {
+  const [busy, setBusy] = useState(false);
+  const choose = (mode: Mode) => {
+    if (mode === state.mode) return;
+    setBusy(true);
+    // Full auto asks for confirmation in a native dialog first.
+    void window.bridge.setMode(mode).finally(() => setBusy(false));
+  };
+  return (
+    <section>
+      <p className="label" id="mode-label">
+        Mode
+      </p>
+      <div className="segmented" role="radiogroup" aria-labelledby="mode-label">
+        {MODES.map((m) => (
+          <button
+            key={m}
+            type="button"
+            role="radio"
+            aria-checked={m === state.mode}
+            disabled={busy}
+            onClick={() => choose(m)}
+          >
+            {MODE_LABELS[m]}
+          </button>
+        ))}
+      </div>
+      <p className="hint">{MODE_DESCRIPTIONS[state.mode]}</p>
+      {state.mode === 'full-auto' && (
+        <p className="hint" data-tone="warning">
+          Full auto sends messages for you and runs commands the model may have written. It turns
+          off when you restart Bridge, end the session, unpair or switch projects.
+        </p>
+      )}
+      <LoopStatus state={state} />
+    </section>
+  );
+}
+
 export function App() {
-  const [mode, setMode] = useState<Mode>('manual');
   const state = useDesktopState();
   const activity = useActivity();
   const status = state?.status ?? 'connecting';
@@ -436,27 +489,13 @@ export function App() {
 
         {state && <ExtensionSection state={state} />}
 
-        <section>
-          <p className="label" id="mode-label">
-            Mode
-          </p>
-          <div className="segmented" role="radiogroup" aria-labelledby="mode-label">
-            {MODES.map((m) => (
-              <button
-                key={m}
-                type="button"
-                role="radio"
-                aria-checked={m === mode}
-                onClick={() => setMode(m)}
-              >
-                {MODE_LABELS[m]}
-              </button>
-            ))}
-          </div>
-          <p className="hint">{MODE_DESCRIPTIONS[mode]}</p>
-        </section>
+        {state && <ModeSection state={state} />}
+
+        {state && <RunningCommand state={state} />}
 
         <ActivitySection entries={activity} hasProject={project !== null} />
+
+        {state && <CommandsSection state={state} />}
 
         <section>
           <p className="label">Settings</p>
@@ -470,11 +509,49 @@ export function App() {
               {DEFAULT_PORT + PORT_RANGE - 1}. Quit whatever is using them and restart Bridge.
             </p>
           )}
-          {state && <ProtectedFiles state={state} />}
+          {state && (
+            <>
+              <PatternList
+                label="Protected files"
+                hint="Never read, written or listed:"
+                defaults={state.defaultDenyPatterns}
+                patterns={state.denyPatterns}
+                placeholder="secrets/ or *.sqlite"
+                invalidText="Use one .gitignore-style pattern, without “!” or “#”."
+                save={(patterns) =>
+                  window.bridge
+                    .setDenyPatterns(patterns)
+                    .then((ok) => (ok ? { ok: true } : { ok: false, invalid: null }))
+                }
+              />
+              <PatternList
+                label="Gated files"
+                hint="Need a click in every mode, because they can change what commands do. This blocks only the most direct routes: running tests still runs code the chat wrote."
+                defaults={state.defaultGatedPatterns}
+                patterns={state.gatedPatterns}
+                placeholder="vitest.config.* or scripts/"
+                invalidText="Use one .gitignore-style pattern, without “!” or “#”."
+                save={(patterns) => window.bridge.setGatedPatterns(patterns)}
+              />
+              <PatternList
+                label="Hidden from commands"
+                hint="Environment variables commands never see (* matches anything). CI=1 and FORCE_COLOR=0 are always set."
+                defaults={state.defaultEnvPatterns}
+                patterns={state.envPatterns}
+                placeholder="MY_SERVICE_*"
+                invalidText="Use a variable name, with * as a wildcard."
+                save={(patterns) => window.bridge.setEnvPatterns(patterns)}
+              />
+            </>
+          )}
         </section>
       </main>
 
-      <footer className="footer">v{window.bridge.version}</footer>
+      <div className="bottom">
+        {state && <AutoToast entries={activity} />}
+        {state && <LoopBar loop={state.loop} />}
+        <footer className="footer">v{window.bridge.version}</footer>
+      </div>
     </div>
   );
 }

@@ -154,6 +154,12 @@ export class Sessions {
     return (await this.stateFor(tabId)) === 'active';
   }
 
+  /** Tabs whose content script has reported in. */
+  async tabIds(): Promise<number[]> {
+    const { tabs } = await this.load();
+    return Object.keys(tabs).map(Number).filter(Number.isInteger);
+  }
+
   async tab(tabId: number): Promise<TabRecord | null> {
     const { tabs } = await this.load();
     return tabs[String(tabId)] ?? null;
@@ -172,7 +178,7 @@ export class Sessions {
     });
   }
 
-  async panelState(tabId: number | null): Promise<ChatPanelState> {
+  async panelState(tabId: number | null): Promise<Omit<ChatPanelState, 'loop'>> {
     if (tabId === null) return { tab: null, session: null };
     const { sessions, pending, tabs } = await this.load();
     const key = String(tabId);

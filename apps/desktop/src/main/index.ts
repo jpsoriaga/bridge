@@ -8,27 +8,90 @@ import {
   shell,
   type IpcMainInvokeEvent
 } from 'electron';
+import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { candidatePorts, OpId } from '@bridge/shared';
-import { IPC, type DesktopState, type OpenFolderResult, type UndoOutcome } from '../preload/api';
+import {
+  candidatePorts,
+  formatArgv,
+  MAX_RUN_TIMEOUT_MS,
+  MAX_STEP_LIMIT,
+  MIN_RUN_TIMEOUT_MS,
+  MODES,
+  OpId,
+  serverMessage,
+  type BridgeConfig,
+  type LoopReport,
+  type Mode
+} from '@bridge/shared';
+import {
+  IPC,
+  type DesktopState,
+  type OpenFolderResult,
+  type RunningCommand,
+  type RunSettings,
+  type SaveListResult,
+  type UndoOutcome
+} from '../preload/api';
+import { DEFAULT_ENV_DENYLIST, isValidEnvPattern, MAX_ENV_PATTERNS } from './commands/env';
+import { CommandRunner } from './commands/runner';
+import { CommandService } from './commands/service';
+import { suggestAllowlist } from './commands/suggest';
+import { DEFAULT_GATED_FILES, GatedFiles, guardedFiles, ModeState } from './policy';
 import { DEFAULT_DENYLIST } from './project/sandbox';
 import { ProjectService } from './project/service';
 import { Pairing } from './server/pairing';
 import { createBridgeServer, type BridgeServer } from './server/server';
 import { fileTokenStore } from './server/token-store';
-import { isValidDenyPattern, MAX_DENY_PATTERNS, settingsFile } from './settings';
+import { isValidAllowlist, isValidDenyPattern, MAX_DENY_PATTERNS, settingsFile } from './settings';
 import { createWindowOptions } from './window';
 
 let mainWindow: BrowserWindow | null = null;
 let pairing: Pairing;
 let server: BridgeServer;
 let projects: ProjectService;
+let settings: ReturnType<typeof settingsFile>;
+let modes: ModeState;
+let gated: GatedFiles;
+let runner: CommandRunner;
+let commands: CommandService;
 let serverFailed = false;
 let expiryTimer: NodeJS.Timeout | undefined;
+/** The project the last change saw, to notice a switch. */
+let lastRoot: string | null = null;
+/** Allowlist suggestions for the open project, until it has a confirmed list. */
+let suggestions: string[] = [];
+let running: RunningCommand | null = null;
+/** Which loop run each command belongs to, for grouping its activity row. */
+const runLoops = new Map<string, string>();
+let loop: LoopReport | null = null;
+
+function allowlist(): string[] | null {
+  const key = projects.projectKey;
+  return key === null ? null : (settings.read().allowlists[key] ?? null);
+}
+
+function runSettings(): RunSettings {
+  const { runTimeoutMs, stepLimit, pauseOnFailure } = settings.read();
+  return { timeoutMs: runTimeoutMs, stepLimit, pauseOnFailure };
+}
+
+function bridgeConfig(): BridgeConfig {
+  const { stepLimit, pauseOnFailure } = runSettings();
+  return {
+    mode: modes.mode,
+    allowlist: allowlist() ?? [],
+    stepLimit,
+    pauseOnFailure,
+    running: runner.current
+  };
+}
 
 function desktopState(): DesktopState {
   const lockedFor = pairing.lockedForMs;
+  const saved = settings.read();
+  const confirmed = allowlist();
   return {
     status: serverFailed
       ? 'error'
@@ -44,7 +107,17 @@ function desktopState(): DesktopState {
     project: projects.project,
     recentProjects: projects.recentProjects,
     defaultDenyPatterns: DEFAULT_DENYLIST,
-    denyPatterns: projects.denyPatterns
+    denyPatterns: projects.denyPatterns,
+    mode: modes.mode,
+    allowlist: confirmed,
+    allowlistSuggestions: confirmed === null ? suggestions : [],
+    defaultGatedPatterns: DEFAULT_GATED_FILES,
+    gatedPatterns: saved.gatedPatterns,
+    defaultEnvPatterns: DEFAULT_ENV_DENYLIST,
+    envPatterns: saved.envPatterns,
+    runSettings: runSettings(),
+    running,
+    loop
   };
 }
 
@@ -56,10 +129,37 @@ function broadcastActivity(): void {
   mainWindow?.webContents.send(IPC.activity, projects.activity());
 }
 
-/** Project switched or settings changed: tell the window and the extension. */
-function projectChanged(): void {
+/** Mode, allowlist, settings or the running command changed: tell the window and the extension. */
+function configChanged(): void {
   broadcast();
   server?.pushStatus();
+}
+
+/** Full auto ends, and whatever is running stops. On End session, unpairing, a project switch. */
+function leaveFullAuto(): void {
+  modes.dropFullAuto();
+  runner.cancelAll();
+}
+
+/** Project switched or settings changed: tell the window and the extension. */
+function projectChanged(): void {
+  const root = projects.root;
+  if (root !== lastRoot) {
+    lastRoot = root;
+    // A different project ends Full auto, and whatever was running there stops.
+    modes.noteProject(root);
+    runner.cancelAll();
+    loop = null;
+    suggestions = [];
+    if (root !== null) {
+      void projects.readText('package.json').then((text) => {
+        if (projects.root !== root) return;
+        suggestions = suggestAllowlist(text, (file) => existsSync(join(root, file)));
+        broadcast();
+      });
+    }
+  }
+  configChanged();
 }
 
 /** Only our own window's top frame may call in. Arguments are untrusted until checked. */
@@ -106,6 +206,49 @@ async function undoFromApp(opId: string | null): Promise<UndoOutcome> {
   return outcome.ok ? { ok: true } : { ok: false, code: outcome.error.code };
 }
 
+/**
+ * Full auto needs a plain-words confirmation every time it's turned on, in a native dialog
+ * the renderer can't skip.
+ */
+async function setMode(mode: unknown): Promise<Mode> {
+  if (typeof mode !== 'string' || !(MODES as readonly string[]).includes(mode)) return modes.mode;
+  if (mode === 'full-auto' && modes.mode !== 'full-auto') {
+    if (!mainWindow) return modes.mode;
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      message: 'Turn on Full auto?',
+      detail: [
+        'Bridge will apply edits, run allowlisted commands and send the next message to the chat on its own, until the chat says it’s done, you press Stop, or it reaches the step limit.',
+        '• Automating the chat this way may break its provider’s terms of use and put your account at risk.',
+        '• The commands run code the model may have written, such as tests and build scripts, with your user’s permissions.',
+        '• This is opt-in and at your own risk. Full auto turns off when you restart Bridge, end the session, unpair or switch projects.'
+      ].join('\n\n'),
+      buttons: ['Cancel', 'Turn on Full auto'],
+      defaultId: 0,
+      cancelId: 0
+    });
+    if (response !== 1) return modes.mode;
+  }
+  modes.set(mode as Mode);
+  return modes.mode;
+}
+
+const isUniqueList = (list: string[]) => new Set(list).size === list.length;
+
+function saveList(
+  value: unknown,
+  valid: (entry: unknown) => boolean,
+  max: number,
+  save: (list: string[]) => void
+): SaveListResult {
+  if (!Array.isArray(value) || value.length > max) return { ok: false, invalid: null };
+  const bad = value.find((entry) => !valid(entry));
+  if (bad !== undefined) return { ok: false, invalid: typeof bad === 'string' ? bad : null };
+  const list = value as string[];
+  save(isUniqueList(list) ? list : [...new Set(list)]);
+  return { ok: true };
+}
+
 function registerIpc(): void {
   handle(IPC.getStatus, desktopState);
   handle(IPC.startPairing, () => {
@@ -140,11 +283,95 @@ function registerIpc(): void {
     await projects.setDenyPatterns([...new Set(patterns)]);
     return true;
   });
+  handle(IPC.setMode, setMode);
+  handle(IPC.setAllowlist, (entries): SaveListResult => {
+    const key = projects.projectKey;
+    if (key === null) return { ok: false, invalid: null };
+    if (!isValidAllowlist(entries)) {
+      const bad = Array.isArray(entries) ? entries.find((e) => !isValidAllowlist([e])) : undefined;
+      return { ok: false, invalid: typeof bad === 'string' ? bad : null };
+    }
+    const allowlists = { ...settings.read().allowlists, [key]: [...new Set(entries)] };
+    settings.update({ allowlists });
+    configChanged();
+    return { ok: true };
+  });
+  handle(IPC.setGatedPatterns, (patterns) =>
+    saveList(patterns, isValidDenyPattern, MAX_DENY_PATTERNS, (list) => {
+      settings.update({ gatedPatterns: list });
+      gated = new GatedFiles(list);
+      broadcast();
+    })
+  );
+  handle(IPC.setEnvPatterns, (patterns) =>
+    saveList(patterns, isValidEnvPattern, MAX_ENV_PATTERNS, (list) => {
+      settings.update({ envPatterns: list });
+      broadcast();
+    })
+  );
+  handle(IPC.setRunSettings, (value) => {
+    const next = value as Partial<RunSettings> | null;
+    if (
+      typeof next !== 'object' ||
+      next === null ||
+      !Number.isInteger(next.timeoutMs) ||
+      next.timeoutMs! < MIN_RUN_TIMEOUT_MS ||
+      next.timeoutMs! > MAX_RUN_TIMEOUT_MS ||
+      !Number.isInteger(next.stepLimit) ||
+      next.stepLimit! < 1 ||
+      next.stepLimit! > MAX_STEP_LIMIT ||
+      typeof next.pauseOnFailure !== 'boolean'
+    ) {
+      return false;
+    }
+    settings.update({
+      runTimeoutMs: next.timeoutMs!,
+      stepLimit: next.stepLimit!,
+      pauseOnFailure: next.pauseOnFailure
+    });
+    configChanged();
+    return true;
+  });
+  handle(IPC.cancelRun, () => {
+    runner.cancelAll();
+  });
+  handle(IPC.stopLoop, () => {
+    // Stop halts the loop and its command. It reverts nothing; undo is still there.
+    server.broadcast(serverMessage(randomUUID(), 'loop_stop', {}));
+    runner.cancelAll();
+  });
 }
 
 async function startServer(): Promise<void> {
   const userData = app.getPath('userData');
-  const settings = settingsFile(join(userData, 'settings.json'));
+  settings = settingsFile(join(userData, 'settings.json'));
+  modes = new ModeState(settings, configChanged);
+  gated = new GatedFiles(settings.read().gatedPatterns);
+  runner = new CommandRunner({
+    onOutput: (runId, text) => {
+      server.broadcast(serverMessage(randomUUID(), 'run_output', { runId, chunk: text }));
+      mainWindow?.webContents.send(IPC.runOutput, { runId, text });
+    },
+    onExit: (result) => {
+      server.broadcast(serverMessage(randomUUID(), 'run_exit', result));
+      const loopId = runLoops.get(result.runId);
+      runLoops.delete(result.runId);
+      projects.record({
+        kind: 'run',
+        path: formatArgv(result.argv),
+        op: 'run',
+        run: { status: result.status, exitCode: result.exitCode, durationMs: result.durationMs },
+        ...(loopId && { loopId, trigger: 'auto' as const })
+      });
+    },
+    onChange: () => {
+      const current = runner.current;
+      running = current
+        ? { runId: current.runId, command: formatArgv(current.argv), startedAt: Date.now() }
+        : null;
+      configChanged();
+    }
+  });
   projects = new ProjectService({
     settings,
     backupsDir: join(userData, 'backups'),
@@ -153,14 +380,56 @@ async function startServer(): Promise<void> {
     onChange: projectChanged,
     onActivity: broadcastActivity
   });
+  commands = new CommandService({
+    runner,
+    root: () => projects.root,
+    mode: () => modes.mode,
+    allowlist: () => allowlist() ?? [],
+    envPatterns: () => settings.read().envPatterns,
+    timeoutMs: () => settings.read().runTimeoutMs,
+    onRefused: (argv, code) =>
+      projects.record({ kind: 'failed', op: 'run', path: formatArgv(argv), code })
+  });
   await projects.restore();
   pairing = new Pairing({ store: fileTokenStore(join(userData, 'pairing.json'), safeStorage) });
   server = createBridgeServer({
     pairing,
     version: app.getVersion(),
     onChange: broadcast,
-    files: (request) => projects.handle(request),
-    project: () => projects.project
+    // Writes from the extension: the mode and the gated list come before the sandbox.
+    files: guardedFiles(
+      projects,
+      () => modes.mode,
+      () => gated
+    ),
+    commands: async (request) => {
+      if (request.type === 'run_cancel') return commands.cancel(request.payload.runId);
+      const outcome = await commands.run(request.payload);
+      if (outcome.ok && request.payload.loopId) {
+        runLoops.set(outcome.result.runId, request.payload.loopId);
+      }
+      return outcome;
+    },
+    project: () => projects.project,
+    config: bridgeConfig,
+    onLoopReport: (report) => {
+      loop = report;
+      if (report.event) {
+        projects.record({
+          kind: 'loop',
+          path: '',
+          text: report.event.text,
+          loopId: report.loopId,
+          trigger: 'auto'
+        });
+      }
+      broadcast();
+    },
+    onSessionEnd: leaveFullAuto,
+    onUnpaired: () => {
+      leaveFullAuto();
+      loop = null;
+    }
   });
   try {
     const port = await server.listen(candidatePorts());
@@ -212,6 +481,8 @@ void app.whenReady().then(async () => {
 
 app.on('before-quit', () => {
   clearTimeout(expiryTimer);
+  // A running command is in its own process group; take it down with the app.
+  runner?.cancelAll();
   void server?.close();
 });
 

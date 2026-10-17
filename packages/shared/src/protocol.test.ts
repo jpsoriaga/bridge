@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  type BridgeConfig,
   candidatePorts,
   ClientMessage,
   clientMessage,
@@ -11,6 +12,7 @@ import {
   parseMessage,
   PORT_RANGE,
   proofInput,
+  PROTOCOL_VERSION,
   ServerMessage,
   serverMessage,
   UnpairChallengeRequest,
@@ -22,6 +24,13 @@ const token = 'a'.repeat(64);
 const nonce = 'b'.repeat(64);
 const proof = 'c'.repeat(64);
 const raw = (value: unknown) => JSON.stringify(value);
+const config: BridgeConfig = {
+  mode: 'manual',
+  allowlist: ['pnpm test'],
+  stepLimit: 10,
+  pauseOnFailure: false,
+  running: null
+};
 
 describe('client messages', () => {
   it('accepts hello, auth, ping and pong', () => {
@@ -41,22 +50,36 @@ describe('client messages', () => {
     ['an unknown type', raw({ v: 1, id: '1', type: 'write', payload: {} })],
     ['a server-only type', raw({ v: 1, id: '1', type: 'auth_ok', payload: {} })],
     ['the Phase 2 version', raw({ v: 1, id: '1', type: 'ping', payload: {} })],
-    ['a missing id', raw({ v: 2, type: 'ping', payload: {} })],
-    ['an empty id', raw({ v: 2, id: '', type: 'ping', payload: {} })],
-    ['an overlong id', raw({ v: 2, id: 'x'.repeat(65), type: 'ping', payload: {} })],
-    ['a missing payload', raw({ v: 2, id: '1', type: 'ping' })],
-    ['extra envelope keys', raw({ v: 2, id: '1', type: 'ping', payload: {}, x: 1 })],
-    ['extra payload keys', raw({ v: 2, id: '1', type: 'ping', payload: { x: 1 } })],
-    ['a bearer token in auth', raw({ v: 2, id: '1', type: 'auth', payload: { token } })],
-    ['a short proof', raw({ v: 2, id: '1', type: 'auth', payload: { proof: 'abc' } })],
+    ['a missing id', raw({ v: PROTOCOL_VERSION, type: 'ping', payload: {} })],
+    ['an empty id', raw({ v: PROTOCOL_VERSION, id: '', type: 'ping', payload: {} })],
+    ['an overlong id', raw({ v: PROTOCOL_VERSION, id: 'x'.repeat(65), type: 'ping', payload: {} })],
+    ['a missing payload', raw({ v: PROTOCOL_VERSION, id: '1', type: 'ping' })],
+    ['extra envelope keys', raw({ v: PROTOCOL_VERSION, id: '1', type: 'ping', payload: {}, x: 1 })],
+    ['extra payload keys', raw({ v: PROTOCOL_VERSION, id: '1', type: 'ping', payload: { x: 1 } })],
+    [
+      'a bearer token in auth',
+      raw({ v: PROTOCOL_VERSION, id: '1', type: 'auth', payload: { token } })
+    ],
+    [
+      'a short proof',
+      raw({ v: PROTOCOL_VERSION, id: '1', type: 'auth', payload: { proof: 'abc' } })
+    ],
     [
       'an uppercase proof',
-      raw({ v: 2, id: '1', type: 'auth', payload: { proof: 'A'.repeat(64) } })
+      raw({ v: PROTOCOL_VERSION, id: '1', type: 'auth', payload: { proof: 'A'.repeat(64) } })
     ],
-    ['a numeric nonce', raw({ v: 2, id: '1', type: 'hello', payload: { nonce: 1 } })],
+    [
+      'a numeric nonce',
+      raw({ v: PROTOCOL_VERSION, id: '1', type: 'hello', payload: { nonce: 1 } })
+    ],
     [
       'a server-only challenge',
-      raw({ v: 2, id: '1', type: 'challenge', payload: { proof, serverNonce: nonce } })
+      raw({
+        v: PROTOCOL_VERSION,
+        id: '1',
+        type: 'challenge',
+        payload: { proof, serverNonce: nonce }
+      })
     ]
   ])('rejects %s', (_label, input) => {
     expect(parseMessage(ClientMessage, input)).toBeNull();
@@ -68,8 +91,13 @@ describe('file requests', () => {
     for (const msg of [
       clientMessage('1', 'tree', {}),
       clientMessage('2', 'read', { path: 'src/a.ts' }),
-      clientMessage('3', 'write', { path: 'a.ts', content: 'x' }),
-      clientMessage('4', 'write', { path: 'a.ts', content: '', baseHash: 'f'.repeat(64) }),
+      clientMessage('3', 'write', { path: 'a.ts', content: 'x', trigger: 'click' }),
+      clientMessage('4', 'write', {
+        path: 'a.ts',
+        content: '',
+        baseHash: 'f'.repeat(64),
+        trigger: 'auto'
+      }),
       clientMessage('5', 'undo', { opId: '6f1c2b8e-1d2a-4c1b-9e3f-0a1b2c3d4e5f' })
     ]) {
       expect(parseMessage(ClientMessage, raw(msg))).toEqual(msg);
@@ -81,17 +109,82 @@ describe('file requests', () => {
     ['read without a path', { type: 'read', payload: {} }],
     ['read with an empty path', { type: 'read', payload: { path: '' } }],
     ['read with a numeric path', { type: 'read', payload: { path: 1 } }],
-    ['write without content', { type: 'write', payload: { path: 'a' } }],
+    ['write without content', { type: 'write', payload: { path: 'a', trigger: 'click' } }],
+    ['write without a trigger', { type: 'write', payload: { path: 'a', content: '' } }],
+    [
+      'write with an unknown trigger',
+      { type: 'write', payload: { path: 'a', content: '', trigger: 'loop' } }
+    ],
     [
       'write with a short hash',
-      { type: 'write', payload: { path: 'a', content: '', baseHash: 'ab' } }
+      { type: 'write', payload: { path: 'a', content: '', baseHash: 'ab', trigger: 'click' } }
     ],
-    ['write with extra keys', { type: 'write', payload: { path: 'a', content: '', mode: 0o777 } }],
+    [
+      'write with extra keys',
+      { type: 'write', payload: { path: 'a', content: '', trigger: 'click', mode: 0o777 } }
+    ],
     ['undo with an odd op id', { type: 'undo', payload: { opId: '../x' } }],
     ['a delete', { type: 'delete', payload: { path: 'a' } }],
     ['a rename', { type: 'rename', payload: { from: 'a', to: 'b' } }]
   ])('rejects %s', (_label, partial) => {
-    expect(parseMessage(ClientMessage, raw({ v: 2, id: '1', ...partial }))).toBeNull();
+    expect(
+      parseMessage(ClientMessage, raw({ v: PROTOCOL_VERSION, id: '1', ...partial }))
+    ).toBeNull();
+  });
+});
+
+describe('commands and the loop', () => {
+  it('accepts run, run_cancel, loop_report and session_end', () => {
+    for (const msg of [
+      clientMessage('1', 'run', { argv: ['pnpm', 'test'], trigger: 'click' }),
+      clientMessage('2', 'run_cancel', { runId: 'r-1' }),
+      clientMessage('3', 'loop_report', {
+        loopId: 'loop-1',
+        state: 'paused',
+        step: 3,
+        limit: 10,
+        reason: 'step-limit',
+        event: { kind: 'paused', text: 'Step limit' }
+      }),
+      clientMessage('4', 'session_end', {})
+    ]) {
+      expect(parseMessage(ClientMessage, raw(msg))).toEqual(msg);
+    }
+  });
+
+  it.each([
+    [
+      'run with a command string',
+      { type: 'run', payload: { argv: 'pnpm test', trigger: 'click' } }
+    ],
+    ['run with an empty argv', { type: 'run', payload: { argv: [], trigger: 'click' } }],
+    ['run without a trigger', { type: 'run', payload: { argv: ['ls'] } }],
+    ['run with a cwd', { type: 'run', payload: { argv: ['ls'], trigger: 'click', cwd: '/' } }],
+    ['run with env', { type: 'run', payload: { argv: ['ls'], trigger: 'click', env: {} } }],
+    ['run_cancel with an odd id', { type: 'run_cancel', payload: { runId: '../x' } }],
+    [
+      'a loop report in an unknown state',
+      {
+        type: 'loop_report',
+        payload: { loopId: 'l', state: 'dancing', step: 0, limit: 10 }
+      }
+    ],
+    [
+      'a loop report with a fractional step',
+      {
+        type: 'loop_report',
+        payload: { loopId: 'l', state: 'idle', step: 0.5, limit: 10 }
+      }
+    ],
+    ['a mode change from the extension', { type: 'set_mode', payload: { mode: 'full-auto' } }],
+    [
+      'an allowlist change from the extension',
+      { type: 'set_allowlist', payload: { allowlist: [] } }
+    ]
+  ])('rejects %s', (_label, partial) => {
+    expect(
+      parseMessage(ClientMessage, raw({ v: PROTOCOL_VERSION, id: '1', ...partial }))
+    ).toBeNull();
   });
 });
 
@@ -104,8 +197,24 @@ describe('server messages', () => {
       serverMessage('2', 'auth_error', { reason: 'replayed_nonce' }),
       serverMessage('3', 'ping', {}),
       serverMessage('4', 'pong', {}),
-      serverMessage('5', 'status', { version: '0.1.0', project: null }),
-      serverMessage('5', 'status', { version: '0.1.0', project: { name: 'app', path: '~/app' } }),
+      serverMessage('5', 'status', { version: '0.1.0', project: null, config }),
+      serverMessage('5', 'status', {
+        version: '0.1.0',
+        project: { name: 'app', path: '~/app' },
+        config: { ...config, mode: 'full-auto', running: { runId: 'r-1', argv: ['pnpm', 'test'] } }
+      }),
+      serverMessage('7', 'run_output', { runId: 'r-1', chunk: 'ok\n' }),
+      serverMessage('8', 'run_exit', {
+        runId: 'r-1',
+        argv: ['pnpm', 'test'],
+        status: 'exited',
+        exitCode: 1,
+        signal: null,
+        durationMs: 1200,
+        output: 'FAIL',
+        truncated: false
+      }),
+      serverMessage('9', 'loop_stop', {}),
       serverMessage('r1', 'response', { ok: true, result: { anything: 1 } }),
       serverMessage('r2', 'response', {
         ok: false,
@@ -122,6 +231,30 @@ describe('server messages', () => {
     ['an unknown error code', { type: 'error', payload: { code: 'x', message: '' } }],
     ['a status without version', { type: 'status', payload: {} }],
     ['a status without project', { type: 'status', payload: { version: '1' } }],
+    ['a status without config', { type: 'status', payload: { version: '1', project: null } }],
+    [
+      'a status with a step limit over 25',
+      {
+        type: 'status',
+        payload: { version: '1', project: null, config: { ...config, stepLimit: 26 } }
+      }
+    ],
+    [
+      'a run_exit in an unknown status',
+      {
+        type: 'run_exit',
+        payload: {
+          runId: 'r',
+          argv: [],
+          status: 'crashed',
+          exitCode: null,
+          signal: null,
+          durationMs: 0,
+          output: '',
+          truncated: false
+        }
+      }
+    ],
     [
       'a response with an unknown error code',
       { type: 'response', payload: { ok: false, error: { code: 'nope', message: '' } } }
@@ -130,7 +263,9 @@ describe('server messages', () => {
     ['a client-only type', { type: 'auth', payload: { proof } }],
     ['a challenge without a nonce', { type: 'challenge', payload: { proof } }]
   ])('rejects %s', (_label, partial) => {
-    expect(parseMessage(ServerMessage, raw({ v: 2, id: '1', ...partial }))).toBeNull();
+    expect(
+      parseMessage(ServerMessage, raw({ v: PROTOCOL_VERSION, id: '1', ...partial }))
+    ).toBeNull();
   });
 });
 

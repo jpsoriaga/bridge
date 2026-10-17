@@ -145,17 +145,38 @@ Injected right after the code block it describes, in a closed shadow root, so th
 
 On error (a write failed, the app isn't connected), the card keeps its state and adds a 12px `--danger` line under the header with the reason (`role="alert"`). It never shows a raw code or stack trace.
 
-### Apply all bar
+### Message bar (Apply all, Undo all)
 
-Under the last diff card of a reply with two or more applicable files (pending, readable, changed, not `partial?`). Same card frame with a `--border` edge, holding only a footer row: the hint "Applies each file in order and stops at the first problem." and a primary 32px **Apply all (N)** ("Applying…" while running). If it stops, the hint turns `--warning`: "Stopped at path. Its card says why."
+Under the last diff card of a reply. Same card frame with a `--border` edge, holding only a footer row. **Apply all (N)** (primary 32px, "Applying…") shows with two or more applicable files (pending, readable, changed, not `partial?`), hint "Applies each file in order and stops at the first problem." **Undo all (N)** (secondary, "Undoing…") shows with two or more applied files, hint "Undoes this reply's edits, newest first." If either stops, the hint turns `--warning`: "Stopped at path. Its card says why." With neither, the bar is hidden.
 
 ### READ card
 
 At the end of a reply that asked for files with `@@READ`. Pending-card frame (`--border-strong`). Header: file icon and "The chat asked for N files" (13px/500). Then one row per path (mono 13px, ~25px tall): file icon, path, and on the right either "1,204 chars" (12px muted), "Reading…", or a `danger` badge "blocked · protected file" with the path struck through in `--fg-subtle`. Footer: a hint with the total ("12,345 characters. Bridge puts them in the message box; you press send."), in `--warning` above 30,000 characters ("The chat may turn this into an attachment or cut it off."), and **Send these files** (primary `.btn-lg`). After sending, the hint says "Added to the message box. Review it and press send." and the button reads **Send again**.
 
-### Command card
+### Mode tag on cards
 
-A dashed `--border-strong` edge with a 12px radius and 12px 16px padding. It shows `$ npm run build` in mono 13px with a **Run & send output** button (secondary) on the right. While running, the button says "Running…" and is disabled. Afterwards the card shows the exit status: "Passed" in `--success` or "Failed (exit 1)" in `--danger`.
+Pending diff cards and RUN cards start their footer hint with the app's mode ("Manual", "Auto-apply", "Full auto") in 12px/500 `--fg`, then a hairline `--border-strong` divider and the hint. Applied cards say **Applied** or **Auto-applied** in `--success`. A diff card Auto-apply left for a click because the file is gated says, in `--warning`: "This file can change what commands do, so it needs your click in every mode. Review it, then Apply."
+
+### RUN card (command)
+
+One per `@@RUN`, after the READ card. A **dashed** `--border-strong` edge (the only dashed line in the system), 12px radius. Header: `$` in `--fg-subtle` mono, the command in mono 13px `--fg` (truncated, full text in the tooltip), a badge, the duration (12px muted) after a run, and **Hide output / Show output** on the right.
+
+| Badge         | Tone      | When                                       |
+| ------------- | --------- | ------------------------------------------ |
+| `allowlisted` | neutral   | Matches the app's allowlist                |
+| `not allowed` | `danger`  | Not on the allowlist, or uses shell syntax |
+| `running`     | `warning` | Running                                    |
+| `exit 0`      | `success` | Exited 0                                   |
+| `exit N`      | `danger`  | Exited non-zero                            |
+| `timed out`   | `danger`  | Killed at the timeout                      |
+| `cancelled`   | neutral   | Cancelled (Stop or Cancel)                 |
+| `failed`      | `danger`  | Couldn't start                             |
+
+Body: the output, mono 13px/21px, wrapping, scrolling past 480px, the last 400 lines with a "Show all N lines" row above them. Footer (`--bg-hover`): the mode tag and a hint, then **Cancel** (`.btn-danger`) while running, else **Send output** (primary) once there's a result and **Run** (primary before a run, secondary "Run again" after). A command that isn't allowed has no Run; its hint says "Add it to the allowlist in the Bridge app." Shell syntax gets the parser's reason in `--danger`.
+
+### Full auto chip (page)
+
+Fixed to the page's bottom-right (16px from the right, 96px up, clear of the composer), in its own closed shadow root. A pill: 1px `--border`, `--bg`, `--radius-full`, no shadow. Inside: an 8px dot (`success` while running, `warning` paused, idle otherwise), **Full auto** (12px/600), the counter `3 / 10` (tabular), the state in `--fg-muted` ("Waiting for the reply", "Paused · step limit", "On"), and a 28px pill **Stop** (`.btn-danger`). Shown while the session is active in Full auto, or while a run isn't idle.
 
 ### Mode switch (`.segmented`, `role="radiogroup"`)
 
@@ -191,7 +212,7 @@ On the desktop's Extension section: the six digits in Geist Mono 24px/600 with a
 
 An 8px dot and 13px `--fg` text with an 8px gap. Rows are spaced 8px apart, newest first. Dot tones: `success` for applied or passed, `warning` for waiting on review, `danger` for failed or blocked, and idle for informational events ("Sent 3 files to chat") and undone writes. Show about the last 20 rows; older ones scroll.
 
-Classes `.activity`, `.activity-row`, `.activity-text`, `.activity-path` and `.activity-meta` live in `styles.css`. The text is two lines: the path in mono (truncated, full path in the tooltip) and a 12px `--fg-muted` meta line, "07:50 PM · Modified", "07:50 PM · Modified · via chat" (applied from a diff card) or "07:50 PM · Blocked read · protected file" (reasons from `FILE_ERROR_LABELS`). Writes that can be undone end with a secondary **Undo** button. An undone row (`data-undone="true"`) strikes the path through in `--fg-subtle` and says "· undone". The section label row has **Undo last** on the right.
+Classes `.activity`, `.activity-row`, `.activity-text`, `.activity-path` and `.activity-meta` live in `styles.css`. The text is two lines: the path in mono (truncated, full path in the tooltip) and a 12px `--fg-muted` meta line, "07:50 PM · Modified", "07:50 PM · Modified · via chat" (applied from a diff card) or "07:50 PM · Blocked read · protected file" (reasons from `FILE_ERROR_LABELS`). Writes that can be undone end with a secondary **Undo** button. Automatic writes say "· auto" instead of "· via chat". Command rows show the command in mono and "Passed · 1.2s" (`success`), "Exit 1 · 1.2s" (`danger`), "Timed out" or "Cancelled". A write left for a click reads "Left for a click · gated file". A Full auto run's rows (its steps, writes and commands) sit together under "Full auto run · N messages sent" (12px/500 muted), indented 12px with a 1px `--border-strong` line on the left. An undone row (`data-undone="true"`) strikes the path through in `--fg-subtle` and says "· undone". The section label row has **Undo last** on the right.
 
 ### Project section (desktop)
 
@@ -225,7 +246,22 @@ Phase 5. Same rows as the Send files tree, without checkboxes. A `new` tag in `-
 
 ### Stop button
 
-`.btn-danger` at 32px, in the panel footer on the right. It's only shown while a session is running. A click stops the full-auto loop immediately, and the label changes to "Stopping…" until the current step ends. The step counter to its left reads "Step N of M".
+`.btn-danger` at 32px, in the side panel's sticky footer and the app's loop bar, on the right, shown only while a Full auto run is going (not idle or stopped). A click stops the loop and its command at once; in the app the label reads "Stopping…" until the loop reports back. The step counter to its left reads "Step N of M" (12px muted, tabular).
+
+### Side panel: Mode, Full auto, Command
+
+- **Mode**: a read-only badge (`.mode-badge`, 1px `--border-strong`, 6px radius, 13px/600; `warning` text and border for Full auto) and the mode description plus "Change the mode in the Bridge app."
+- **Full auto** (in Full auto, or while a run exists): a status line with a dot and the state and `step / limit`. Paused: the reason in the bordered warning notice, then **Resume** (primary), or **Continue for N more** at the step limit. Stopped: "Stopped. Nothing was reverted; undo is still available." and **Allow Full auto again** (secondary).
+- **Command** (while one runs, or after one ran): label row with **Cancel** (`.btn-danger`) while running; `$ command` in mono; "Running…", "Passed" or "Failed (exit N)" (`--danger`); the last 200 lines in a `--bg-muted` mono 12px box, 240px tall at most.
+
+### Desktop: Mode, Commands, loop bar, toast
+
+- **Mode**: the segmented switch. Choosing Full auto opens the native confirm dialog first. Under the description, in Full auto, a `--warning` hint that it sends messages and runs model-written code and turns off on restart, End session, unpair or project switch; then the loop status line (dot, state, "step N of M") and the pause reason in `--warning`.
+- **Running** (while a command runs): label row with **Cancel**, `$ command` in mono, live output in a `--bg-muted` mono box (320px).
+- **Commands**: before the project's list is confirmed, the suggestions as checkbox rows (mono) and **Allow N commands** (primary). After: the entries with **Remove**, a mono input with **Add** (rejects shell syntax with the parser's reason). Then the command timeout (seconds), the step limit (messages) and "Pause Full auto when a command fails" with its hint.
+- **Settings** gains **Gated files** and **Hidden from commands** in the Protected files layout (defaults in mono, user entries with Remove, input and Add).
+- **Loop bar**: above the footer while a run is going: the step counter and Stop.
+- **Toast**: above the loop bar for 4s after Bridge applies edits on its own: a `success` dot, "Auto-applied path" in mono, and "Undo it in Activity." in muted 12px. 1px `--border`, `--radius-md`, no shadow.
 
 ### Logo
 

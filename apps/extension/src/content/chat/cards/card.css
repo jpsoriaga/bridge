@@ -1,4 +1,5 @@
-/* Diff, READ and Apply-all cards, inside each card's shadow root. Spec: DESIGN.md. */
+/* Diff, READ, RUN and message-bar cards and the Full auto chip, inside each one's shadow
+   root. Spec: DESIGN.md. */
 
 /* The page's own styles can reach the host element, so reset it with !important, which
    beats the page from inside the shadow root. */
@@ -6,6 +7,18 @@
   all: initial !important;
   display: block !important;
   margin: var(--space-3) 0 !important;
+}
+/* The Full auto chip sits in the page's corner. Set here: inline styles on the host can't
+   beat the reset above. */
+:host([data-bridge-host='loop-chip']) {
+  position: fixed !important;
+  right: 16px !important;
+  bottom: 96px !important;
+  z-index: 2147483646 !important;
+  margin: 0 !important;
+}
+:host([hidden]) {
+  display: none !important;
 }
 
 * {
@@ -218,6 +231,17 @@
 .hint[data-tone='warning'] {
   color: var(--warning);
 }
+.hint[data-tone='danger'] {
+  color: var(--danger);
+}
+/* The app's mode, at the start of a hint line. */
+.mode {
+  margin-right: var(--space-2);
+  padding-right: var(--space-2);
+  border-right: 1px solid var(--border-strong);
+  color: var(--fg);
+  font-weight: 500;
+}
 
 .btn {
   display: inline-flex;
@@ -265,6 +289,14 @@
 .btn-primary:disabled:hover {
   opacity: 0.4;
 }
+.btn-danger {
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+  color: var(--danger);
+}
+.btn-danger:hover {
+  background: var(--danger-bg);
+  border-color: var(--danger);
+}
 :focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
@@ -293,6 +325,70 @@
 
 .card[data-kind='bar'] .footer {
   border-top: 0;
+}
+
+/* RUN card: the one dashed edge in the system. */
+.card[data-kind='run'] {
+  border-style: dashed;
+}
+.prompt {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--fg-subtle);
+}
+.command {
+  color: var(--fg);
+}
+.body.output .row {
+  white-space: pre-wrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.body.output .more {
+  border-top: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Full auto chip, fixed to the page's corner. */
+.chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  -webkit-font-smoothing: antialiased;
+}
+.chip .btn {
+  height: 28px;
+  border-radius: var(--radius-full);
+}
+.chip-label {
+  font-weight: 600;
+}
+.chip-count {
+  font-variant-numeric: tabular-nums;
+}
+.chip-state {
+  color: var(--fg-muted);
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: var(--radius-full);
+  background: var(--idle);
+}
+.dot[data-tone='success'] {
+  background: var(--success);
+}
+.dot[data-tone='warning'] {
+  background: var(--warning);
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -36,7 +36,7 @@ describe('ProjectService', () => {
     for (const request of [
       req('tree', {}),
       req('read', { path: 'a.txt' }),
-      req('write', { path: 'a.txt', content: 'x' }),
+      req('write', { path: 'a.txt', content: 'x', trigger: 'click' }),
       req('undo', { opId: 'x' })
     ]) {
       expect(await service.handle(request)).toMatchObject({
@@ -120,7 +120,7 @@ describe('ProjectService', () => {
 
   it('keeps backups in userData, never in the project', async () => {
     await service.open(project.root);
-    await service.handle(req('write', { path: 'a.txt', content: 'x' }));
+    await service.handle(req('write', { path: 'a.txt', content: 'x', trigger: 'click' }));
     expect(readFileSync(join(project.root, 'a.txt'), 'utf8')).toBe('x');
     expect(readdirSync(project.root)).toEqual(['a.txt']);
     expect(readdirSync(join(userData, 'backups'))).toHaveLength(1);
@@ -153,7 +153,9 @@ describe('ProjectService', () => {
 
   it('lists writes in the activity feed and marks them undone', async () => {
     await service.open(project.root);
-    const write = await service.handle(req('write', { path: 'a.txt', content: 'x' }));
+    const write = await service.handle(
+      req('write', { path: 'a.txt', content: 'x', trigger: 'click' })
+    );
     if (!write.ok) throw new Error('write failed');
     const { opId } = write.result as { opId: string };
     expect(service.activity()[0]).toMatchObject({
@@ -170,8 +172,10 @@ describe('ProjectService', () => {
 
   it('marks writes applied from the chat, and keeps the mark across a reopen', async () => {
     await service.open(project.root);
-    await service.handle(req('write', { path: 'chat.txt', content: 'x', source: 'chat' }));
-    await service.handle(req('write', { path: 'tester.txt', content: 'x' }));
+    await service.handle(
+      req('write', { path: 'chat.txt', content: 'x', source: 'chat', trigger: 'click' })
+    );
+    await service.handle(req('write', { path: 'tester.txt', content: 'x', trigger: 'click' }));
     const sources = () =>
       Object.fromEntries(service.activity().map((entry) => [entry.path, entry.source]));
     expect(sources()).toEqual({ 'chat.txt': 'chat', 'tester.txt': undefined });
@@ -183,7 +187,7 @@ describe('ProjectService', () => {
     await service.open(project.root);
     const results = await Promise.all(
       Array.from({ length: 5 }, () =>
-        service.handle(req('write', { path: 'same.txt', content: 'x' }))
+        service.handle(req('write', { path: 'same.txt', content: 'x', trigger: 'click' }))
       )
     );
     expect(results.filter((r) => r.ok)).toHaveLength(1);
