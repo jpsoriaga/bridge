@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { COMPOSER_WARN_CHARS, type ProjectInfo } from '@bridge/shared';
 import type { ChatPanelState, SessionPreview, SessionStartResult } from '../messages';
-import { formatCount, request, sessionErrorText } from './request';
+import { formatCount, panelWindowId, request, sessionErrorText } from './request';
 import { SendFiles } from './SendFiles';
 
 const shortId = (id: string) => (id.length > 8 ? `${id.slice(0, 8)}…` : id);
@@ -12,7 +12,8 @@ function usePreview(enabled: boolean, project: ProjectInfo | null) {
   useEffect(() => {
     if (!enabled) return;
     let live = true;
-    void request<SessionPreview>({ type: 'session-preview' })
+    void panelWindowId()
+      .then((windowId) => request<SessionPreview>({ type: 'session-preview', windowId }))
       .then((result) => live && setPreview(result))
       .catch(() => live && setPreview({ ok: false, error: 'failed' }));
     return () => {
@@ -30,7 +31,8 @@ function StartSession({ project, restart }: { project: ProjectInfo | null; resta
   const start = () => {
     setBusy(true);
     setError(null);
-    void request<SessionStartResult>({ type: 'session-start' })
+    void panelWindowId()
+      .then((windowId) => request<SessionStartResult>({ type: 'session-start', windowId }))
       .then((result) => {
         if (!result.ok) setError(sessionErrorText(result.error));
       })
@@ -127,7 +129,9 @@ export function SessionSection({
 
   const end = () => {
     setEnding(true);
-    void request({ type: 'session-end' }).finally(() => setEnding(false));
+    void panelWindowId()
+      .then((windowId) => request({ type: 'session-end', windowId }))
+      .finally(() => setEnding(false));
   };
 
   return (

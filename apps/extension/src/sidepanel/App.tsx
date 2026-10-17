@@ -9,12 +9,13 @@ import {
   SIDE_PANEL_PORT,
   type ChatPanelState,
   type PairResult,
+  type PanelHello,
   type StatusUpdate,
   type WorkerRequest
 } from '../messages';
 import { DevFileTester } from './DevFileTester';
 import { Logo } from './Logo';
-import { request } from './request';
+import { panelWindowId, request } from './request';
 import { SessionSection } from './SessionSection';
 
 const NO_CHAT: ChatPanelState = { tab: null, session: null };
@@ -32,6 +33,9 @@ function useWorkerStatus(): StatusUpdate | null {
   useEffect(() => {
     const port = chrome.runtime.connect({ name: SIDE_PANEL_PORT });
     port.onMessage.addListener((message: StatusUpdate) => setUpdate(message));
+    void panelWindowId().then((windowId) =>
+      port.postMessage({ type: 'panel-window', windowId } satisfies PanelHello)
+    );
     return () => port.disconnect();
   }, []);
   return update;

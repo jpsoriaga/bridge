@@ -7,7 +7,7 @@ import {
   type TreeResult
 } from '@bridge/shared';
 import { MAX_FILES_PER_SEND, type RequestOutcome, type SendFilesResult } from '../messages';
-import { formatCount, request, sessionErrorText } from './request';
+import { formatCount, panelWindowId, request, sessionErrorText } from './request';
 
 /** Marker, fence and blank lines around each file in `@@CONTEXT` format. */
 const PER_FILE_OVERHEAD = 40;
@@ -107,7 +107,10 @@ export function SendFiles({ project, version }: { project: ProjectInfo; version:
   const send = () => {
     setBusy(true);
     setResult(null);
-    void request<SendFilesResult>({ type: 'send-files', paths: [...selected] })
+    void panelWindowId()
+      .then((windowId) =>
+        request<SendFilesResult>({ type: 'send-files', paths: [...selected], windowId })
+      )
       .then((outcome) => {
         if (!outcome.ok) {
           setResult({ text: sessionErrorText(outcome.error), tone: 'danger' });

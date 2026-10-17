@@ -5,6 +5,14 @@ export function request<R>(message: WorkerRequest): Promise<R> {
   return chrome.runtime.sendMessage<WorkerRequest, R>(message);
 }
 
+let windowId: Promise<number> | null = null;
+
+/** The window this side panel belongs to. Its active tab is the chat the panel acts on. */
+export function panelWindowId(): Promise<number> {
+  windowId ??= chrome.windows.getCurrent().then((w) => w.id ?? chrome.windows.WINDOW_ID_NONE);
+  return windowId;
+}
+
 export const formatCount = (n: number) => n.toLocaleString('en-US');
 
 const SESSION_ERRORS: Record<SessionError, string> = {

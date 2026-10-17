@@ -38,6 +38,12 @@ export const CardRecord = z.strictObject({
 });
 export type CardRecord = z.infer<typeof CardRecord>;
 
+const WindowId = z.number().int().nonnegative();
+
+/** The side panel's first message on its port: which window it belongs to. */
+export const PanelHello = z.strictObject({ type: z.literal('panel-window'), windowId: WindowId });
+export type PanelHello = z.infer<typeof PanelHello>;
+
 export const ConversationId = z.string().regex(/^[A-Za-z0-9-]{8,64}$/);
 export const LayoutHealth = z.enum(['ok', 'unknown']);
 
@@ -49,12 +55,14 @@ export const WorkerRequest = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('retry') }),
 
   // Side panel: the chat session in the active tab.
-  z.strictObject({ type: z.literal('session-preview') }),
-  z.strictObject({ type: z.literal('session-start') }),
-  z.strictObject({ type: z.literal('session-end') }),
+  // `windowId`: the side panel's own window. Its active tab is the chat it acts on.
+  z.strictObject({ type: z.literal('session-preview'), windowId: WindowId }),
+  z.strictObject({ type: z.literal('session-start'), windowId: WindowId }),
+  z.strictObject({ type: z.literal('session-end'), windowId: WindowId }),
   z.strictObject({ type: z.literal('get-tree') }),
   z.strictObject({
     type: z.literal('send-files'),
+    windowId: WindowId,
     paths: z.array(ChatPath).min(1).max(MAX_FILES_PER_SEND)
   }),
 

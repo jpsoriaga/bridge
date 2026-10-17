@@ -6,6 +6,7 @@ import {
   type FileErrorCode
 } from '@bridge/shared';
 import {
+  PanelHello,
   SIDE_PANEL_PORT,
   TabMessage,
   WorkerRequest,
@@ -97,9 +98,13 @@ chrome.alarms.onAlarm.addListener(({ name }) => {
 
 const extensionPage = chrome.runtime.getURL('');
 
-/** The active tab in the focused window: the one the side panel is next to. */
-async function activeTabId(): Promise<number | null> {
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+/**
+ * The active tab in the side panel's own window: the one the panel sits next to. Not the
+ * last focused window, which may be DevTools or another browser window.
+ */
+async function activeTabId(windowId: number | null): Promise<number | null> {
+  if (windowId === null) return null;
+  const [tab] = await chrome.tabs.query({ active: true, windowId }).catch(() => []);
   return tab?.id ?? null;
 }
 
@@ -114,12 +119,12 @@ async function insertIntoChat(tabId: number, text: string): Promise<InsertResult
 }
 
 /** The chatgpt.com tab next to the side panel, if Bridge can use it. */
-async function chatTab(): Promise<
-  { ok: true; tabId: number } | { ok: false; error: SessionError }
-> {
+async function chatTab(
+  windowId: number
+): Promise<{ ok: true; tabId: number } | { ok: false; error: SessionError }> {
   if (connection.current !== 'connected') return { ok: false, error: 'not-connected' };
   if (!connection.project) return { ok: false, error: 'no-project' };
-  const tabId = await activeTabId();
+  const tabId = await activeTabId(windowId);
   const tab = tabId === null ? null : await sessions.tab(tabId);
   if (tabId === null || !tab) return { ok: false, error: 'no-chat-tab' };
   if (tab.layout !== 'ok') return { ok: false, error: 'layout-unknown' };
@@ -144,16 +149,16 @@ async function sessionPrompt(): Promise<
   };
 }
 
-async function previewSession(): Promise<SessionPreview> {
-  const tab = await chatTab();
+async function previewSession(windowId: number): Promise<SessionPreview> {
+  const tab = await chatTab(windowId);
   if (!tab.ok) return tab;
   const prompt = await sessionPrompt();
   if (!prompt.ok) return prompt;
   return { ok: true, chars: prompt.text.length, total: prompt.total, shown: prompt.shown };
 }
 
-async function startSession(): Promise<SessionStartResult> {
-  const tab = await chatTab();
+async function startSession(windowId: number): Promise<SessionStartResult> {
+  const tab = await chatTab(windowId);
   if (!tab.ok) return tab;
   const prompt = await sessionPrompt();
   if (!prompt.ok) return prompt;
@@ -164,15 +169,15 @@ async function startSession(): Promise<SessionStartResult> {
   return { ok: true, chars: inserted.chars };
 }
 
-async function endSession(): Promise<void> {
-  const tabId = await activeTabId();
+async function endSession(windowId: number): Promise<void> {
+  const tabId = await activeTabId(windowId);
   if (tabId === null) return;
   await sessions.end(tabId);
   void tellTab(tabId, { type: 'session-changed', session: 'ended' });
 }
 
-async function sendFiles(paths: string[]): Promise<SendFilesResult> {
-  const tab = await chatTab();
+async function sendFiles(paths: string[], windowId: number): Promise<SendFilesResult> {
+  const tab = await chatTab(windowId);
   if (!tab.ok) return tab;
   if (!(await sessions.isActive(tab.tabId))) return { ok: false, error: 'no-session' };
   const files: { path: string; content: string }[] = [];
@@ -271,16 +276,16 @@ async function handlePanel(
       await connection.retry();
       return null;
     case 'session-preview':
-      return previewSession();
+      return previewSession(request.windowId);
     case 'session-start':
-      return startSession();
+      return startSession(request.windowId);
     case 'session-end':
-      await endSession();
+      await endSession(request.windowId);
       return null;
     case 'get-tree':
       return connection.request('tree', {});
     case 'send-files':
-      return sendFiles(request.paths);
+      return sendFiles(request.paths, request.windowId);
     case 'dev-file': {
       // The side panel's test field only exists in dev builds, and so does this path.
       if (!import.meta.env.DEV) return undefined;
@@ -315,9 +320,17 @@ chrome.runtime.onConnect.addListener((port) => {
     return;
   }
   let version = 0;
+  // Until the panel says which window it's in, it sees no chat tab.
+  let windowId: number | null = null;
+  port.onMessage.addListener((raw: unknown) => {
+    const hello = PanelHello.safeParse(raw);
+    if (!hello.success) return;
+    windowId = hello.data.windowId;
+    push();
+  });
   const push = () => {
     const mine = ++version;
-    void activeTabId()
+    void activeTabId(windowId)
       .then((tabId) => sessions.panelState(tabId))
       .then((chat) => {
         // A slower, older push must not overwrite a newer one.

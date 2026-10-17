@@ -139,7 +139,13 @@ async function waitFor(what, fn, timeout = 10_000) {
   const cdp = await ctx.newCDPSession(chat);
   await chat.goto('https://chatgpt.com/');
   await chat.bringToFront();
-  const ask = (message) => panel.evaluate((m) => chrome.runtime.sendMessage(m), message);
+  // Like the real panel, session requests name the panel's window; its active tab is the chat.
+  const ask = (message) =>
+    panel.evaluate(async (m) => {
+      const { id } = await chrome.windows.getCurrent();
+      const withWindow = m.type.startsWith('session-') || m.type === 'send-files';
+      return chrome.runtime.sendMessage(withWindow ? { ...m, windowId: id } : m);
+    }, message);
   const composerText = () => chat.locator('#prompt-textarea').innerText();
   const clearComposer = () =>
     chat.evaluate(() => (document.getElementById('prompt-textarea').textContent = ''));
@@ -298,9 +304,13 @@ async function waitFor(what, fn, timeout = 10_000) {
       new Promise((resolve) => {
         const port = chrome.runtime.connect({ name: 'sidepanel' });
         port.onMessage.addListener((m) => {
+          if (!m.chat.session) return;
           port.disconnect();
           resolve(m.chat);
         });
+        void chrome.windows
+          .getCurrent()
+          .then(({ id }) => port.postMessage({ type: 'panel-window', windowId: id }));
       })
   );
   step('panel state: ' + JSON.stringify(panelState.session));
