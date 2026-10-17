@@ -466,8 +466,11 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 // The app's mode and allowlist, and the connection itself, are mirrored in every chat tab.
-connection.onConfig((config) => {
+connection.onConfig(() => {
   void chatTabIds().then((ids) => {
+    // The config as it is now, not as it was when this push started: several changes in a
+    // row (a command starting and ending) must not land in the tab out of order.
+    const config = connection.config;
     for (const id of ids) void tellTab(id, { type: 'bridge-config', config });
   });
 });

@@ -454,13 +454,22 @@ async function waitFor(what, fn, timeout = 10_000) {
     ])
   );
   const sendTwo = await waitFor(
-    'second auto-send',
+    'second auto-send (diagnostics on failure)',
     async () => {
       const all = await sends();
       return all.length > sentBefore + 1 ? all[sentBefore + 1] : null;
     },
     30_000
-  );
+  ).catch(async (error) => {
+    const chip = await cardText(cdp, 'loop-chip', 0).catch(() => '(no chip)');
+    const runs = await Promise.all(
+      (await hosts(cdp, 'run-card')).map((_, i) => cardText(cdp, 'run-card', i))
+    );
+    console.error('chip:', chip);
+    console.error('run cards:', runs.slice(-2));
+    console.error('value.ts:', fs.readFileSync(file('src/value.ts'), 'utf8'));
+    throw error;
+  });
   if (!fs.readFileSync(file('src/value.ts'), 'utf8').includes('fixed')) {
     throw new Error('Full auto did not apply the edit');
   }
