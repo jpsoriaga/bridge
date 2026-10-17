@@ -33,5 +33,8 @@ chrome.runtime.onMessage.addListener((raw: unknown, sender, sendResponse) => {
     case 'loop-control':
       controller.loopControl(message.action);
       return false;
+    case 'diagnose':
+      sendResponse(controller.diagnose());
+      return false;
   }
 });

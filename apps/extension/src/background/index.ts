@@ -344,6 +344,13 @@ async function handlePanel(
       if (tabId !== null) void tellTab(tabId, { type: 'loop-control', action: request.action });
       return null;
     }
+    case 'page-diagnostics': {
+      // The side panel's diagnostics button exists only in dev builds, and so does this.
+      if (!import.meta.env.DEV) return undefined;
+      const tabId = await activeTabId(request.windowId);
+      const report = tabId === null ? undefined : await tellTab(tabId, { type: 'diagnose' });
+      return report ?? { error: 'Bridge isn’t running in this tab. Reload it and try again.' };
+    }
     case 'run-cancel': {
       const running = connection.config?.running;
       if (running) await connection.request('run_cancel', { runId: running.runId });

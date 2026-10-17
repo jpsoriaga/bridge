@@ -101,6 +101,8 @@ export const WorkerRequest = z.discriminatedUnion('type', [
   }),
   // Cancels the command running now, whoever started it.
   z.strictObject({ type: z.literal('run-cancel') }),
+  // Dev builds: what the page script sees on the panel's active tab, to fix selectors.
+  z.strictObject({ type: z.literal('page-diagnostics'), windowId: WindowId }),
 
   // Content script on chatgpt.com.
   z.strictObject({
@@ -177,6 +179,7 @@ export const EXTENSION_PAGE_REQUESTS: ReadonlySet<WorkerRequest['type']> = new S
   'send-files',
   'loop-control',
   'run-cancel',
+  'page-diagnostics',
   'dev-file'
 ]);
 
@@ -194,7 +197,8 @@ export const TabMessage = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('loop-control'),
     action: z.enum(['stop', 'resume', 'continue'])
-  })
+  }),
+  z.strictObject({ type: z.literal('diagnose') })
 ]);
 export type TabMessage = z.infer<typeof TabMessage>;
 

@@ -18,8 +18,12 @@ import { blockKey, contentHash } from './keys';
 import { FullAutoLoop, type EditHold, type EditSummary, type ReplyActions } from './loop';
 import { livePage } from './page';
 import {
+  all,
   assistantMessages,
   checkLayout,
+  closest,
+  first,
+  SELECTORS,
   conversationIdFrom,
   findConversation,
   isMessageComplete,
@@ -170,6 +174,79 @@ export class ChatController {
       return;
     }
     this.deliver(card, runId, event);
+  }
+
+  /**
+   * What this script sees on the page, for fixing selectors when chatgpt.com changes. Tag
+   * names, test ids, labels and counts only: no message text beyond the last reply's
+   * Bridge markers.
+   */
+  diagnose(): Record<string, unknown> {
+    const messages = this.observed ? assistantMessages(this.observed) : [];
+    const last = messages.at(-1) ?? null;
+    const describe = (el: Element) =>
+      el.tagName.toLowerCase() +
+      (el.getAttribute('data-testid') ? `[data-testid="${el.getAttribute('data-testid')}"]` : '') +
+      (el.id ? `#${el.id}` : '');
+    const ancestors: string[] = [];
+    for (
+      let el = last;
+      el && el !== document.body && ancestors.length < 12;
+      el = el.parentElement
+    ) {
+      ancestors.push(describe(el));
+    }
+    const turn = last ? closest(last, SELECTORS.turn) : null;
+    const lastText = last ? messageToText(last).text : '';
+    const parsed = parseChat(lastText);
+    const match = (selectors: readonly string[]) =>
+      selectors.map((s) => `${s} → ${document.querySelectorAll(s).length}`);
+    return {
+      url: location.pathname,
+      conversationId: this.conversationId,
+      session: this.session,
+      mode: this.config?.mode ?? null,
+      layout: this.layout,
+      conversationFound: this.observed !== null,
+      assistantMessages: messages.length,
+      views: this.views.size,
+      history: this.history?.size ?? null,
+      last: last && {
+        id: messageIdOf(last, messages.length - 1),
+        complete: isMessageComplete(last),
+        ancestors,
+        turn: turn ? describe(turn) : null,
+        turnButtons: turn
+          ? [...turn.querySelectorAll('button')]
+              .slice(0, 15)
+              .map(
+                (b) =>
+                  `${b.getAttribute('data-testid') ?? ''}|${b.getAttribute('aria-label') ?? ''}`
+              )
+          : [],
+        markers: lastText
+          .split('\n')
+          .filter((line) => line.includes('@@'))
+          .slice(0, 10),
+        parsed: {
+          edits: parsed.edits.map((e) => e.path),
+          reads: parsed.reads,
+          runs: parsed.runs,
+          done: parsed.done
+        }
+      },
+      selectors: {
+        turn: match(SELECTORS.turn),
+        turnActions: match(SELECTORS.turnActions),
+        streaming: match(SELECTORS.streaming),
+        stopButton: match(SELECTORS.stopButton),
+        composer: match(SELECTORS.composer),
+        sendButton: match(SELECTORS.sendButton),
+        userMessage: match(SELECTORS.userMessage)
+      },
+      anyTurnActions: first(document, SELECTORS.turnActions) !== null,
+      bridgeHosts: all(document, [`[data-bridge-host]`]).length
+    };
   }
 
   /** Stop, Resume or Continue from the side panel or the app. */

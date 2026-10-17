@@ -16,6 +16,7 @@ import {
   type WorkerRequest
 } from '../messages';
 import { DevFileTester } from './DevFileTester';
+import { PageDiagnostics } from './PageDiagnostics';
 import {
   appendOutput,
   CommandSection,
@@ -191,6 +192,7 @@ function Body({
           <SessionSection chat={chat} project={project} />
           <LoopSection config={config} loop={chat.loop} />
           <CommandSection config={config} live={live} />
+          {import.meta.env.DEV && <PageDiagnostics />}
           {import.meta.env.DEV && <DevFileTester />}
           <section>
             <p className="label">Desktop app</p>
