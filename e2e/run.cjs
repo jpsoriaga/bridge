@@ -7,6 +7,21 @@ const APP_DATA = tempDir('app-data');
 const step = (m) => console.log('•', m);
 const desktopStatus = (win) => win.locator('header .status');
 
+/** Runs in the service worker: the pairing key from its IndexedDB, or null. */
+function readIdbKey() {
+  return new Promise((resolve, reject) => {
+    const open = indexedDB.open('bridge-keys');
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const db = open.result;
+      if (!db.objectStoreNames.contains('keys')) return resolve(null);
+      const get = db.transaction('keys').objectStore('keys').get('tokenHash');
+      get.onsuccess = () => resolve(get.result ?? null);
+      get.onerror = () => reject(get.error);
+    };
+  });
+}
+
 (async () => {
   let { app, win } = await launchApp(APP_DATA);
   await desktopStatus(win).filter({ hasText: 'Not paired' }).waitFor();
@@ -48,13 +63,17 @@ const desktopStatus = (win) => win.locator('header .status');
     `paired: panel=${await panelStatus.innerText()} desktop=${await desktopStatus(win).innerText()}`
   );
 
-  // The extension keeps only the token's hash; the desktop file is encrypted.
+  // The extension keeps only the token's hash, in the worker's IndexedDB and not in
+  // chrome.storage.local (which content scripts can read); the desktop file is encrypted.
   const stored = await sw.evaluate(() => chrome.storage.local.get(null));
   step(`extension storage keys: ${Object.keys(stored).sort().join(',')}`);
-  if ('token' in stored || !/^[0-9a-f]{64}$/.test(stored.tokenHash)) throw new Error('bad storage');
+  if ('token' in stored || 'tokenHash' in stored) throw new Error('key in chrome.storage');
+  const tokenHash = await sw.evaluate(readIdbKey);
+  if (!/^[0-9a-f]{64}$/.test(tokenHash)) throw new Error('no key in IndexedDB');
+  step('key is in the worker IndexedDB only');
   const pairingFile = fs.readFileSync(path.join(APP_DATA, 'pairing.json'), 'utf8');
   step(
-    `pairing.json: encrypted=${JSON.parse(pairingFile).encrypted} plainKey=${pairingFile.includes(stored.tokenHash)}`
+    `pairing.json: encrypted=${JSON.parse(pairingFile).encrypted} plainKey=${pairingFile.includes(tokenHash)}`
   );
   const alarms = await sw.evaluate(() => chrome.alarms.getAll());
   step(`alarms while connected: ${alarms.length}`);

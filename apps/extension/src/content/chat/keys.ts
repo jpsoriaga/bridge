@@ -6,15 +6,16 @@ export async function contentHash(path: string, content: string): Promise<string
 }
 
 /**
- * Identifies one `@@FILE` block across re-renders and reloads:
- * `conversationId:messageId:blockIndex:contentHash`. A regenerated or edited reply gets a
- * new message id or new content, so it never inherits an old block's Applied state.
+ * Identifies one card across re-renders and reloads:
+ * `conversationId:messageId:slot:contentHash`, where the slot is a `@@FILE` block's index
+ * or `read` for the READ card. A regenerated or edited reply gets a new message id or new
+ * content, so it never inherits an old card's state.
  */
 export function blockKey(
   conversationId: string,
   messageId: string,
-  blockIndex: number,
+  slot: number | 'read',
   hash: string
 ): string {
-  return `${conversationId}:${messageId}:${blockIndex}:${hash}`;
+  return `${conversationId}:${messageId}:${slot}:${hash}`;
 }

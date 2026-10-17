@@ -117,6 +117,12 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [x] `e2e/chat.cjs`: stand-in chatgpt.com from the fixtures, real app and extension build: start session, apply, undo, Apply all, READ send, conflict, reload, regenerate, end session
 - [ ] Manual run on the real chatgpt.com (README "Use it in the chat"); confirm the live page's CSP allows the extension fonts
 
+### Phase 4 follow-ups
+
+- [x] Pairing key moved from `chrome.storage.local` to the worker's IndexedDB; migrated once and deleted from storage. Test: the content script's import graph can't reach it
+- [x] Card fonts on their own `web_accessible_resources` entry with `use_dynamic_url: true`; e2e checks Geist loads and the static URL is refused
+- [x] READ card state (`pending` / `sent`) saved by block key like diff cards
+
 ## Phase 5: Modes and undo
 
 - [ ] Mode persisted in desktop and synced to the side panel
@@ -139,7 +145,7 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [ ] Security review against PLAN.md "Security model"
 - [x] Upgrade Electron to a supported major (34 → 44, done at the start of Phase 2)
 - [ ] E2E smoke test: the parser runs in the content script, apply and undo work against a temp project
-- [ ] Keep the pairing key out of content-script reach (`chrome.storage.local` access level, or move it)
+- [x] Keep the pairing key out of content-script reach (moved to the worker's IndexedDB at the start of Phase 5)
 - [ ] electron-builder packages for macOS (dmg, zip) and Windows (nsis)
 - [ ] Extension zip for "Load unpacked" or store upload
 - [ ] README and docs pass. Remove placeholder copy

@@ -5,7 +5,7 @@ import {
   type FileErrorCode,
   type ReadResult
 } from '@bridge/shared';
-import type { RequestOutcome } from '../../../messages';
+import type { ReadCardRecord, RequestOutcome } from '../../../messages';
 import { insertIntoComposer } from '../composer';
 import { failureText, type Ask } from './diff-card';
 import { formatCount, h, icon } from './dom';
@@ -19,17 +19,20 @@ type Entry =
 /**
  * The card under a reply that asked for files with `@@READ`. It reads each file to show
  * what would be sent and how big it is. **Send these files** puts them in the composer in
- * `@@CONTEXT` format; the user still presses send.
+ * `@@CONTEXT` format; the user still presses send. Whether it was sent is saved by block
+ * key, like a diff card's state, so a reload shows "Send again".
  */
 export class ReadCard {
   readonly host: HTMLElement;
   private readonly root: ShadowRoot;
   private entries: Entry[];
   private error: string | null = null;
-  private sent = false;
+  /** The files went into the composer at least once. */
+  sent = false;
   private disabled = false;
 
   constructor(
+    readonly key: string,
     readonly paths: readonly string[],
     private readonly ask: Ask,
     private readonly onSent: (paths: string[]) => void
@@ -38,7 +41,10 @@ export class ReadCard {
     this.entries = paths.map((path) => ({ path, status: 'loading' }));
   }
 
-  async init(): Promise<void> {
+  /** Restores a saved state, then reads each file to show what would be sent. */
+  async init(record?: ReadCardRecord): Promise<void> {
+    this.sent = record?.state === 'sent';
+    if (!record) void this.persist();
     this.render();
     for (const [i, path] of this.paths.entries()) {
       const outcome = await this.ask<RequestOutcome<ReadResult>>({ type: 'chat-read', path });
@@ -94,9 +100,19 @@ export class ReadCard {
     }
     this.sent = true;
     this.error = null;
+    void this.persist();
     const paths = this.entries.flatMap((e) => (e.status === 'ok' ? [e.path] : []));
     this.onSent(paths);
     this.render();
+  }
+
+  private persist(): Promise<unknown> {
+    const record: ReadCardRecord = {
+      card: 'read',
+      state: this.sent ? 'sent' : 'pending',
+      updatedAt: Date.now()
+    };
+    return this.ask({ type: 'card-set', key: this.key, record });
   }
 
   private render(): void {

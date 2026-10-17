@@ -1,5 +1,12 @@
 import { parseChat } from '@bridge/shared';
-import type { CardRecord, ChatSyncReply, SessionState, WorkerRequest } from '../../messages';
+import type {
+  CardRecord,
+  ChatSyncReply,
+  DiffCardRecord,
+  ReadCardRecord,
+  SessionState,
+  WorkerRequest
+} from '../../messages';
 import { messageToText } from './adapter';
 import { ApplyAllBar } from './cards/apply-all';
 import { DiffCard, type Ask } from './cards/diff-card';
@@ -178,22 +185,34 @@ export class ChatController {
         blockKey(conversationId, messageId, i, await contentHash(edit.path, edit.content))
       )
     );
+    const readKey =
+      reads.length > 0
+        ? blockKey(conversationId, messageId, 'read', await contentHash('', reads.join('\n')))
+        : null;
+    const wanted = readKey ? [...keys, readKey] : keys;
     const records =
-      keys.length > 0
-        ? ((await this.ask<Record<string, CardRecord>>({ type: 'card-get', keys })) ?? {})
+      wanted.length > 0
+        ? ((await this.ask<Record<string, CardRecord>>({ type: 'card-get', keys: wanted })) ?? {})
         : {};
+    const diffRecord = (key: string | undefined) => {
+      const record = key ? records[key] : undefined;
+      return record && !('card' in record) ? (record satisfies DiffCardRecord) : undefined;
+    };
 
     const changed = () => view.applyAll?.render();
     view.cards = edits.map((edit, i) => new DiffCard(keys[i] ?? '', edit, this.ask, changed));
     if (view.cards.length >= 2) view.applyAll = new ApplyAllBar(view.cards);
-    for (const [i, card] of view.cards.entries()) void card.init(records[keys[i] ?? '']);
+    for (const [i, card] of view.cards.entries()) void card.init(diffRecord(keys[i]));
     view.applyAll?.render();
 
-    if (reads.length > 0) {
-      view.read = new ReadCard(reads, this.ask, (paths) => {
+    if (readKey) {
+      const record = records[readKey];
+      view.read = new ReadCard(readKey, reads, this.ask, (paths) => {
         void this.ask({ type: 'chat-sent', paths });
       });
-      void view.read.init();
+      void view.read.init(
+        record && 'card' in record ? (record satisfies ReadCardRecord) : undefined
+      );
     }
     return view;
   }

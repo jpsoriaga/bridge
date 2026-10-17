@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { BlockKey, type CardRecord } from '../messages';
+import { BlockKey, type DiffCardRecord } from '../messages';
 import { blockKey, contentHash } from '../content/chat/keys';
 import { CARD_MAX_AGE_MS, CardStore } from './cards';
 import { memoryArea } from './store';
 
 const DAY = 24 * 60 * 60_000;
-const record = (state: CardRecord['state'], updatedAt: number): CardRecord => ({
+const record = (state: DiffCardRecord['state'], updatedAt: number): DiffCardRecord => ({
   state,
   path: 'src/a.ts',
   updatedAt
@@ -31,6 +31,13 @@ describe('block keys', () => {
       blockKey('conv-5678', 'msg-1', 0, hash)
     ]);
     expect(keys.size).toBe(6);
+  });
+
+  it('give the READ card its own slot', async () => {
+    const key = blockKey('conv-1234', 'msg-1', 'read', await contentHash('', 'a.ts\nb.ts'));
+    expect(key).toMatch(/^conv-1234:msg-1:read:[0-9a-f]{16}$/);
+    expect(BlockKey.safeParse(key).success).toBe(true);
+    expect(BlockKey.safeParse('conv-1234:msg-1:run:0000000000000000').success).toBe(false);
   });
 
   it('keep path and content apart in the hash', async () => {
@@ -90,6 +97,12 @@ describe('CardStore', () => {
     await store.set('conv-a:m:2:0000000000000000', record('pending', 0));
     await store.set('conv-a:m:3:0000000000000000', record('rejected', 0));
     await store.set('conv-b:m:0:0000000000000000', record('applied', 0));
+    // A READ card waiting to be sent isn't an edit waiting for review.
+    await store.set('conv-a:m:read:0000000000000000', {
+      card: 'read',
+      state: 'pending',
+      updatedAt: 0
+    });
     expect(await store.counts('conv-a')).toEqual({ applied: 1, pending: 2 });
   });
 });

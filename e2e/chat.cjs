@@ -188,6 +188,27 @@ async function waitFor(what, fn, timeout = 10_000) {
   if (!/src\/greet\.ts.*modified/.test(first)) throw new Error('unexpected card: ' + first);
   if ((await hosts(cdp, 'diff-card')).length !== 1) throw new Error('user message got a card');
 
+  // The card fonts come from web_accessible_resources with use_dynamic_url.
+  const fonts = await waitFor('card fonts', () =>
+    chat.evaluate(async () => {
+      await document.fonts.ready;
+      const faces = [...document.fonts].filter((f) => f.family.includes('Geist'));
+      return faces.length === 2 && faces.every((f) => f.status === 'loaded')
+        ? faces.map((f) => f.family).join(', ')
+        : null;
+    })
+  );
+  const probe = await chat.evaluate(
+    (id) =>
+      fetch(`chrome-extension://${id}/fonts/geist.woff2`).then(
+        () => 'reachable',
+        () => 'blocked'
+      ),
+    extId
+  );
+  if (probe !== 'blocked') throw new Error('static font URL is reachable from the page');
+  step(`fonts loaded from dynamic URLs: ${fonts}; the static URL is ${probe}`);
+
   await clickInCard(chat, cdp, 'diff-card', 0, 'Apply');
   await waitFor('applied', () =>
     fs.readFileSync(file('src/greet.ts'), 'utf8').includes('Hello, ${name}')
@@ -279,6 +300,10 @@ async function waitFor(what, fn, timeout = 10_000) {
     );
   });
   step('reload kept Undone / Applied / Applied');
+  await waitFor('read card restored', async () =>
+    (await cardText(cdp, 'read-card', 0)).includes('Send again')
+  );
+  step('reload kept the READ card as sent ("Send again")');
 
   // 5. Regenerate: same message element, new text → cards rebuilt for the new content.
   await chat.evaluate(() => {

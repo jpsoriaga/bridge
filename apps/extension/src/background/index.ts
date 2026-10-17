@@ -22,7 +22,7 @@ import {
 } from '../messages';
 import { CardStore } from './cards';
 import { Connection, type ConnectionStorage, type ReconnectAlarm } from './connection';
-import { sha256Hex } from './proof';
+import { indexedDbKeyStore, migratingKeyStore } from './key-store';
 import { classifySender, isAllowed, type Sender } from './senders';
 import { Sessions } from './sessions';
 import { chromeArea } from './store';
@@ -32,23 +32,13 @@ chrome.runtime.onInstalled.addListener(() => {
   void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 });
 
+// The pairing key is in the worker's IndexedDB, out of content scripts' reach. Earlier
+// versions kept it in chrome.storage.local; it moves over once and is deleted there.
+const keys = migratingKeyStore(indexedDbKeyStore(indexedDB), chrome.storage.local);
+
 const storage: ConnectionStorage = {
-  async getTokenHash() {
-    const { tokenHash, token } = await chrome.storage.local.get(['tokenHash', 'token']);
-    if (typeof tokenHash === 'string') return tokenHash;
-    // Phase 2 stored the raw token. Swap it for its hash once, then forget it.
-    if (typeof token === 'string') {
-      const hash = await sha256Hex(token);
-      await chrome.storage.local.set({ tokenHash: hash });
-      await chrome.storage.local.remove('token');
-      return hash;
-    }
-    return null;
-  },
-  async setTokenHash(tokenHash) {
-    if (tokenHash === null) await chrome.storage.local.remove(['tokenHash', 'token']);
-    else await chrome.storage.local.set({ tokenHash });
-  },
+  getTokenHash: () => keys.get(),
+  setTokenHash: (tokenHash) => keys.set(tokenHash),
   async getPort() {
     const { port } = await chrome.storage.local.get('port');
     return Number.isInteger(port) ? (port as number) : null;

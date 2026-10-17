@@ -4,6 +4,7 @@ import type { ParsedEdit, ReadResult, WriteResult } from '@bridge/shared';
 import type { RequestOutcome, WorkerRequest } from '../../messages';
 import { ApplyAllBar, applyAllTargets } from './cards/apply-all';
 import { DiffCard, type Ask } from './cards/diff-card';
+import { ReadCard } from './cards/read-card';
 import { insertIntoComposer } from './composer';
 
 const HASH_A = 'a'.repeat(64);
@@ -83,7 +84,7 @@ describe('DiffCard', () => {
       'pending',
       'applied'
     ]);
-    expect(saved[1]?.type === 'card-set' && saved[1].record.opId).toBe('op-1');
+    expect(saved[1]?.type === 'card-set' && saved[1].record).toMatchObject({ opId: 'op-1' });
   });
 
   it('creates a missing file without a base hash', async () => {
@@ -204,6 +205,46 @@ describe('Apply all', () => {
     ];
     expect(applyAllTargets(cards).map((c) => c.edit.path)).toEqual(['a.ts']);
     expect(new ApplyAllBar(cards).visible).toBe(false);
+  });
+});
+
+describe('ReadCard', () => {
+  beforeEach(() => {
+    document.body.innerHTML =
+      '<main></main><div id="prompt-textarea" contenteditable="true" class="ProseMirror"></div>';
+    const composer = document.getElementById('prompt-textarea')!;
+    composer.addEventListener('paste', (event) => {
+      event.preventDefault();
+      composer.textContent += (event as ClipboardEvent).clipboardData?.getData('text/plain') ?? '';
+    });
+  });
+
+  const KEY = 'conv-1234:m:read:0000000000000000';
+  const saved = (worker: ReturnType<typeof fakeWorker>) =>
+    worker.calls.flatMap((c) => (c.type === 'card-set' ? [c.record] : []));
+
+  it('saves itself as pending when it first appears, then as sent', async () => {
+    const worker = fakeWorker({ 'a.ts': { content: 'x\n', hash: HASH_A } });
+    const sent = vi.fn();
+    const c = new ReadCard(KEY, ['a.ts'], worker.ask, sent);
+    await c.init();
+    expect(saved(worker)).toEqual([
+      { card: 'read', state: 'pending', updatedAt: expect.any(Number) }
+    ]);
+
+    // The Send button's handler.
+    (c as unknown as { send(): void }).send();
+    expect(document.getElementById('prompt-textarea')?.textContent).toContain('@@CONTEXT a.ts@@');
+    expect(sent).toHaveBeenCalledWith(['a.ts']);
+    expect(saved(worker).at(-1)).toMatchObject({ card: 'read', state: 'sent' });
+  });
+
+  it('comes back as sent after a reload, without saving again', async () => {
+    const worker = fakeWorker({ 'a.ts': { content: 'x\n', hash: HASH_A } });
+    const c = new ReadCard(KEY, ['a.ts'], worker.ask, () => {});
+    await c.init({ card: 'read', state: 'sent', updatedAt: 1 });
+    expect(saved(worker)).toEqual([]);
+    expect(c.sent).toBe(true);
   });
 });
 

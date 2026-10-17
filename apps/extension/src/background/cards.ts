@@ -5,8 +5,9 @@ export const CARD_MAX_AGE_MS = 30 * 24 * 60 * 60_000;
 const STORAGE_KEY = 'cards';
 
 /**
- * Diff card state by block key (`conversationId:messageId:blockIndex:contentHash`), kept
- * in `chrome.storage.local` so a reload shows Applied/Rejected/Undone as it was. Records
+ * Card state by block key (`conversationId:messageId:slot:contentHash`), kept in
+ * `chrome.storage.local` so a reload shows Applied/Rejected/Undone (and a READ card's
+ * Sent) as it was. Records
  * not touched for 30 days are dropped on every write.
  */
 export class CardStore {
@@ -63,7 +64,7 @@ export class CardStore {
     let applied = 0;
     let pending = 0;
     for (const [key, record] of Object.entries(records)) {
-      if (!key.startsWith(`${conversationId}:`)) continue;
+      if (!key.startsWith(`${conversationId}:`) || 'card' in record) continue;
       if (record.state === 'applied') applied += 1;
       if (record.state === 'pending') pending += 1;
     }

@@ -18,14 +18,19 @@ const ChatPath = ReadParams.shape.path;
 /** Most files one READ card or one "Send files" may send. */
 export const MAX_FILES_PER_SEND = 50;
 
-/** `conversationId:messageId:blockIndex:contentHash`. See `blockKey`. */
-export const BlockKey = z.string().regex(/^[\w-]{1,64}:[\w-]{1,128}:\d{1,4}:[0-9a-f]{16}$/);
+/**
+ * `conversationId:messageId:slot:contentHash`. See `blockKey`. The slot is a diff card's
+ * block index, or `read` for the message's READ card.
+ */
+export const BlockKey = z
+  .string()
+  .regex(/^[\w-]{1,64}:[\w-]{1,128}:(?:\d{1,4}|read):[0-9a-f]{16}$/);
 
 export const CardState = z.enum(['pending', 'applied', 'rejected', 'undone']);
 export type CardState = z.infer<typeof CardState>;
 
 /** What a diff card remembers across reloads, in `chrome.storage.local` by block key. */
-export const CardRecord = z.strictObject({
+export const DiffCardRecord = z.strictObject({
   state: CardState,
   path: ChatPath,
   opId: OpId.optional(),
@@ -36,6 +41,17 @@ export const CardRecord = z.strictObject({
   /** Epoch ms. Records older than 30 days are pruned. */
   updatedAt: z.number().int().nonnegative()
 });
+export type DiffCardRecord = z.infer<typeof DiffCardRecord>;
+
+/** A READ card: whether its files went into the composer. */
+export const ReadCardRecord = z.strictObject({
+  card: z.literal('read'),
+  state: z.enum(['pending', 'sent']),
+  updatedAt: z.number().int().nonnegative()
+});
+export type ReadCardRecord = z.infer<typeof ReadCardRecord>;
+
+export const CardRecord = z.union([DiffCardRecord, ReadCardRecord]);
 export type CardRecord = z.infer<typeof CardRecord>;
 
 const WindowId = z.number().int().nonnegative();

@@ -9,7 +9,7 @@ import {
   type UndoResult,
   type WriteResult
 } from '@bridge/shared';
-import type { CardRecord, CardState, RequestOutcome, WorkerRequest } from '../../../messages';
+import type { CardState, DiffCardRecord, RequestOutcome, WorkerRequest } from '../../../messages';
 import { formatCount, h, icon } from './dom';
 import { createHost } from './host';
 
@@ -83,7 +83,7 @@ export class DiffCard {
   }
 
   /** Restores a saved state, or reads the file for a fresh card. */
-  async init(record: CardRecord | undefined): Promise<void> {
+  async init(record: DiffCardRecord | undefined): Promise<void> {
     if (record && record.state !== 'pending') {
       this.state = record.state;
       this.opId = record.opId;
@@ -229,7 +229,7 @@ export class DiffCard {
   }
 
   private persist(): Promise<unknown> {
-    const record: CardRecord = {
+    const record: DiffCardRecord = {
       state: this.state,
       path: this.edit.path,
       updatedAt: Date.now(),

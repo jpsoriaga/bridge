@@ -1,6 +1,5 @@
 import tokens from '@bridge/shared/tokens.css?inline';
-import geistUrl from '@fontsource-variable/geist/files/geist-latin-wght-normal.woff2?url';
-import geistMonoUrl from '@fontsource-variable/geist-mono/files/geist-mono-latin-wght-normal.woff2?url';
+import { CARD_FONTS } from '../../../fonts';
 import { BRIDGE_HOST_ATTRIBUTE } from '../selectors';
 import cardCss from './card.css?inline';
 
@@ -37,22 +36,17 @@ export function createHost(kind: string): { host: HTMLElement; root: ShadowRoot 
 let fontsRequested = false;
 
 /**
- * Loads Geist and Geist Mono from the extension (web_accessible_resources). @font-face
- * doesn't work inside a shadow root, so the faces go on the page's FontFaceSet. If the
- * page's CSP blocks them, the token font stacks fall back to the system font.
+ * Loads Geist and Geist Mono from the extension (web_accessible_resources, dynamic URL).
+ * @font-face doesn't work inside a shadow root, so the faces go on the page's FontFaceSet.
+ * If the page's CSP blocks them, the token font stacks fall back to the system font.
  */
 export function loadFonts(): void {
   if (fontsRequested || typeof FontFace === 'undefined') return;
   fontsRequested = true;
-  const faces = [
-    new FontFace('Geist Variable', `url(${chrome.runtime.getURL(geistUrl)})`, {
+  for (const [family, { path }] of Object.entries(CARD_FONTS)) {
+    const face = new FontFace(family, `url(${chrome.runtime.getURL(path)})`, {
       weight: '100 900'
-    }),
-    new FontFace('Geist Mono Variable', `url(${chrome.runtime.getURL(geistMonoUrl)})`, {
-      weight: '100 900'
-    })
-  ];
-  for (const face of faces) {
+    });
     document.fonts.add(face);
     face.load().catch(() => {
       document.fonts.delete(face);

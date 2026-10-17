@@ -1,5 +1,6 @@
 import { defineManifest } from '@crxjs/vite-plugin';
 import pkg from './package.json';
+import { CARD_FONTS } from './src/fonts';
 
 const icons = {
   16: 'icons/icon-16.png',
@@ -47,7 +48,15 @@ export default defineManifest({
       js: ['src/content/index.ts'],
       run_at: 'document_idle'
     }
+  ],
+  // The card fonts, emitted by vite.config.ts. `use_dynamic_url`: reachable only through a
+  // per-session ID, so a page can't probe a fixed URL to detect Bridge. CRXJS adds a second,
+  // static entry for the content script's own chunks (its loader imports them by static URL).
+  web_accessible_resources: [
+    {
+      resources: Object.values(CARD_FONTS).map((font) => font.path),
+      matches: ['https://chatgpt.com/*'],
+      use_dynamic_url: true
+    }
   ]
-  // No web_accessible_resources here: CRXJS adds the content script's chunks and the two
-  // fonts it imports (Geist, Geist Mono for the cards), matched to chatgpt.com only.
 });
