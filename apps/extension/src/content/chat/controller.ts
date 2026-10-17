@@ -575,6 +575,48 @@ function shapeOf(el: Element): string {
   return out;
 }
 
+/** An element's subtree, a few levels deep: shapes, child counts and text sizes. No text. */
+function treeShape(el: Element, depth: number, out: string[], indent = ''): void {
+  if (out.length >= 80) return;
+  const text = el.textContent ?? '';
+  out.push(
+    `${indent}${shapeOf(el)} (${el.children.length} children, ${text.length} chars, ${text.split('\n').length} lines)`
+  );
+  if (depth === 0) return;
+  const children = [...el.children];
+  for (const child of children.slice(0, 6)) treeShape(child, depth - 1, out, `${indent}  `);
+  if (children.length > 6) out.push(`${indent}  … ${children.length - 6} more`);
+}
+
+/**
+ * The newest `@@FILE` marker's block and the blocks after it (the code block should be the
+ * next one), as subtree shapes: enough to see how this layout draws a code block.
+ */
+function fileBlockShape(): string[] | null {
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  let marker: Node | null = null;
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const parent = node.parentElement;
+    if (!parent || parent.closest('[contenteditable], [data-bridge-host], script, style')) continue;
+    if ((node.nodeValue ?? '').includes('@@FILE')) marker = node;
+  }
+  const root = marker?.parentElement?.closest(SELECTORS.markdown.join(', '));
+  if (!marker?.parentElement || !root) return null;
+  let block: Element = marker.parentElement;
+  // Climb until the next sibling holds more than a line of text: that's the code block.
+  while (block.parentElement && block.parentElement !== root) {
+    const next = block.nextElementSibling;
+    if (next && (next.textContent ?? '').length > 40) break;
+    block = block.parentElement;
+  }
+  const out: string[] = [`marker block: ${shapeOf(block)}`];
+  let sibling = block.nextElementSibling;
+  for (let i = 0; sibling && i < 2; i += 1, sibling = sibling.nextElementSibling) {
+    treeShape(sibling, 7, out);
+  }
+  return out;
+}
+
 /**
  * Where the newest Bridge marker sits on the page and what surrounds it, plus which data-*
  * attributes and test ids the page uses: enough to write new selectors when the markup moves.
@@ -612,6 +654,7 @@ function pageShape(): Record<string, unknown> {
     .filter((label, i, list) => list.indexOf(label) === i)
     .slice(0, 40);
   return {
+    fileBlock: fileBlockShape(),
     markerFound: marker !== null,
     markerAncestors: chain,
     replyChildren: reply ? [...reply.children].slice(0, 12).map(shapeOf) : null,
