@@ -115,7 +115,7 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [x] Fonts from the extension via `FontFace`, system font fallback if blocked
 - [x] Tests: parser, prompts and fence picking, diff, adapter on fixtures (happy-dom), cards and Apply all, composer, card store and keys, sessions, sender checks
 - [x] `e2e/chat.cjs`: stand-in chatgpt.com from the fixtures, real app and extension build: start session, apply, undo, Apply all, READ send, conflict, reload, regenerate, end session
-- [ ] Manual run on the real chatgpt.com (README "Use it in the chat"); confirm the live page's CSP allows the extension fonts
+- [ ] Manual run on the real chatgpt.com (README "Use it in the chat"); confirm the live page's CSP allows the extension fonts (cards, Apply/Undo and READ done in Phase 5's live run; fonts not checked)
 
 ### Phase 4 follow-ups
 
@@ -151,7 +151,9 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [x] Tests: argv parsing and near-miss allowlist matches, env filter, executable resolution, process tree kill, output cap, Windows escaping, server enforcement, gated files, Full auto resets, loop state machine (fake page), parser
 - [x] `e2e/chat.cjs`: allowlist confirmed in the app, Auto-apply with a gated file and Undo all, a 2-step Full auto run to `@@DONE@@`, End session back to Manual
 - [ ] Windows CI run of the `.cmd` round-trip and batch-argument tests (written; skip on macOS/Linux)
-- [ ] Manual run on the real chatgpt.com: send button, user turns and error banner selectors (see `e2e/README.md`)
+- [x] Live chatgpt.com (Oct 2026 layout): RUN/READ/diff cards, Run + Send output, Apply/Undo, Auto-apply + Undo all, a Full auto run to `@@DONE@@` (send button, send confirmation)
+- [x] Fixes from the live run: newer layout selectors, code block header skipped, send button wait, send confirmed by composer emptying or a reply, launcher `npm_*` env dropped; Copy diagnostics (dev) in the side panel
+- [ ] Live checks still open: step limit + Continue, Stop during a running command, a command that isn't allowed, the error banner selector
 
 ## Phase 6: App UI polish
 
