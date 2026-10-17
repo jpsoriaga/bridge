@@ -1,24 +1,29 @@
 import {
   app,
   BrowserWindow,
+  dialog,
   ipcMain,
   safeStorage,
   session,
   shell,
   type IpcMainInvokeEvent
 } from 'electron';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { candidatePorts } from '@bridge/shared';
-import { IPC, type DesktopState } from '../preload/api';
+import { candidatePorts, OpId } from '@bridge/shared';
+import { IPC, type DesktopState, type OpenFolderResult, type UndoOutcome } from '../preload/api';
+import { DEFAULT_DENYLIST } from './project/sandbox';
+import { ProjectService } from './project/service';
 import { Pairing } from './server/pairing';
 import { createBridgeServer, type BridgeServer } from './server/server';
 import { fileTokenStore } from './server/token-store';
-import { settingsFile } from './settings';
+import { isValidDenyPattern, MAX_DENY_PATTERNS, settingsFile } from './settings';
 import { createWindowOptions } from './window';
 
 let mainWindow: BrowserWindow | null = null;
 let pairing: Pairing;
 let server: BridgeServer;
+let projects: ProjectService;
 let serverFailed = false;
 let expiryTimer: NodeJS.Timeout | undefined;
 
@@ -35,7 +40,11 @@ function desktopState(): DesktopState {
     paired: pairing.isPaired,
     port: server.port,
     pairing: pairing.pendingCode,
-    lockedUntil: lockedFor > 0 ? Date.now() + lockedFor : null
+    lockedUntil: lockedFor > 0 ? Date.now() + lockedFor : null,
+    project: projects.project,
+    recentProjects: projects.recentProjects,
+    defaultDenyPatterns: DEFAULT_DENYLIST,
+    denyPatterns: projects.denyPatterns
   };
 }
 
@@ -43,17 +52,58 @@ function broadcast(): void {
   mainWindow?.webContents.send(IPC.status, desktopState());
 }
 
-/** Only our own window's top frame may call in. */
-function handle<T>(channel: string, fn: () => T): void {
-  ipcMain.handle(channel, (event: IpcMainInvokeEvent) => {
+function broadcastActivity(): void {
+  mainWindow?.webContents.send(IPC.activity, projects.activity());
+}
+
+/** Project switched or settings changed: tell the window and the extension. */
+function projectChanged(): void {
+  broadcast();
+  server?.pushStatus();
+}
+
+/** Only our own window's top frame may call in. Arguments are untrusted until checked. */
+function handle<T>(channel: string, fn: (...args: unknown[]) => T): void {
+  ipcMain.handle(channel, (event: IpcMainInvokeEvent, ...args: unknown[]) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) {
       throw new Error('Unknown sender');
     }
     if (event.senderFrame !== mainWindow.webContents.mainFrame) {
       throw new Error('Unknown frame');
     }
-    return fn();
+    return fn(...args);
   });
+}
+
+async function openFolder(): Promise<OpenFolderResult> {
+  if (!mainWindow) return { ok: false, reason: 'cancelled' };
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    title: 'Open project folder',
+    properties: ['openDirectory', 'createDirectory']
+  });
+  const [dir] = filePaths;
+  if (canceled || dir === undefined) return { ok: false, reason: 'cancelled' };
+  const result = await projects.open(dir);
+  return result.ok ? { ok: true } : result;
+}
+
+/** Undo from the app. If the file changed since the write, the user confirms first. */
+async function undoFromApp(opId: string | null): Promise<UndoOutcome> {
+  if (opId === null) return { ok: false, code: 'unknown-op' };
+  let outcome = await projects.undo(opId);
+  if (!outcome.ok && outcome.error.code === 'conflict' && mainWindow) {
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      message: `${projects.pathOf(opId) ?? 'This file'} changed after Bridge wrote it.`,
+      detail: 'Undoing now replaces those newer changes with the version from before the write.',
+      buttons: ['Cancel', 'Undo anyway'],
+      defaultId: 0,
+      cancelId: 0
+    });
+    if (response !== 1) return { ok: false, code: 'cancelled' };
+    outcome = await projects.undo(opId, { force: true });
+  }
+  return outcome.ok ? { ok: true } : { ok: false, code: outcome.error.code };
 }
 
 function registerIpc(): void {
@@ -69,13 +119,49 @@ function registerIpc(): void {
   handle(IPC.unpair, () => {
     server.unpair();
   });
+  handle(IPC.openFolder, openFolder);
+  handle(IPC.openRecent, async (index): Promise<OpenFolderResult> => {
+    if (!Number.isInteger(index)) return { ok: false, reason: 'not-a-directory' };
+    const result = await projects.openRecent(index as number);
+    if (!result) return { ok: false, reason: 'not-a-directory' };
+    return result.ok ? { ok: true } : result;
+  });
+  handle(IPC.getActivity, () => projects.activity());
+  handle(IPC.undo, (opId) => undoFromApp(OpId.safeParse(opId).success ? (opId as string) : null));
+  handle(IPC.undoLast, () => undoFromApp(projects.lastUndoable()));
+  handle(IPC.setDenyPatterns, async (patterns) => {
+    if (
+      !Array.isArray(patterns) ||
+      patterns.length > MAX_DENY_PATTERNS ||
+      !patterns.every(isValidDenyPattern)
+    ) {
+      return false;
+    }
+    await projects.setDenyPatterns([...new Set(patterns)]);
+    return true;
+  });
 }
 
 async function startServer(): Promise<void> {
   const userData = app.getPath('userData');
   const settings = settingsFile(join(userData, 'settings.json'));
+  projects = new ProjectService({
+    settings,
+    backupsDir: join(userData, 'backups'),
+    homeDir: homedir(),
+    protectedDirs: [userData],
+    onChange: projectChanged,
+    onActivity: broadcastActivity
+  });
+  await projects.restore();
   pairing = new Pairing({ store: fileTokenStore(join(userData, 'pairing.json'), safeStorage) });
-  server = createBridgeServer({ pairing, version: app.getVersion(), onChange: broadcast });
+  server = createBridgeServer({
+    pairing,
+    version: app.getVersion(),
+    onChange: broadcast,
+    files: (request) => projects.handle(request),
+    project: () => projects.project
+  });
   try {
     const port = await server.listen(candidatePorts());
     settings.update({ port });

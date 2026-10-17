@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { FileError, ProjectInfo, ReadParams, TreeParams, UndoParams, WriteParams } from './files';
 
 /** Bumped when a message shape changes incompatibly. Both sides reject other versions. */
 export const PROTOCOL_VERSION = 2;
@@ -107,7 +108,33 @@ export const AuthErrorMessage = message(
 );
 export const PingMessage = message('ping', empty);
 export const PongMessage = message('pong', empty);
-export const StatusMessage = message('status', z.strictObject({ version: z.string().max(32) }));
+/** Sent after auth_ok and whenever the project changes. */
+export const StatusMessage = message(
+  'status',
+  z.strictObject({ version: z.string().max(32), project: ProjectInfo.nullable() })
+);
+
+// File requests. The reply is a `response` whose `id` is the request's `id`.
+export const TreeRequest = message('tree', TreeParams);
+export const ReadRequest = message('read', ReadParams);
+export const WriteRequest = message('write', WriteParams);
+export const UndoRequest = message('undo', UndoParams);
+export const FileRequest = z.discriminatedUnion('type', [
+  TreeRequest,
+  ReadRequest,
+  WriteRequest,
+  UndoRequest
+]);
+export type FileRequest = z.infer<typeof FileRequest>;
+
+/** `result` is checked against `FILE_RESULTS[request type]` by the side that asked. */
+export const ResponseMessage = message(
+  'response',
+  z.discriminatedUnion('ok', [
+    z.strictObject({ ok: z.literal(true), result: z.unknown() }),
+    z.strictObject({ ok: z.literal(false), error: FileError })
+  ])
+);
 export const ErrorMessage = message(
   'error',
   z.strictObject({
@@ -121,7 +148,11 @@ export const ClientMessage = z.discriminatedUnion('type', [
   HelloMessage,
   AuthMessage,
   PingMessage,
-  PongMessage
+  PongMessage,
+  TreeRequest,
+  ReadRequest,
+  WriteRequest,
+  UndoRequest
 ]);
 export type ClientMessage = z.infer<typeof ClientMessage>;
 
@@ -133,6 +164,7 @@ export const ServerMessage = z.discriminatedUnion('type', [
   PingMessage,
   PongMessage,
   StatusMessage,
+  ResponseMessage,
   ErrorMessage
 ]);
 export type ServerMessage = z.infer<typeof ServerMessage>;

@@ -44,6 +44,9 @@ importers:
       fastify:
         specifier: ^5.12.7
         version: 5.12.7
+      ignore:
+        specifier: ^7.0.12
+        version: 7.0.12
       react:
         specifier: ^18.3.1
         version: 18.3.1

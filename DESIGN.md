@@ -47,7 +47,7 @@ The image wins on each point below. Each deviation is deliberate and scoped:
 - **Chat column**: content is centred, max width 760px, with 32px top padding. Gaps are 16px between blocks and 12px between a message and its card.
 - **Side panel**: about 340px wide with a hairline on its left edge. Sections are stacked with 20px horizontal padding and 24px between sections. Each section is a muted label (12px) with its content below.
 - **Panel footer**: a hairline on top, 16px/20px padding, the step counter (12px, muted) on the left and Stop on the right. It sticks to the bottom.
-- **Desktop app (Phase 1)**: the same top bar, then a single centred 400px column with the panel's sections, and a footer showing the version.
+- **Desktop app**: the same top bar, then a single centred 480px column with the panel's sections (Project, Extension, Mode, Activity, Settings), and a footer showing the version. The top bar and footer stay put while the column scrolls. With a project open, the top bar shows the project name (13px, 600) and its path (mono 12px, `--fg-muted`, truncated) between the brand and the status pill.
 
 ### Chat elements
 
@@ -169,7 +169,21 @@ On the desktop's Extension section: the six digits in Geist Mono 24px/600 with a
 
 ### Activity log row
 
-An 8px dot and 13px `--fg` text with an 8px gap. Rows are spaced 8px apart, newest first. Dot tones: `success` for applied or passed, `warning` for waiting on review, `danger` for failed or blocked, and idle for informational events ("Sent 3 files to chat"). Show the last 20 rows; older ones scroll.
+An 8px dot and 13px `--fg` text with an 8px gap. Rows are spaced 8px apart, newest first. Dot tones: `success` for applied or passed, `warning` for waiting on review, `danger` for failed or blocked, and idle for informational events ("Sent 3 files to chat") and undone writes. Show about the last 20 rows; older ones scroll.
+
+Classes `.activity`, `.activity-row`, `.activity-text`, `.activity-path` and `.activity-meta` live in `styles.css`. The text is two lines: the path in mono (truncated, full path in the tooltip) and a 12px `--fg-muted` meta line, "07:50 PM · Modified" or "07:50 PM · Blocked read · protected file" (reasons from `FILE_ERROR_LABELS`). Writes that can be undone end with a secondary **Undo** button. An undone row (`data-undone="true"`) strikes the path through in `--fg-subtle` and says "· undone". The section label row has **Undo last** on the right.
+
+### Project section (desktop)
+
+The project name (14px) and its path (mono 12px, muted, truncated) under the "Project" label. With no project, "No project open", a hint, and **Open folder…** as the view's primary `.btn-lg`; once a project is open it becomes a secondary "Open another folder…". **Recent** lists the other recent projects as plain rows split by hairlines: name (13px) over path (mono 12px, muted). Open errors use `.error-text`.
+
+### Protected files (desktop settings)
+
+A hint listing the built-in patterns in mono, then the user's patterns, each with a secondary **Remove**, then a 32px mono `.input` with an **Add** button. An invalid pattern sets `aria-invalid` and shows `.error-text`.
+
+### Dev file tester (side panel, dev builds only)
+
+Labelled "Test read (dev only)". A row with an operation `select`, a mono path input and **Send**; a mono textarea for write content; the JSON reply in a `--bg-muted` box with a hairline and `--radius-md`, mono 12px. It is a developer tool, so it skips the one-primary-action rule and is never shown in production builds.
 
 ### Files in context tree
 

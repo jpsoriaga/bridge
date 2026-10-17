@@ -1,5 +1,5 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import {
   BRIDGE_EXTENSION_ID,
@@ -19,13 +19,20 @@ let pairing: Pairing;
 let server: BridgeServer;
 let host: string;
 let port: number;
+let project: { name: string; path: string } | null;
 
 beforeEach(async () => {
   clock = 1_000_000;
   pairing = new Pairing({ store: memoryTokenStore(), now: () => clock });
+  project = null;
   server = createBridgeServer({
     pairing,
     version: '9.9.9',
+    project: () => project,
+    files: async (request) =>
+      request.type === 'read' && request.payload.path === 'a.txt'
+        ? { ok: true, result: { content: 'hi', hash: 'a'.repeat(64), eol: 'lf' } }
+        : { ok: false, error: { code: 'denied', message: 'no' } },
     authTimeoutMs: 150,
     rateLimit: { messages: 20, windowMs: 10_000 }
   });
@@ -339,7 +346,10 @@ describe('WebSocket auth', () => {
   it('proves itself, accepts a valid proof and answers pings', async () => {
     const key = await pair();
     const client = await authedClient(key);
-    expect(await client.next()).toMatchObject({ type: 'status', payload: { version: '9.9.9' } });
+    expect(await client.next()).toMatchObject({
+      type: 'status',
+      payload: { version: '9.9.9', project: null }
+    });
     expect(server.connected).toBe(true);
 
     client.sendJson(ping());
@@ -472,12 +482,78 @@ describe('WebSocket auth', () => {
   it('closes on oversized messages', async () => {
     const client = await authedClient(await pair());
     client.ws.send('x'.repeat(MAX_WS_PAYLOAD_BYTES + 1));
-    expect((await client.closed).code).toBe(1009);
+    // 1009 (too big), or 1006 if the server drops the socket before the frame finishes.
+    expect([1006, 1009]).toContain((await client.closed).code);
+    await vi.waitFor(() => expect(server.connected).toBe(false));
   });
 
   it('closes when a client floods messages', async () => {
     const client = await authedClient(await pair());
     for (let i = 0; i < 25; i++) client.sendJson(ping(`p${i}`));
     expect((await client.closed).code).toBe(CloseCode.rateLimited);
+  });
+});
+
+describe('file requests', () => {
+  it('answers with a response carrying the request id', async () => {
+    const client = await authedClient(await pair());
+    await client.next(); // status
+    client.sendJson({ v: 2, id: 'read-7', type: 'read', payload: { path: 'a.txt' } });
+    expect(await client.next()).toEqual({
+      v: 2,
+      id: 'read-7',
+      type: 'response',
+      payload: { ok: true, result: { content: 'hi', hash: 'a'.repeat(64), eol: 'lf' } }
+    });
+    client.sendJson({ v: 2, id: 'read-8', type: 'read', payload: { path: '.env' } });
+    expect(await client.next()).toMatchObject({
+      id: 'read-8',
+      payload: { ok: false, error: { code: 'denied' } }
+    });
+    client.ws.close();
+    await client.closed;
+  });
+
+  it('refuses file requests before auth', async () => {
+    await pair();
+    const client = await connect();
+    client.sendJson({ v: 2, id: 'r', type: 'read', payload: { path: 'a.txt' } });
+    expect(await client.next()).toMatchObject({ payload: { reason: 'expected_hello' } });
+    expect((await client.closed).code).toBe(CloseCode.protocolError);
+  });
+
+  it('drops malformed file requests', async () => {
+    const client = await authedClient(await pair());
+    await client.next(); // status
+    client.sendJson({ v: 2, id: 'w', type: 'write', payload: { path: 'a', content: 1 } });
+    expect(await client.next()).toMatchObject({
+      type: 'error',
+      payload: { code: 'invalid_message' }
+    });
+    client.ws.close();
+    await client.closed;
+  });
+
+  it('carries a 1MB write', async () => {
+    const client = await authedClient(await pair());
+    await client.next(); // status
+    const content = '\n'.repeat(1024 * 1024);
+    client.sendJson({ v: 2, id: 'big', type: 'write', payload: { path: 'b.txt', content } });
+    expect(await client.next()).toMatchObject({ id: 'big', type: 'response' });
+    client.ws.close();
+    await client.closed;
+  });
+
+  it('pushes status when the project changes', async () => {
+    const client = await authedClient(await pair());
+    await client.next(); // status
+    project = { name: 'app', path: '~/code/app' };
+    server.pushStatus();
+    expect(await client.next()).toMatchObject({
+      type: 'status',
+      payload: { project: { name: 'app', path: '~/code/app' } }
+    });
+    client.ws.close();
+    await client.closed;
   });
 });

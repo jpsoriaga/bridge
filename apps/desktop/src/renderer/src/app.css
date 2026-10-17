@@ -1,7 +1,7 @@
 .shell {
   display: grid;
   grid-template-rows: 56px 1fr auto;
-  height: 100vh;
+  min-height: 100vh;
 }
 
 .topbar {
@@ -9,8 +9,14 @@
   align-items: center;
   justify-content: space-between;
   padding: 0 var(--space-5);
+  gap: var(--space-4);
   border-bottom: 1px solid var(--border);
   -webkit-app-region: drag;
+  /* Stays put while the panel scrolls, so the project header is always visible. */
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg);
 }
 
 .brand {
@@ -27,7 +33,7 @@
   flex-direction: column;
   gap: var(--space-6);
   width: 100%;
-  max-width: 400px;
+  max-width: 480px;
   margin: 0 auto;
   padding: var(--space-8) var(--space-5);
 }
@@ -51,6 +57,9 @@
 }
 
 .footer {
+  position: sticky;
+  bottom: 0;
+  background: var(--bg);
   padding: var(--space-4) var(--space-5);
   border-top: 1px solid var(--border);
   font-size: var(--text-xs);
@@ -88,4 +97,113 @@
 
 .settings dd {
   margin: 0;
+}
+
+/* Project name and path in the top bar, between the brand and the status pill. */
+.project-head {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  -webkit-app-region: no-drag;
+}
+
+.project-name {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.project-head-path,
+.project-path,
+.recent-path {
+  overflow: hidden;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel .project-path {
+  margin-top: var(--space-1);
+}
+
+.panel .recent-label {
+  margin-top: var(--space-5);
+}
+
+.recent,
+.patterns {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.recent-item {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: var(--space-2) 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: none;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.recent-item:hover span:first-child {
+  text-decoration: underline;
+}
+
+.recent-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-2);
+}
+
+.panel .section-head .label {
+  margin: 0;
+}
+
+/* About 20 rows, then it scrolls. */
+.activity-scroll {
+  max-height: 800px;
+  overflow-y: auto;
+}
+
+.protected {
+  margin-top: var(--space-5);
+}
+
+.patterns {
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.patterns li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pattern-form {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.pattern-form .input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
 }

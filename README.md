@@ -6,7 +6,7 @@ Bridge lets the ChatGPT web chat edit a project on your computer. The chat write
 
 It runs entirely on your machine. The desktop app listens only on `127.0.0.1`, and nothing is sent anywhere else.
 
-> **Status:** Phase 2 of 8 (local server and pairing) is done. The extension pairs with the desktop app and stays connected, but neither reads the chat nor touches files yet. See [CHECKLIST.md](CHECKLIST.md).
+> **Status:** Phase 3 of 8 (project folder and sandboxed files) is done. The extension pairs with the desktop app and can list, read and write files inside the project folder you open, with every write backed up and undoable. It doesn't read the chat yet. See [CHECKLIST.md](CHECKLIST.md).
 
 ## How it works
 
@@ -77,12 +77,25 @@ After 5 wrong codes, pairing is locked for 60 seconds and the current code is ca
 
 If the side panel says **App not running**, open the desktop app. The extension keeps retrying (up to every 30 seconds, and at least once a minute even after Chrome suspends it) and retries immediately when you open the side panel.
 
+## Open a project
+
+1. In the Bridge app, click **Open folder…** and choose your project. Bridge reopens it next time, and lists your last 5 under **Recent**.
+2. The project name and path show in the app's top bar and in the side panel.
+
+The extension can reach only files inside that folder. Bridge refuses absolute paths, `..`, and symlinks that lead outside it, and never touches `.git/`, `.env` and `.env.*`, `*.pem`, `*.key`, `id_rsa*` or `node_modules/`. Add your own patterns under **Settings → Protected files**. Blocked requests show in **Activity** with a red dot.
+
+Every write is backed up first, into Bridge's own data folder (never into your project). **Activity** lists each write with an **Undo** button, and **Undo last** reverts the newest one. If you edited the file after Bridge wrote it, Bridge asks before overwriting your edit. Backups are kept for 7 days or 500 writes per project.
+
+### Try it by hand (dev builds)
+
+With `pnpm dev` running, the side panel has a **Test read (dev only)** field once connected: pick `tree`, `read`, `write` or `undo`, enter a path (or an op id for undo) and click **Send**. A write after a read of the same path modifies that file; a write without one creates a new file. Production builds don't include this field.
+
 ## Project structure
 
 ```
 apps/
   desktop/          Electron app (electron-vite)
-    src/main/       main process: window, local server, pairing
+    src/main/       main process: window, local server, pairing, project sandbox and backups
     src/preload/    contextBridge API (window.bridge)
     src/renderer/   React UI
     resources/      app icon, macOS entitlements
@@ -115,6 +128,7 @@ Manual end-to-end scripts (Playwright, not in CI) live in [`e2e/`](e2e/README.md
 ## Troubleshooting
 
 - **`Cannot read properties of undefined (reading 'whenReady')` on `pnpm dev`**: your shell has `ELECTRON_RUN_AS_NODE=1` set. Some editor-integrated tools set it, so Electron starts as plain Node. Run `unset ELECTRON_RUN_AS_NODE` first.
+- **"That folder holds Bridge's own data"**: you picked Bridge's userData folder, or a folder containing it. Choose the project folder itself.
 - **Desktop says "Server error"**: something else is using every port from 47821 to 47830. Free one and restart Bridge.
 - **Side panel stays on "Can't reach Bridge"**: the app answered but the handshake failed. If you unpaired in the app while Chrome was closed, click **Unpair** in the side panel and pair again. Otherwise the extension ID may not match: check that the extension was loaded from `apps/extension/dist` and that the ID on `chrome://extensions` is the one above.
 

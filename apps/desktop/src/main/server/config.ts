@@ -14,8 +14,12 @@ export const HOST = '127.0.0.1';
 
 /** HTTP bodies are tiny in Phase 2 (`{ code }`). */
 export const BODY_LIMIT_BYTES = 1024;
-/** Largest WebSocket frame. Raise when file contents start flowing (Phase 4). */
-export const MAX_WS_PAYLOAD_BYTES = 16 * 1024;
+/**
+ * Largest WebSocket frame. A write carries up to 1 MB of content, and JSON escaping can
+ * grow that several times (a control character becomes `\u00XX`), so leave room. The
+ * content's real size is checked after parsing.
+ */
+export const MAX_WS_PAYLOAD_BYTES = 8 * 1024 * 1024;
 
 /** The whole handshake (hello → challenge → auth) must finish within this. */
 export const AUTH_TIMEOUT_MS = 5_000;

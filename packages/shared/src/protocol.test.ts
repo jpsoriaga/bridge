@@ -63,6 +63,38 @@ describe('client messages', () => {
   });
 });
 
+describe('file requests', () => {
+  it('accepts tree, read, write and undo', () => {
+    for (const msg of [
+      clientMessage('1', 'tree', {}),
+      clientMessage('2', 'read', { path: 'src/a.ts' }),
+      clientMessage('3', 'write', { path: 'a.ts', content: 'x' }),
+      clientMessage('4', 'write', { path: 'a.ts', content: '', baseHash: 'f'.repeat(64) }),
+      clientMessage('5', 'undo', { opId: '6f1c2b8e-1d2a-4c1b-9e3f-0a1b2c3d4e5f' })
+    ]) {
+      expect(parseMessage(ClientMessage, raw(msg))).toEqual(msg);
+    }
+  });
+
+  it.each([
+    ['tree with params', { type: 'tree', payload: { depth: 1 } }],
+    ['read without a path', { type: 'read', payload: {} }],
+    ['read with an empty path', { type: 'read', payload: { path: '' } }],
+    ['read with a numeric path', { type: 'read', payload: { path: 1 } }],
+    ['write without content', { type: 'write', payload: { path: 'a' } }],
+    [
+      'write with a short hash',
+      { type: 'write', payload: { path: 'a', content: '', baseHash: 'ab' } }
+    ],
+    ['write with extra keys', { type: 'write', payload: { path: 'a', content: '', mode: 0o777 } }],
+    ['undo with an odd op id', { type: 'undo', payload: { opId: '../x' } }],
+    ['a delete', { type: 'delete', payload: { path: 'a' } }],
+    ['a rename', { type: 'rename', payload: { from: 'a', to: 'b' } }]
+  ])('rejects %s', (_label, partial) => {
+    expect(parseMessage(ClientMessage, raw({ v: 2, id: '1', ...partial }))).toBeNull();
+  });
+});
+
 describe('server messages', () => {
   it('accepts every server type', () => {
     for (const msg of [
@@ -72,7 +104,13 @@ describe('server messages', () => {
       serverMessage('2', 'auth_error', { reason: 'replayed_nonce' }),
       serverMessage('3', 'ping', {}),
       serverMessage('4', 'pong', {}),
-      serverMessage('5', 'status', { version: '0.1.0' }),
+      serverMessage('5', 'status', { version: '0.1.0', project: null }),
+      serverMessage('5', 'status', { version: '0.1.0', project: { name: 'app', path: '~/app' } }),
+      serverMessage('r1', 'response', { ok: true, result: { anything: 1 } }),
+      serverMessage('r2', 'response', {
+        ok: false,
+        error: { code: 'traversal', message: 'no' }
+      }),
       serverMessage('6', 'error', { code: 'invalid_message', message: 'Bad message' })
     ]) {
       expect(parseMessage(ServerMessage, raw(msg))).toEqual(msg);
@@ -83,6 +121,12 @@ describe('server messages', () => {
     ['an unknown auth_error reason', { type: 'auth_error', payload: { reason: 'nope' } }],
     ['an unknown error code', { type: 'error', payload: { code: 'x', message: '' } }],
     ['a status without version', { type: 'status', payload: {} }],
+    ['a status without project', { type: 'status', payload: { version: '1' } }],
+    [
+      'a response with an unknown error code',
+      { type: 'response', payload: { ok: false, error: { code: 'nope', message: '' } } }
+    ],
+    ['a response with ok and error', { type: 'response', payload: { ok: true, error: {} } }],
     ['a client-only type', { type: 'auth', payload: { proof } }],
     ['a challenge without a nonce', { type: 'challenge', payload: { proof } }]
   ])('rejects %s', (_label, partial) => {

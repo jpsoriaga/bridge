@@ -2,7 +2,8 @@ import { useEffect, useState, type FormEvent } from 'react';
 import {
   CONNECTION_STATUS_TONES,
   PAIRING_CODE_LENGTH,
-  type ConnectionStatus
+  type ConnectionStatus,
+  type ProjectInfo
 } from '@bridge/shared';
 import {
   SIDE_PANEL_PORT,
@@ -10,6 +11,7 @@ import {
   type StatusUpdate,
   type WorkerRequest
 } from '../messages';
+import { DevFileTester } from './DevFileTester';
 import { Logo } from './Logo';
 
 const STATUS_LABELS: Record<ConnectionStatus, string> = {
@@ -24,14 +26,14 @@ function request<R>(message: WorkerRequest): Promise<R> {
   return chrome.runtime.sendMessage<WorkerRequest, R>(message);
 }
 
-function useWorkerStatus(): ConnectionStatus | null {
-  const [status, setStatus] = useState<ConnectionStatus | null>(null);
+function useWorkerStatus(): StatusUpdate | null {
+  const [update, setUpdate] = useState<StatusUpdate | null>(null);
   useEffect(() => {
     const port = chrome.runtime.connect({ name: SIDE_PANEL_PORT });
-    port.onMessage.addListener((message: StatusUpdate) => setStatus(message.status));
+    port.onMessage.addListener((message: StatusUpdate) => setUpdate(message));
     return () => port.disconnect();
   }, []);
-  return status;
+  return update;
 }
 
 function pairError(result: Exclude<PairResult, { ok: true }>): string {
@@ -102,7 +104,28 @@ function PairForm() {
   );
 }
 
-function Body({ status }: { status: ConnectionStatus }) {
+function ProjectSection({ project }: { project: ProjectInfo | null }) {
+  return (
+    <section>
+      <p className="label">Project</p>
+      {project ? (
+        <>
+          <p className="value">{project.name}</p>
+          <p className="hint mono path" title={project.path}>
+            {project.path}
+          </p>
+        </>
+      ) : (
+        <>
+          <p className="value">No project open</p>
+          <p className="hint">Open a project folder in the Bridge app.</p>
+        </>
+      )}
+    </section>
+  );
+}
+
+function Body({ status, project }: { status: ConnectionStatus; project: ProjectInfo | null }) {
   const [busy, setBusy] = useState(false);
   const act = (message: WorkerRequest) => {
     setBusy(true);
@@ -114,18 +137,22 @@ function Body({ status }: { status: ConnectionStatus }) {
       return <PairForm />;
     case 'connected':
       return (
-        <section>
-          <p className="label">Desktop app</p>
-          <p className="value">Paired and connected.</p>
-          <button
-            type="button"
-            className="btn btn-danger action"
-            disabled={busy}
-            onClick={() => act({ type: 'unpair' })}
-          >
-            Unpair
-          </button>
-        </section>
+        <>
+          <ProjectSection project={project} />
+          {import.meta.env.DEV && <DevFileTester />}
+          <section>
+            <p className="label">Desktop app</p>
+            <p className="value">Paired and connected.</p>
+            <button
+              type="button"
+              className="btn btn-danger action"
+              disabled={busy}
+              onClick={() => act({ type: 'unpair' })}
+            >
+              Unpair
+            </button>
+          </section>
+        </>
       );
     case 'connecting':
       return (
@@ -175,7 +202,8 @@ function Body({ status }: { status: ConnectionStatus }) {
 }
 
 export function App() {
-  const status = useWorkerStatus();
+  const update = useWorkerStatus();
+  const status = update?.status ?? null;
 
   return (
     <div className="panel">
@@ -190,7 +218,9 @@ export function App() {
         </span>
       </header>
 
-      <main className="panel-body">{status && <Body status={status} />}</main>
+      <main className="panel-body">
+        {update && <Body status={update.status} project={update.project} />}
+      </main>
     </div>
   );
 }

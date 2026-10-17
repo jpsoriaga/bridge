@@ -2,16 +2,21 @@ import {
   candidatePorts,
   clientMessage,
   CloseCode,
+  FILE_RESULTS,
   HealthResponse,
   PairFailure,
   PairSuccess,
   parseMessage,
+  PROTOCOL_VERSION,
   ServerMessage,
   UnpairChallengeResponse,
   type ClientMessage,
-  type ConnectionStatus
+  type ConnectionStatus,
+  type FileRequestType,
+  type FileResult,
+  type ProjectInfo
 } from '@bridge/shared';
-import type { PairResult } from '../messages';
+import type { PairResult, RequestOutcome } from '../messages';
 import { Reconnector } from './backoff';
 import { randomNonce, sha256Hex, signProof, verifyProof } from './proof';
 
@@ -20,6 +25,8 @@ export const PING_INTERVAL_MS = 20_000;
 export const STALE_AFTER_MS = 50_000;
 /** hello → challenge → auth → auth_ok must finish within this. */
 export const HANDSHAKE_TIMEOUT_MS = 5_000;
+/** A file request with no response by then fails with `timeout`. */
+export const REQUEST_TIMEOUT_MS = 15_000;
 const HEALTH_TIMEOUT_MS = 800;
 const PAIR_TIMEOUT_MS = 5_000;
 
@@ -48,7 +55,8 @@ export interface ConnectionDeps {
 }
 
 type Handshake =
-  | { kind: 'ok'; socket: WebSocket }
+  /** `backlog`: messages that arrived after auth_ok, before the socket was adopted. */
+  | { kind: 'ok'; socket: WebSocket; backlog: MessageEvent[] }
   /** The server's proof was wrong: not our app. Never try this port again this session. */
   | { kind: 'impostor' }
   /** The server proved itself, then refused our proof: our key is no longer valid. */
@@ -78,6 +86,16 @@ export class Connection {
   private generation = 0;
   private paired = false;
   private alarmSet = false;
+  private projectInfo: ProjectInfo | null = null;
+  private readonly projectListeners = new Set<(project: ProjectInfo | null) => void>();
+  private readonly pending = new Map<
+    string,
+    {
+      type: FileRequestType;
+      resolve: (outcome: RequestOutcome<unknown>) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >();
 
   constructor(private readonly deps: ConnectionDeps) {
     this.now = deps.now ?? Date.now;
@@ -90,6 +108,49 @@ export class Connection {
   onStatus(listener: (status: ConnectionStatus) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  /** The desktop's open project, as its last `status` said. Null while disconnected. */
+  get project(): ProjectInfo | null {
+    return this.projectInfo;
+  }
+
+  onProject(listener: (project: ProjectInfo | null) => void): () => void {
+    this.projectListeners.add(listener);
+    return () => this.projectListeners.delete(listener);
+  }
+
+  /**
+   * Sends a file request and resolves with the desktop's answer, checked against the
+   * result schema for `type`. Never rejects.
+   */
+  request<T extends FileRequestType>(
+    type: T,
+    payload: Extract<ClientMessage, { type: T }>['payload']
+  ): Promise<RequestOutcome<FileResult<T>>> {
+    const socket = this.socket;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return Promise.resolve({
+        ok: false,
+        error: { code: 'not-connected', message: 'Not connected to the Bridge app.' }
+      });
+    }
+    const id = this.deps.randomId();
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        resolve({
+          ok: false,
+          error: { code: 'timeout', message: 'The Bridge app did not answer.' }
+        });
+      }, REQUEST_TIMEOUT_MS);
+      this.pending.set(id, {
+        type,
+        resolve: resolve as (outcome: RequestOutcome<unknown>) => void,
+        timer
+      });
+      this.send(socket, { v: PROTOCOL_VERSION, id, type, payload } as ClientMessage);
+    });
   }
 
   /** Connect now unless already connected or trying. Safe to call on every wake-up. */
@@ -227,7 +288,7 @@ export class Connection {
       }
       switch (result.kind) {
         case 'ok':
-          this.adopt(result.socket, port);
+          this.adopt(result.socket, port, result.backlog);
           return true;
         case 'revoked':
           await this.forgetKey();
@@ -289,7 +350,11 @@ export class Connection {
         done = true;
         clearTimeout(timer);
         socket.onopen = socket.onmessage = socket.onclose = null;
-        if (result.kind !== 'ok') socket.close(1000, 'handshake failed');
+        if (result.kind === 'ok') {
+          socket.onmessage = (event: MessageEvent) => result.backlog.push(event);
+        } else {
+          socket.close(1000, 'handshake failed');
+        }
         resolve(result);
       };
       const timer = setTimeout(() => finish({ kind: 'refused' }), HANDSHAKE_TIMEOUT_MS);
@@ -311,7 +376,7 @@ export class Connection {
           const ours = await signProof(key, 'client', 'ws', port, serverNonce);
           this.send(socket, clientMessage(this.deps.randomId(), 'auth', { proof: ours }));
         } else if (message.type === 'auth_ok' && serverVerified) {
-          finish({ kind: 'ok', socket });
+          finish({ kind: 'ok', socket, backlog: [] });
         }
         // auth_error is followed by a close, handled below.
       };
@@ -325,7 +390,7 @@ export class Connection {
   }
 
   /** Takes over an authenticated socket. */
-  private adopt(socket: WebSocket, port: number): void {
+  private adopt(socket: WebSocket, port: number, backlog: MessageEvent[]): void {
     this.socket = socket;
     this.lastMessageAt = this.now();
     this.reconnector.reset();
@@ -338,16 +403,29 @@ export class Connection {
       const message = parseMessage(ServerMessage, event.data);
       if (!message) return;
       this.lastMessageAt = this.now();
-      if (message.type === 'ping') {
-        this.send(socket, clientMessage(this.deps.randomId(), 'pong', {}));
+      switch (message.type) {
+        case 'ping':
+          this.send(socket, clientMessage(this.deps.randomId(), 'pong', {}));
+          break;
+        case 'status':
+          this.setProject(message.payload.project);
+          break;
+        case 'response':
+          this.settle(message.id, message.payload);
+          break;
+        default:
+          // pong and error need no action.
+          break;
       }
-      // status, pong and error need no action yet.
     };
+    for (const event of backlog) socket.onmessage(event);
 
     socket.onclose = (event: CloseEvent) => {
       if (this.socket !== socket) return;
       this.socket = null;
       this.stopPing();
+      this.failPending();
+      this.setProject(null);
       if (event.code === CloseCode.unauthorized) {
         // Revoked or replaced by another pairing. This server already proved itself.
         void this.forgetKey();
@@ -390,7 +468,47 @@ export class Connection {
     const socket = this.socket;
     this.socket = null;
     this.stopPing();
+    this.failPending();
+    this.setProject(null);
     socket?.close(1000, 'client closing');
+  }
+
+  /** Resolves a pending request with the desktop's response, if it matches the schema. */
+  private settle(
+    id: string,
+    payload: Extract<ServerMessage, { type: 'response' }>['payload']
+  ): void {
+    const entry = this.pending.get(id);
+    if (!entry) return;
+    this.pending.delete(id);
+    clearTimeout(entry.timer);
+    if (!payload.ok) {
+      entry.resolve(payload);
+      return;
+    }
+    const result = FILE_RESULTS[entry.type].safeParse(payload.result);
+    entry.resolve(
+      result.success
+        ? { ok: true, result: result.data }
+        : { ok: false, error: { code: 'bad-response', message: 'Unexpected reply from Bridge.' } }
+    );
+  }
+
+  private failPending(): void {
+    for (const [id, entry] of this.pending) {
+      clearTimeout(entry.timer);
+      entry.resolve({
+        ok: false,
+        error: { code: 'not-connected', message: 'The connection to Bridge closed.' }
+      });
+      this.pending.delete(id);
+    }
+  }
+
+  private setProject(project: ProjectInfo | null): void {
+    if (JSON.stringify(project) === JSON.stringify(this.projectInfo)) return;
+    this.projectInfo = project;
+    for (const listener of this.projectListeners) listener(project);
   }
 
   private setPaired(paired: boolean): void {

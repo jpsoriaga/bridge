@@ -75,11 +75,15 @@ chrome.runtime.onConnect.addListener((port) => {
     port.disconnect();
     return;
   }
-  const push = (status: StatusUpdate['status']) =>
-    port.postMessage({ type: 'status', status } satisfies StatusUpdate);
-  push(connection.current);
-  const unsubscribe = connection.onStatus(push);
-  port.onDisconnect.addListener(unsubscribe);
+  const push = () =>
+    port.postMessage({
+      type: 'status',
+      status: connection.current,
+      project: connection.project
+    } satisfies StatusUpdate);
+  push();
+  const unsubscribers = [connection.onStatus(push), connection.onProject(push)];
+  port.onDisconnect.addListener(() => unsubscribers.forEach((off) => off()));
   // The panel opening is a good moment to try again without waiting out the backoff.
   if (connection.current !== 'connected') void connection.retry();
 });
@@ -108,6 +112,21 @@ chrome.runtime.onMessage.addListener((raw: unknown, sender, sendResponse) => {
     case 'retry':
       void connection.retry().then(() => sendResponse(null));
       return true;
+    case 'dev-file': {
+      // The side panel's test field only exists in dev builds, and so does this path.
+      if (!import.meta.env.DEV) return false;
+      const file = request.request;
+      const outcome =
+        file.type === 'tree'
+          ? connection.request('tree', file.payload)
+          : file.type === 'read'
+            ? connection.request('read', file.payload)
+            : file.type === 'write'
+              ? connection.request('write', file.payload)
+              : connection.request('undo', file.payload);
+      void outcome.then(sendResponse);
+      return true;
+    }
   }
 });
 

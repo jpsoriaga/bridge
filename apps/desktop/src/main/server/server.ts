@@ -6,14 +6,18 @@ import type { RawData, WebSocket } from 'ws';
 import {
   ClientMessage,
   CloseCode,
+  FILE_ERROR_MESSAGES,
   PairRequest,
   UnpairChallengeRequest,
   UnpairRequest,
   parseMessage,
   serverMessage,
+  type FileOutcome,
+  type FileRequest,
   type HealthResponse,
   type PairFailure,
   type PairSuccess,
+  type ProjectInfo,
   type ServerMessage
 } from '@bridge/shared';
 import {
@@ -36,6 +40,10 @@ export interface BridgeServerOptions {
   version: string;
   /** Called whenever pairing or connection state changes. */
   onChange?: () => void;
+  /** Answers tree/read/write/undo. Without it every file request gets `no-project`. */
+  files?: (request: FileRequest) => Promise<FileOutcome<unknown>>;
+  /** The open project, sent in every `status`. */
+  project?: () => ProjectInfo | null;
   allowedOrigins?: ReadonlySet<string>;
   authTimeoutMs?: number;
   idleTimeoutMs?: number;
@@ -70,6 +78,11 @@ export function createBridgeServer(options: BridgeServerOptions) {
     pairing,
     version,
     onChange = () => {},
+    files = async () => ({
+      ok: false,
+      error: { code: 'no-project', message: FILE_ERROR_MESSAGES['no-project'] }
+    }),
+    project = () => null,
     allowedOrigins = ALLOWED_ORIGINS,
     authTimeoutMs = AUTH_TIMEOUT_MS,
     idleTimeoutMs = IDLE_TIMEOUT_MS,
@@ -114,6 +127,9 @@ export function createBridgeServer(options: BridgeServerOptions) {
     for (const socket of sessions) socket.close(code, reason);
     sessions.clear();
   }
+
+  const statusMessage = () =>
+    serverMessage(randomUUID(), 'status', { version, project: project() });
 
   function revoke(): void {
     pairing.unpair();
@@ -243,7 +259,7 @@ export function createBridgeServer(options: BridgeServerOptions) {
           sessions.add(socket);
           resetIdle();
           send(serverMessage(randomUUID(), 'auth_ok', {}));
-          send(serverMessage(randomUUID(), 'status', { version }));
+          send(statusMessage());
           onChange();
           return;
         }
@@ -258,7 +274,25 @@ export function createBridgeServer(options: BridgeServerOptions) {
           return;
         }
         resetIdle();
-        if (message.type === 'ping') send(serverMessage(randomUUID(), 'pong', {}));
+        switch (message.type) {
+          case 'ping':
+            send(serverMessage(randomUUID(), 'pong', {}));
+            break;
+          case 'tree':
+          case 'read':
+          case 'write':
+          case 'undo':
+            // The reply carries the request's id.
+            void files(message)
+              .catch((): FileOutcome<unknown> => ({
+                ok: false,
+                error: { code: 'io-error', message: FILE_ERROR_MESSAGES['io-error'] }
+              }))
+              .then((outcome) => send(serverMessage(message.id, 'response', outcome)));
+            break;
+          default:
+            break;
+        }
       });
 
       socket.on('close', () => {
@@ -298,6 +332,14 @@ export function createBridgeServer(options: BridgeServerOptions) {
 
     /** Revokes the token and drops any open socket. */
     unpair: revoke,
+
+    /** Tells the connected extension about a project change. */
+    pushStatus(): void {
+      const message = JSON.stringify(statusMessage());
+      for (const socket of sessions) {
+        if (socket.readyState === socket.OPEN) socket.send(message);
+      }
+    },
 
     async close(): Promise<void> {
       closeSessions(1001, 'shutting down');

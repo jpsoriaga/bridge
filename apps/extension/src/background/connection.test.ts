@@ -7,7 +7,12 @@ import {
   serverMessage,
   type ConnectionStatus
 } from '@bridge/shared';
-import { Connection, PING_INTERVAL_MS, type ConnectionStorage } from './connection';
+import {
+  Connection,
+  PING_INTERVAL_MS,
+  REQUEST_TIMEOUT_MS,
+  type ConnectionStorage
+} from './connection';
 
 const TOKEN = 'b'.repeat(64);
 const KEY = createHash('sha256').update(TOKEN).digest('hex');
@@ -25,6 +30,10 @@ interface FakeServer {
   /** Answer every hello with this challenge instead of a fresh one (replay attack). */
   replay?: { proof: string; serverNonce: string };
   lastChallenge?: { proof: string; serverNonce: string };
+  /** Sent in the same tick as auth_ok, before the client can adopt the socket. */
+  afterAuth?: unknown[];
+  /** Answers file requests. Return undefined to never answer. */
+  respond?: (message: { id: string; type: string; payload: Record<string, string> }) => unknown;
 }
 
 let servers: Map<number, FakeServer>;
@@ -37,7 +46,7 @@ const portOf = (url: string) => Number(new URL(url).port);
 /** A browser WebSocket whose far end plays `servers.get(port)`. */
 class FakeSocket {
   readyState = 0;
-  sent: { type: string; payload: Record<string, string> }[] = [];
+  sent: { id: string; type: string; payload: Record<string, string> }[] = [];
   raw: string[] = [];
   onopen: (() => void) | null = null;
   onmessage: ((event: { data: unknown }) => void) | null = null;
@@ -73,7 +82,14 @@ class FakeSocket {
         this.server.key !== null &&
         message.payload.proof ===
           sign(this.server.key, 'client', 'ws', this.port, this.serverNonce);
-      this.later(() => (ok ? this.receive(serverMessage('o', 'auth_ok', {})) : this.close(4001)));
+      this.later(() => {
+        if (!ok) return this.close(4001);
+        this.receive(serverMessage('o', 'auth_ok', {}));
+        for (const extra of this.server.afterAuth ?? []) this.receive(extra);
+      });
+    } else if (['tree', 'read', 'write', 'undo'].includes(message.type)) {
+      const reply = this.server.respond?.(message);
+      if (reply !== undefined) this.later(() => this.receive(reply));
     }
   }
 
@@ -467,5 +483,96 @@ describe('Connection', () => {
     expect(paths).toContain('/unpair/challenge');
     expect(paths).not.toContain('/unpair');
     expect(storage.key).toBeNull();
+  });
+});
+
+describe('file requests', () => {
+  const READ = { content: 'hi\n', hash: 'e'.repeat(64), eol: 'lf' };
+
+  it('sends a request and resolves with the checked result', async () => {
+    servers.set(DEFAULT_PORT, {
+      key: KEY,
+      respond: (m) => serverMessage(m.id, 'response', { ok: true, result: READ })
+    });
+    const { connection } = makeConnection();
+    await connection.connect();
+    const outcome = await connection.request('read', { path: 'a.txt' });
+    expect(outcome).toEqual({ ok: true, result: READ });
+    expect(sockets[0]!.sent.at(-1)).toMatchObject({ type: 'read', payload: { path: 'a.txt' } });
+  });
+
+  it('passes typed refusals through', async () => {
+    servers.set(DEFAULT_PORT, {
+      key: KEY,
+      respond: (m) =>
+        serverMessage(m.id, 'response', {
+          ok: false,
+          error: { code: 'denied', message: 'Protected.' }
+        })
+    });
+    const { connection } = makeConnection();
+    await connection.connect();
+    expect(await connection.request('read', { path: '.env' })).toEqual({
+      ok: false,
+      error: { code: 'denied', message: 'Protected.' }
+    });
+  });
+
+  it('rejects a result that does not match the schema for its request', async () => {
+    servers.set(DEFAULT_PORT, {
+      key: KEY,
+      respond: (m) => serverMessage(m.id, 'response', { ok: true, result: { entries: 'nope' } })
+    });
+    const { connection } = makeConnection();
+    await connection.connect();
+    expect(await connection.request('tree', {})).toMatchObject({
+      ok: false,
+      error: { code: 'bad-response' }
+    });
+  });
+
+  it('fails fast when not connected', async () => {
+    servers.clear();
+    const { connection } = makeConnection();
+    await connection.connect();
+    expect(await connection.request('tree', {})).toMatchObject({
+      ok: false,
+      error: { code: 'not-connected' }
+    });
+  });
+
+  it('times out, and fails pending requests when the socket closes', async () => {
+    const { connection } = makeConnection();
+    await connection.connect();
+    const slow = connection.request('tree', {});
+    await advance(REQUEST_TIMEOUT_MS);
+    expect(await slow).toMatchObject({ ok: false, error: { code: 'timeout' } });
+
+    const cut = connection.request('tree', {});
+    sockets[0]!.close(1001);
+    expect(await cut).toMatchObject({ ok: false, error: { code: 'not-connected' } });
+  });
+
+  it('tracks the project from status, including one sent right after auth_ok', async () => {
+    servers.set(DEFAULT_PORT, {
+      key: KEY,
+      afterAuth: [
+        serverMessage('s', 'status', { version: '1', project: { name: 'app', path: '~/app' } })
+      ]
+    });
+    const { connection } = makeConnection();
+    const seen: unknown[] = [];
+    connection.onProject((p) => seen.push(p));
+    await connection.connect();
+    expect(connection.project).toEqual({ name: 'app', path: '~/app' });
+
+    sockets[0]!.receive(serverMessage('s2', 'status', { version: '1', project: null }));
+    expect(connection.project).toBeNull();
+    sockets[0]!.receive(
+      serverMessage('s3', 'status', { version: '1', project: { name: 'b', path: '/b' } })
+    );
+    sockets[0]!.close(1001);
+    expect(connection.project).toBeNull();
+    expect(seen).toEqual([{ name: 'app', path: '~/app' }, null, { name: 'b', path: '/b' }, null]);
   });
 });
