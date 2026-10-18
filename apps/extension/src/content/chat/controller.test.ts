@@ -1,0 +1,137 @@
+// @vitest-environment happy-dom
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { BridgeConfig } from '@bridge/shared';
+import type { WorkerRequest } from '../../messages';
+import type { Ask } from './cards/diff-card';
+import { ChatController } from './controller';
+
+// The controller against a saved chat page: long conversations that unmount and remount
+// messages, other tabs owning the session, and the extension reloading under the page.
+
+const FIXTURES = join(__dirname, '../../../fixtures/chatgpt');
+const page = readFileSync(join(FIXTURES, 'single-edit.html'), 'utf8');
+
+const CONFIG: BridgeConfig = {
+  mode: 'auto-apply',
+  allowlist: [],
+  stepLimit: 10,
+  pauseOnFailure: false,
+  running: null,
+  instance: 'launch-1'
+};
+
+let calls: WorkerRequest[];
+let session: 'active' | 'elsewhere';
+let controller: ChatController | null;
+
+const ask = vi.fn(async (request: WorkerRequest) => {
+  calls.push(request);
+  switch (request.type) {
+    case 'chat-sync':
+      return { connected: true, session, config: CONFIG, chipCorner: 'bottom-right' };
+    case 'card-get':
+      return {};
+    case 'chat-read':
+      return { ok: false, error: { code: 'not-found', message: 'missing' } };
+    case 'chat-write':
+      return { ok: true, result: { opId: 'op-1', kind: 'create', hash: 'b'.repeat(64) } };
+    case 'chat-move-here':
+      session = 'active';
+      return 'active';
+    default:
+      return true;
+  }
+}) as unknown as Ask;
+
+const wait = (ms = 400) => new Promise((r) => setTimeout(r, ms));
+const hosts = (kind: string) => document.querySelectorAll(`[data-bridge-host="${kind}"]`);
+const count = (type: WorkerRequest['type']) => calls.filter((c) => c.type === type).length;
+
+beforeEach(() => {
+  calls = [];
+  session = 'active';
+  controller = null;
+  vi.stubGlobal('chrome', { runtime: { id: 'bridge-test', getURL: (p: string) => p } });
+  history.replaceState(null, '', '/c/conv-1234abcd');
+  // An empty conversation first, so the reply that lands next counts as new.
+  document.body.innerHTML = '<main class="relative"></main><div id="composer"></div>';
+});
+
+afterEach(() => {
+  controller?.invalidate();
+  vi.unstubAllGlobals();
+});
+
+async function startWithNewReply(): Promise<ChatController> {
+  controller = new ChatController(ask);
+  controller.start();
+  await wait();
+  document.querySelector('main')!.outerHTML = page;
+  // The page swapped <main>; the next poll re-attaches.
+  await wait(1_400);
+  return controller;
+}
+
+describe('ChatController', () => {
+  it('puts a card under a new reply and auto-applies it once', async () => {
+    await startWithNewReply();
+    expect(hosts('diff-card')).toHaveLength(1);
+    expect(count('chat-write')).toBe(1);
+  });
+
+  it('moves cards to a remounted message without rebuilding or acting again', async () => {
+    await startWithNewReply();
+    const reads = count('chat-read');
+    // A long conversation unmounts the message as it scrolls away, then mounts a copy.
+    const message = document.querySelector('[data-message-author-role="assistant"]')!;
+    const parent = message.parentElement!;
+    const copy = message.cloneNode(true) as Element;
+    copy.querySelectorAll('[data-bridge-host]').forEach((host) => host.remove());
+    message.remove();
+    await wait();
+    parent.append(copy);
+    await wait();
+    expect(copy.querySelectorAll('[data-bridge-host="diff-card"]')).toHaveLength(1);
+    expect(count('chat-read')).toBe(reads);
+    expect(count('chat-write')).toBe(1);
+  });
+
+  it('takes every card and the chip off the page when the extension reloads', async () => {
+    const c = await startWithNewReply();
+    expect(hosts('diff-card').length).toBeGreaterThan(0);
+    c.invalidate();
+    expect(hosts('diff-card')).toHaveLength(0);
+    expect(hosts('loop-chip')).toHaveLength(0);
+    const notice = hosts('page-notice')[0] as HTMLElement | undefined;
+    expect(notice?.hidden).toBe(false);
+    // Nothing more goes to the (dead) worker.
+    const before = calls.length;
+    c.setSession('active');
+    await wait();
+    expect(calls.length).toBe(before);
+  });
+
+  it('notices a dead runtime on its own, without a failed request', async () => {
+    await startWithNewReply();
+    vi.stubGlobal('chrome', { runtime: {} });
+    await wait(1_200);
+    expect(hosts('diff-card')).toHaveLength(0);
+    expect((hosts('page-notice')[0] as HTMLElement | undefined)?.hidden).toBe(false);
+  });
+
+  it('shows “active in another tab” with Move here, and cards stay off', async () => {
+    session = 'elsewhere';
+    controller = new ChatController(ask);
+    controller.start();
+    await wait();
+    const notice = hosts('page-notice')[0] as HTMLElement | undefined;
+    expect(notice?.hidden).toBe(false);
+    document.querySelector('main')!.outerHTML = page;
+    await wait(1_400);
+    // Not the owner: nothing is parsed or applied here.
+    expect(hosts('diff-card')).toHaveLength(0);
+    expect(count('chat-write')).toBe(0);
+  });
+});

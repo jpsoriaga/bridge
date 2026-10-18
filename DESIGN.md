@@ -47,7 +47,7 @@ The image wins on each point below. Each deviation is deliberate and scoped:
 - **Chat column**: content is centred, max width 760px, with 32px top padding. Gaps are 16px between blocks and 12px between a message and its card.
 - **Side panel**: about 340px wide with a hairline on its left edge. Sections are stacked with 20px horizontal padding and 24px between sections. Each section is a muted label (12px) with its content below.
 - **Panel footer**: a hairline on top, 16px/20px padding, the step counter (12px, muted) on the left and Stop on the right. It sticks to the bottom.
-- **Desktop app**: the same top bar, then a single centred 480px column with the panel's sections (Project, Extension, Mode, Activity, Settings), and a footer showing the version. The top bar and footer stay put while the column scrolls. With a project open, the top bar shows the project name (13px, 600) and its path (mono 12px, `--fg-muted`, truncated) between the brand and the status pill.
+- **Desktop app**: see "Desktop app" below.
 
 ### Chat elements
 
@@ -65,7 +65,7 @@ The image wins on each point below. Each deviation is deliberate and scoped:
 | `--bg-raised`     | `#ffffff` | `#2e2e2e`             | Active mode segment (sits above the track)                    |
 | `--fg`            | `#111111` | `#ededed`             | Primary text, file paths                                      |
 | `--fg-muted`      | `#5c5c5c` | `#a3a3a3`             | Labels, meta ("New file · +18"), hints                        |
-| `--fg-subtle`     | `#8f8f8f` | `#6b6b6b`             | Placeholders, version, disabled text                          |
+| `--fg-subtle`     | `#6e6e6e` | `#858585`             | Placeholders, version, hunk headers, file sizes               |
 | `--border`        | `#e5e5e5` | `#262626`             | Hairlines, card and button edges                              |
 | `--border-strong` | `#d4d4d4` | `#3a3a3a`             | Pending diff card, dashed command card, hovered button        |
 | `--inverse-bg`    | `#111111` | `#ededed`             | Primary button, send button, logo tile                        |
@@ -74,10 +74,12 @@ The image wins on each point below. Each deviation is deliberate and scoped:
 | `--success-bg`    | `#e8f6ec` | `rgb(63 185 80/.12)`  | Added diff lines                                              |
 | `--danger`        | `#c4261d` | `#f2655c`             | `−N`, Stop, destructive buttons                               |
 | `--danger-bg`     | `#fdeceb` | `rgb(242 101 92/.12)` | Removed diff lines, danger button hover                       |
-| `--warning`       | `#c2570c` | `#e8853d`             | "Waiting for review" dot                                      |
+| `--warning`       | `#b54f0a` | `#e8853d`             | "Waiting for review" dot, warning text                        |
 | `--idle`          | `#a3a3a3` | `#6b6b6b`             | Neutral activity dot, "Not connected"                         |
 
-Dark mode follows `prefers-color-scheme`. Components use only tokens and never raw hex values.
+Each colour token is `light-dark(light, dark)`, so `color-scheme` picks the theme: it follows the system, the desktop app's **Appearance** setting overrides it with `data-theme` on `<html>`, and the chat cards follow the chat page's `html.light` / `html.dark`. Components use only tokens and never raw hex values.
+
+**Contrast.** Every text token (`--fg`, `--fg-muted`, `--fg-subtle`, `--success`, `--danger`, `--warning`) meets WCAG AA (4.5:1) on `--bg`, `--bg-muted` and `--bg-hover` in both themes; `tokens.test.ts` checks it. Change a value only with that test green.
 
 ## Typography
 
@@ -105,7 +107,7 @@ Tokens: `--text-xs` 12, `--text-sm` 13, `--text-base` 14, `--text-lg` 16, `--tex
 - **Radii**: `--radius-sm` 6px (inline code, tags), `--radius-md` 8px (buttons, segments), `--radius-lg` 12px (cards, segmented track), `--radius-xl` 18px (chat bubble), `--radius-full` (composer, dots, send button).
 - **Borders** are always 1px. Use solid `--border` by default and `--border-strong` for pending or emphasised items. The command card is **dashed** `--border-strong`, the only dashed line in the system.
 - **Elevation**: `--shadow-xs` (`0 1px 2px rgb(0 0 0/.06)`) appears only on the composer and the active mode segment. There are no other shadows, gradients or blur. The chat cards have none.
-- **Focus**: a 2px ring in `--fg`, offset 2px (`--focus-ring`), shown on `:focus-visible` only.
+- **Focus**: a 2px ring in `--fg`, offset 2px (`--focus-ring`), shown on `:focus-visible` only. Every control can be reached and used from the keyboard: radio groups (mode, appearance) move with the arrow keys, the project menu with arrows, Home/End and Escape, and focus returns to where it came from when a menu or detail view closes.
 - **Motion**: 120ms colour and background transitions with `--ease`. Nothing slides or bounces, and all of it is off under `prefers-reduced-motion`.
 
 ## Components
@@ -174,9 +176,28 @@ One per `@@RUN`, after the READ card. A **dashed** `--border-strong` edge (the o
 
 Body: the output, mono 13px/21px, wrapping, scrolling past 480px, the last 400 lines with a "Show all N lines" row above them. Footer (`--bg-hover`): the mode tag and a hint, then **Cancel** (`.btn-danger`) while running, else **Send output** (primary) once there's a result and **Run** (primary before a run, secondary "Run again" after). A command that isn't allowed has no Run; its hint says "Add it to the allowlist in the Bridge app." Shell syntax gets the parser's reason in `--danger`.
 
-### Full auto chip (page)
+### Page chip
 
-Fixed to the page's bottom-right (16px from the right, 96px up, clear of the composer), in its own closed shadow root. A pill: 1px `--border`, `--bg`, `--radius-full`, no shadow. Inside: an 8px dot (`success` while running, `warning` paused, idle otherwise), **Full auto** (12px/600), the counter `3 / 10` (tabular), the state in `--fg-muted` ("Waiting for the reply", "Paused · step limit", "On"), and a 28px pill **Stop** (`.btn-danger`). Shown while the session is active in Full auto, or while a run isn't idle.
+In a corner of the page (default bottom-right, 16px in, 96px up, clear of the composer; top corners sit 72px down), in its own closed shadow root. A pill: 1px `--border`, `--bg`, `--radius-full`, no shadow. Inside: the handle (an 8px dot, `success` while a run goes, `warning` paused, idle otherwise, and the mode, 12px/600), then in Full auto the counter `3 / 10` (tabular), the state in `--fg-muted` ("Waiting for the reply", "Paused · step limit", "On") and a 28px pill **Stop** (`.btn-danger`). Shown while the tab's session is active, or while a run isn't idle. Drag the handle to another corner (it snaps to the nearest), or focus it and use the arrow keys; the corner is remembered.
+
+### Page notice
+
+A one-line pill at the top centre of the page (16px down), same frame as the chip, 13px text and a 28px secondary button: "This chat's Bridge session is active in another tab." with **Move here**, or (warning border at 35%) "Bridge was updated or reloaded. Reload the page to use it here." with **Reload**.
+
+### DELETE and RENAME cards
+
+After the message bar, before the READ card, one per marker. The same frame and header as a diff card, no body.
+
+- **DELETE, pending**: the border and the trash icon are `--danger` (35% border), the path, **Copy path**, a `delete` badge (`danger`) and the size ("1.2 KB", 12px muted). Footer hint in `--danger`: "Bridge will delete this file. It keeps a backup, so you can undo." In Auto-apply and Full auto it starts "Deletes always need your click, even in this mode." Buttons: **Reject** (secondary) and **Delete file** (`.btn-danger .btn-lg`, "Deleting…").
+- **RENAME, pending**: an arrow icon, `old → new` in mono (old in `--fg-muted`, the arrow in `--fg-subtle`), a neutral `rename` badge, the size. **Reject** and **Rename** (primary `.btn-lg`).
+- Other badges: `missing` (`warning`, no file there; nothing to do), `exists` (`warning`, the new path is taken), `conflict` (`warning`, changed on disk since the card checked), `blocked` (`danger`).
+- **Applied**: like a diff card's applied row, with "Deleted" or "Renamed" in `--success`, the time, and **Undo**. Rejected and undone rows are struck through.
+
+### Card conventions
+
+Every card's header is: icon, path (or title), **Copy path** (a 24px icon button, `--fg-subtle`, "Copied" for 1.5s), badges, meta, spacer, toggle (**Hide diff / files / output**, which collapses the card to its header and footer). The card is a labelled group, and keeps keyboard focus on the same control when it redraws (Apply becomes Undo, so focus moves to Undo). Applied rows show the time ("07:50 PM", 12px muted, tabular). **Show** from the side panel gives the card a focus ring.
+
+A diff card for a path the same reply edits again says, in `--warning`, "This reply has another version of this file further down. Apply all uses the last one." (or "…This is the last version." on the last). Binary or over-1 MB content gets `blocked` and no diff.
 
 ### Mode switch (`.segmented`, `role="radiogroup"`)
 
@@ -216,7 +237,7 @@ Classes `.activity`, `.activity-row`, `.activity-text`, `.activity-path` and `.a
 
 ### Project section (desktop)
 
-The project name (14px) and its path (mono 12px, muted, truncated) under the "Project" label. With no project, "No project open", a hint, and **Open folder…** as the view's primary `.btn-lg`; once a project is open it becomes a secondary "Open another folder…". **Recent** lists the other recent projects as plain rows split by hairlines: name (13px) over path (mono 12px, muted). Open errors use `.error-text`.
+The project name (14px) and its path (mono 12px, muted, truncated) under the "Project" label. With no project, "No project open", a hint, and **Open folder…** as the view's primary `.btn-lg`. Switching projects (recents, Open folder…) lives in the header's project switcher. A missing folder adds the "Project missing" notice. Open errors use `.error-text`.
 
 ### Protected files (desktop settings)
 
@@ -240,13 +261,21 @@ Label "Send files" with a **Clear** text button when anything is selected. A 32p
 
 **Budget meter** under the tree: a 4px `--bg-muted` track with an `--fg` fill (`--radius-full`) for the share of 30,000 characters, turning `--warning` past it. Below, a 12px hint: "3 files · about 4,210 of 30,000 characters", plus the warning line past the limit and an error past 50 files. Then **Insert N files** (primary `.btn-lg`) and a status line after sending.
 
-### Files in context tree
+### Files in context (side panel)
 
-Phase 5. Same rows as the Send files tree, without checkboxes. A `new` tag in `--success` mono follows files the chat created this session.
+Label "Files in context" with **Resend changed (N)** (secondary) on the right while any are stale or missing. One row per file sent this session, newest first, ~28px: the path in mono 13px (truncated), a tag (`changed` in `--warning`, `deleted` in `--danger`; mono 12px, 1px border at 35%), the characters it took ("1,204 chars", 12px `--fg-subtle`, tabular), and a 24px icon button (×, labelled "Remove path from the list"). Under the list a 12px hint with the total, and when the project is too big to watch: "Bridge checks only these." Empty: "Files you send to the chat show up here, with how much of the message each one took."
+
+### Requests (side panel)
+
+READ and RUN cards in the tab still waiting for a click. One row each, ~36px: "Files" or "Run" (12px muted, 36px wide), the paths or `$ command` in mono (truncated), a `danger` tag (`not allowed` / `blocked`) when it can't go ahead, and **Show** (secondary), which scrolls the card into view and focuses its button. Empty: "Nothing waiting."
+
+### Side panel sections and states
+
+In order: Connection (label row with **Unpair** as a text button; the project name and path, or the warning notice "The project folder is missing…"), Session, Mode, Full auto, Command, Requests, Files in context, Send files. Before the worker answers: placeholder bars (`.skeleton`, `--bg-muted`, 12px tall, `--radius-sm`; nothing animates). In a tab whose session lives elsewhere: "Session active in another tab", a hint, and **Move here** (primary `.btn-lg`).
 
 ### Stop button
 
-`.btn-danger` at 32px, in the side panel's sticky footer and the app's loop bar, on the right, shown only while a Full auto run is going (not idle or stopped). A click stops the loop and its command at once; in the app the label reads "Stopping…" until the loop reports back. The step counter to its left reads "Step N of M" (12px muted, tabular).
+`.btn-danger` at 32px, in the side panel's sticky footer and the app's Full auto strip, on the right, shown only while a Full auto run is going (not idle or stopped). A click stops the loop and its command at once; in the app the label reads "Stopping…" until the loop reports back. The step counter to its left reads "Step N of M" (12px muted, tabular).
 
 ### Side panel: Mode, Full auto, Command
 
@@ -254,14 +283,56 @@ Phase 5. Same rows as the Send files tree, without checkboxes. A `new` tag in `-
 - **Full auto** (in Full auto, or while a run exists): a status line with a dot and the state and `step / limit`. Paused: the reason in the bordered warning notice, then **Resume** (primary), or **Continue for N more** at the step limit. Stopped: "Stopped. Nothing was reverted; undo is still available." and **Allow Full auto again** (secondary).
 - **Command** (while one runs, or after one ran): label row with **Cancel** (`.btn-danger`) while running; `$ command` in mono; "Running…", "Passed" or "Failed (exit N)" (`--danger`); the last 200 lines in a `--bg-muted` mono 12px box, 240px tall at most.
 
+### Desktop app
+
+```
+┌───────────────────────────────────────────────────────────────────────────┐
+│ [■] Bridge  [📁 acme-web ▾]                         ● Connected  [Manual]  │ 56px
+├───────────────────────────────────────────────────────────────────────────┤
+│ ● Full auto · Applying and running              Step 3 of 10      [Stop]  │ while a run goes
+├──────────────┬────────────────────────────────────────────────────────────┤
+│ Session      │            ┌ 640px column, 32px top padding ┐              │
+│ Activity     │            │ sections 32px apart             │              │
+│ Settings     │            └─────────────────────────────────┘              │
+│              │                                                            │
+│ ? Getting    │                                                            │
+│   started    │                                                            │
+│ Bridge 0.1.0 │                                                            │
+└──────────────┴────────────────────────────────────────────────────────────┘
+```
+
+- **Header** (56px, hairline below, draggable window area): logo and "Bridge"; the **project switcher** (32px secondary-style button: folder icon, name 13px/600, a `missing` warning tag when the folder is gone, chevron) opening a menu (1px `--border-strong`, `--radius-md`, no shadow) with "Recent" rows (name over mono path) and **Open folder…** with its shortcut; the status pill; the **mode pill** (24px, 1px `--border-strong`, 12px/600; `--warning` text and border in Full auto), which jumps to the mode switch.
+- **Full auto strip**: under the header on every page while a run is going (not idle or stopped): a dot, "**Full auto** · state" (and the pause reason), "Step N of M" (12px muted, tabular) and **Stop** (`.btn-danger`). It's the app's Stop button; ⌘. does the same.
+- **Nav**: 200px, hairline on the right. Items are 32px buttons with a 16px icon, 13px/500 `--fg-muted`; hover `--bg-hover`; the current page (`aria-current`) is `--bg-muted`, `--fg`, 600. At the bottom: **Getting started** and the version (12px `--fg-subtle`).
+- **Page**: one 640px column. Section headings are the 12px muted label (as real `h2`s). In Settings they're 13px/600 `--fg` with a hairline below, and the page starts with an index of 28px pill buttons that jump to each section.
+- **Empty state** (`.empty`): 13px `--fg-muted`, centred, 16px padding in a 1px **dashed** `--border-strong` box with `--radius-md`. (Dashed here marks "nothing yet", like the RUN card's edge marks "not run yet".)
+- **Notice** (`.notice`): 1px warning border at 35%, `--radius-md`, 12px padding, 13px text; "Project missing" uses it with **Try again** and **Open folder…**.
+- **Loading**: `.skeleton` bars, `--bg-muted`, 14px tall, `--radius-sm`. No shimmer.
+
+### Desktop: Session page
+
+The first-run checklist (when not dismissed), then Project, Extension, Mode, Running (while a command runs) and Recent activity (the last 5 rows and **View all**).
+
+**Checklist**: a card (1px `--border-strong`, `--radius-lg`, 20px padding) titled "Get started" (14px/600), a close icon button, "N of 4 done" (12px muted), then an ordered list: a 16px check (`--success`) or circle (`--fg-subtle`), the step (13px; done ones `--fg-muted`) and, for the next step only, its hint (12px muted) and a secondary button that does it. When all are done the title reads "You're set up" with **Done**.
+
+### Desktop: Activity page
+
+Label row "Activity" with **Undo last**. A 32px search field with a search icon, then filter chips (28px pills, 1px `--border`, 12px/500 muted; pressed: `--inverse-bg` with `--inverse-fg`, `aria-pressed`): Writes, Deletes, Renames, Commands, Blocked, Automatic. Rows are full-width buttons (40px min, `--radius-md`, hover `--bg-hover`) with the dot, the two-line text and a chevron; Full auto runs are grouped as before. Nothing matches: the empty box with **Clear filters**.
+
+**Detail**: "Back to activity" (text button), the path in mono 14px/600 (`old → new` for a rename) with **Undo** on the right, the status line (dot, date and time, meta), the reason in a notice for refusals, then the **diff viewer** (the card's diff rows: mono 13px/21px, `--success-bg` / `--danger-bg`, hunk headers `--fg-subtle`, 1px `--border`, `--radius-lg`, scrolling past 60% of the window, "Show all N lines" past 400) or the command line and its full output in the `--bg-muted` output box. A delete shows the whole file as removed rows; a rename says "Moved without changing its content."
+
+### Toasts (desktop)
+
+Bottom-right, 20px in, up to three stacked, 4s each, `aria-live="polite"`: a dot, the message (13px) with an optional mono detail, and a 12px muted hint on the next line. 1px `--border-strong`, `--radius-md`, `--bg`, no shadow. For: auto-applied edits, Full auto pausing or finishing, the project going missing, the extension disconnecting.
+
 ### Desktop: Mode, Commands, loop bar, toast
 
 - **Mode**: the segmented switch. Choosing Full auto opens the native confirm dialog first. Under the description, in Full auto, a `--warning` hint that it sends messages and runs model-written code and turns off on restart, End session, unpair or project switch; then the loop status line (dot, state, "step N of M") and the pause reason in `--warning`.
 - **Running** (while a command runs): label row with **Cancel**, `$ command` in mono, live output in a `--bg-muted` mono box (320px).
 - **Commands**: before the project's list is confirmed, the suggestions as checkbox rows (mono) and **Allow N commands** (primary). After: the entries with **Remove**, a mono input with **Add** (rejects shell syntax with the parser's reason). Then the command timeout (seconds), the step limit (messages) and "Pause Full auto when a command fails" with its hint.
 - **Settings** gains **Gated files** and **Hidden from commands** in the Protected files layout (defaults in mono, user entries with Remove, input and Add).
-- **Loop bar**: above the footer while a run is going: the step counter and Stop.
-- **Toast**: above the loop bar for 4s after Bridge applies edits on its own: a `success` dot, "Auto-applied path" in mono, and "Undo it in Activity." in muted 12px. 1px `--border`, `--radius-md`, no shadow.
+- **Settings** sections: Connection (port, extension, **Unpair** / **Pair again**), Project (protected and gated files), Commands (allowlist, timeout, hidden variables, PATH for commands with its source and any warning), Full auto (step limit, pause on failure), Backups (days to keep, **Open the backups folder**, **Clear for this project…** as `.btn-danger` behind a native dialog), Appearance (a segmented System / Light / Dark).
+- Number fields are 88px mono `.input`s at 32px with a 12px muted unit; they save on blur and show `.error-text` with the allowed range.
 
 ### Logo
 
@@ -273,7 +344,7 @@ The mark is a plus and a minus set on a diagonal, the two sides of a diff, drawn
 
 ### Icons
 
-Use outline icons 16px with a 1.5px stroke (Lucide style): check, file, chevron, arrow-up and folder. Icons inherit `currentColor`. The chat cards draw theirs with `createElementNS` from path data in `cards/dom.ts` (no React there). Add `lucide-react` when the React UIs need their first icon.
+Use outline icons 16px with a 1.5px stroke (Lucide style). Icons inherit `currentColor` and are hidden from screen readers; a button with only an icon has an `aria-label`. The chat cards draw theirs with `createElementNS` from path data in `cards/dom.ts` (check, file, chevron, alert, trash, arrow, copy, terminal). The desktop app draws its own the same way from `renderer/src/Icon.tsx` (chevron, check, circle, folder, session, activity, settings, help, back, close, search), so no icon package is needed.
 
 ## Don'ts
 

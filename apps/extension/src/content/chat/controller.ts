@@ -3,19 +3,28 @@ import type {
   CardRecord,
   ChatSyncReply,
   DiffCardRecord,
+  PendingRequest,
   ReadCardRecord,
   SessionState,
   WorkerRequest
 } from '../../messages';
 import { messageToText } from './adapter';
+import { ChangeCard, type FileChange } from './cards/change-card';
 import { DiffCard, type Ask } from './cards/diff-card';
 import { loadFonts } from './cards/host';
 import { LoopChip } from './cards/loop-chip';
 import { MessageBar } from './cards/message-bar';
+import { PageNotice } from './cards/page-notice';
 import { ReadCard } from './cards/read-card';
 import { RunCard } from './cards/run-card';
 import { blockKey, contentHash } from './keys';
-import { FullAutoLoop, type EditHold, type EditSummary, type ReplyActions } from './loop';
+import {
+  FullAutoLoop,
+  type ChangeSummary,
+  type EditHold,
+  type EditSummary,
+  type ReplyActions
+} from './loop';
 import { livePage } from './page';
 import {
   all,
@@ -25,6 +34,7 @@ import {
   first,
   SELECTORS,
   conversationIdFrom,
+  conversationMissing,
   findConversation,
   isMessageComplete,
   messageBody,
@@ -40,9 +50,18 @@ const POLL_MS = 1_000;
 const LAYOUT_STRIKES = 5;
 /** Run events that arrive before their card knows its run id are kept this long. */
 const MAX_EARLY_EVENTS = 200;
+/**
+ * A poll this late means the computer slept. Background tabs' timers can be held back to
+ * once a minute, so anything shorter could just be throttling.
+ */
+export const WAKE_GAP_MS = 150_000;
+/** The page must say "not found" this many polls in a row before the session ends. */
+const MISSING_STRIKES = 3;
 
 /** One assistant message's cards. */
 interface MessageView {
+  /** The message's id on the page. */
+  id: string;
   element: Element;
   text: string;
   parse: ChatParse;
@@ -51,6 +70,8 @@ interface MessageView {
   fences: number[];
   read: ReadCard | null;
   runs: RunCard[];
+  /** DELETE then RENAME cards, in the reply's order. */
+  changes: ChangeCard[];
   bar: MessageBar | null;
   /** Every card has read what it needs. */
   ready: Promise<unknown>;
@@ -60,14 +81,38 @@ type RunEvent = { type: 'output'; chunk: string } | { type: 'exit'; result: RunR
 
 /**
  * Applies a reply's edits by the Auto-apply rules: in order, leaving partial, conflicting,
- * blocked, gated and oversized files on their cards for a click.
+ * blocked, gated and oversized files on their cards for a click. A path the reply edits
+ * more than once gets only its last version. Deletes and renames are never in here: they
+ * always need a click.
  */
 export async function autoApply(cards: readonly DiffCard[], loopId?: string): Promise<void> {
   for (const card of cards) {
     await card.ready();
-    if (card.state !== 'pending' || !card.applicable) continue;
+    if (card.state !== 'pending' || !card.applicable || card.duplicate === 'earlier') continue;
     await card.apply({ trigger: 'auto', ...(loopId && { loopId }) });
   }
+}
+
+/** Marks edits to the same path in one reply: every one but the last is `earlier`. */
+export function markDuplicates(cards: readonly DiffCard[]): void {
+  const last = new Map<string, DiffCard>();
+  const count = new Map<string, number>();
+  for (const card of cards) {
+    last.set(card.edit.path, card);
+    count.set(card.edit.path, (count.get(card.edit.path) ?? 0) + 1);
+  }
+  for (const card of cards) {
+    const repeated = (count.get(card.edit.path) ?? 0) > 1;
+    card.setDuplicate(!repeated ? null : last.get(card.edit.path) === card ? 'later' : 'earlier');
+  }
+}
+
+/** Where a reply's deletes and renames stand. */
+export function changeSummary(cards: readonly ChangeCard[]): ChangeSummary {
+  return {
+    applied: cards.filter((c) => c.state === 'applied').map((c) => c.summary),
+    pending: cards.filter((c) => c.state === 'pending').map((c) => c.summary)
+  };
 }
 
 /** Where a reply's edits stand: applied, or left on their card and why. */
@@ -114,9 +159,21 @@ export class ChatController {
   private readonly earlyEvents = new Map<string, RunEvent[]>();
   private readonly loop: FullAutoLoop;
   private readonly chip: LoopChip;
+  private readonly notice = new PageNotice();
+  /** Replies already handed to the mode once. A remounted one is never acted on again. */
+  private readonly acted = new Set<string>();
+  private lastPoll = Date.now();
+  private missingStrikes = 0;
+  private pollTimer: ReturnType<typeof setInterval> | undefined;
+  /** The extension was reloaded or updated under this page: everything here is dead. */
+  private invalid = false;
+  private lastRequests = '';
 
   constructor(private readonly ask: Ask) {
-    this.chip = new LoopChip(() => this.loop.stop());
+    this.chip = new LoopChip(
+      () => this.loop.stop(),
+      (corner) => void this.ask({ type: 'chip-corner', corner })
+    );
     this.loop = new FullAutoLoop({
       page: livePage,
       config: () => this.config,
@@ -136,28 +193,88 @@ export class ChatController {
   start(): void {
     this.conversationId = conversationIdFrom(location.href);
     void this.sync();
-    setInterval(() => this.poll(), POLL_MS);
+    this.pollTimer = setInterval(() => this.poll(), POLL_MS);
     this.attach();
   }
 
-  /** The service worker says the session for this tab started or ended. */
+  /** The service worker says the session for this tab started, ended or moved. */
   setSession(session: SessionState | null): void {
+    if (this.invalid) return;
     this.session = session;
     for (const view of this.views.values()) this.setViewDisabled(view, session !== 'active');
     if (session !== 'active' && this.loop.active) this.loop.stop();
+    this.notice.render(
+      session === 'elsewhere'
+        ? {
+            text: 'This chat’s Bridge session is active in another tab.',
+            action: { label: 'Move here', onClick: () => void this.moveHere() }
+          }
+        : null
+    );
     this.renderChip();
+    this.reportRequests();
     this.schedule();
+  }
+
+  private async moveHere(): Promise<void> {
+    const state = await this.ask<SessionState | null>({ type: 'chat-move-here' });
+    if (state !== undefined) this.setSession(state);
+  }
+
+  /**
+   * The extension was reloaded or updated, so this script can't reach it any more ("Extension
+   * context invalidated"). Takes every card and the chip off the page and leaves a one-line
+   * notice: only a page reload brings Bridge back here.
+   */
+  invalidate(): void {
+    if (this.invalid) return;
+    this.invalid = true;
+    clearInterval(this.pollTimer);
+    clearTimeout(this.timer);
+    this.observer?.disconnect();
+    this.loop.stop();
+    this.clear();
+    this.chip.render(null);
+    this.chip.host.remove();
+    this.notice.render({
+      text: 'Bridge was updated or reloaded. Reload the page to use it here.',
+      tone: 'warning',
+      action: { label: 'Reload', onClick: () => location.reload() }
+    });
+  }
+
+  /** Files changed on disk: pending cards on them check again. */
+  filesChanged(paths: readonly string[], overflow: boolean): void {
+    const changed = new Set(paths);
+    const hit = (path: string) => overflow || changed.has(path);
+    for (const view of this.views.values()) {
+      for (const card of view.cards) if (hit(card.edit.path)) void card.refresh();
+      for (const card of view.changes) if (card.paths.some(hit)) void card.refresh();
+    }
+  }
+
+  /** "Show" in the side panel: scroll a pending READ or RUN card into view. */
+  reveal(id: string): void {
+    for (const view of this.views.values()) {
+      if (view.read?.key === id) view.read.reveal();
+      view.runs.forEach((run, i) => {
+        if (runRequestId(view, i) === id) run.reveal();
+      });
+    }
   }
 
   /** The app's mode and allowlist changed, or the connection came or went (null). */
   setConfig(config: BridgeConfig | null): void {
+    if (this.invalid) return;
     this.config = config;
     for (const view of this.views.values()) {
       for (const card of view.cards) card.setMode(config?.mode ?? null);
+      for (const card of view.changes) card.setMode(config?.mode ?? null);
       for (const run of view.runs) run.setConfig(config);
     }
     this.loop.onConfig(config);
     this.renderChip();
+    this.reportRequests();
   }
 
   /** Output or the exit of a command a RUN card here started. */
@@ -288,10 +405,16 @@ export class ChatController {
   }
 
   private renderChip(): void {
-    const on = this.session === 'active' && this.config?.mode === 'full-auto';
+    const mode = this.config?.mode;
     const { state, step, limit, reason } = this.loop;
-    this.chip.render(
-      on || state !== 'idle'
+    const fullAuto = mode === 'full-auto' || state !== 'idle';
+    if (this.invalid || !mode || (this.session !== 'active' && state === 'idle')) {
+      this.chip.render(null);
+      return;
+    }
+    this.chip.render({
+      mode,
+      loop: fullAuto
         ? {
             state,
             step,
@@ -299,24 +422,82 @@ export class ChatController {
             ...(reason && { reason })
           }
         : null
-    );
+    });
   }
 
-  private async sync(): Promise<void> {
+  /** Tells the side panel which READ and RUN cards still wait for a click here. */
+  private reportRequests(): void {
+    if (this.invalid) return;
+    const requests: PendingRequest[] = [];
+    if (this.session === 'active') {
+      for (const view of this.views.values()) {
+        if (view.read && !view.read.sent) {
+          requests.push({
+            id: view.read.key,
+            kind: 'read',
+            text: view.read.paths.join(', ').slice(0, 2_000),
+            allowed: view.read.sendable
+          });
+        }
+        view.runs.forEach((run, i) => {
+          if (!run.waiting) return;
+          requests.push({
+            id: runRequestId(view, i),
+            kind: 'run',
+            text: run.command.slice(0, 2_000),
+            allowed: run.refusal() === null
+          });
+        });
+      }
+    }
+    const json = JSON.stringify(requests.slice(-100));
+    if (json === this.lastRequests) return;
+    this.lastRequests = json;
+    void this.ask({ type: 'chat-requests', requests: requests.slice(-100) });
+  }
+
+  private async sync(wake = false): Promise<void> {
     const start = this.firstSync;
     this.firstSync = false;
     const reply = await this.ask<ChatSyncReply>({
       type: 'chat-sync',
       conversationId: this.conversationId,
       layout: this.layout,
-      ...(start && { start: true })
+      ...(start && { start: true }),
+      ...(wake && { wake: true })
     });
     if (!reply) console.info('[Bridge] The extension didn’t answer. Reload this tab.');
+    if (reply?.chipCorner) this.chip.setCorner(reply.chipCorner);
     this.setConfig(reply?.config ?? null);
     this.setSession(reply?.session ?? null);
   }
 
   private poll(): void {
+    if (this.invalid) return;
+    // After the extension reloads, this script lives on with a dead runtime.
+    if (!chrome.runtime?.id) {
+      this.invalidate();
+      return;
+    }
+    const now = Date.now();
+    const slept = now - this.lastPoll > WAKE_GAP_MS;
+    this.lastPoll = now;
+    if (slept) {
+      // Timers stopped: the computer slept. A half-done step waits, and reconnect now.
+      this.loop.onWake();
+      void this.sync(true);
+    }
+
+    // A deleted conversation, or a 404: its session ends.
+    if (this.conversationId && this.session === 'active' && conversationMissing()) {
+      this.missingStrikes += 1;
+      if (this.missingStrikes === MISSING_STRIKES) {
+        void this.ask<SessionState | null>({ type: 'chat-gone' }).then((state) => {
+          if (state !== undefined) this.setSession(state);
+        });
+      }
+    } else this.missingStrikes = 0;
+
     const id = conversationIdFrom(location.href);
     if (id !== this.conversationId) {
       // Another conversation (or a new chat): drop this one's cards and bind again.
@@ -384,20 +565,27 @@ export class ChatController {
       const id = messageIdOf(element, index);
       const { text, codeBlocks } = messageToText(element);
       const existing = this.views.get(id);
-      if (existing && existing.element === element && existing.text === text) {
+      // Same text: the same cards, even in a new element. Long conversations unmount old
+      // messages and mount them again as they scroll back in; the cards move with them.
+      if (existing && existing.text === text) {
         this.mount(existing, element, codeBlocks);
         continue;
       }
       if (this.session !== 'active') continue;
-      // New, or its text changed (regenerated or edited): rebuild its cards.
+      // New, or its text changed (regenerated or edited): rebuild its cards. Cards come
+      // back from their stored state, so a rebuilt view shows what was applied.
       if (existing) this.remove(existing);
       const view = await this.build(conversationId, id, element, text);
-      if (this.conversationId !== conversationId) return;
+      if (this.conversationId !== conversationId || this.invalid) return;
       this.views.set(id, view);
       this.mount(view, element, codeBlocks);
-      // Only a reply that wasn't on the page when it loaded is acted on.
-      if (!this.history.has(id)) void this.act(view);
+      // Only a reply that wasn't on the page when it loaded is acted on, and only once.
+      if (!this.history.has(id) && !this.acted.has(`${id}:${text.length}`)) {
+        this.acted.add(`${id}:${text.length}`);
+        void this.act(view);
+      }
     }
+    this.reportRequests();
   }
 
   /** What the app's mode does with a new reply. */
@@ -419,10 +607,15 @@ export class ChatController {
   private actionsOf(view: MessageView): ReplyActions {
     const { parse } = view;
     return {
-      hasActions: view.cards.length + parse.reads.length + view.runs.length > 0,
+      hasActions:
+        view.cards.length + parse.reads.length + view.runs.length + view.changes.length > 0,
       done: parse.done,
-      applyEdits: (loopId) => autoApply(view.cards, loopId),
+      applyEdits: async (loopId) => {
+        await autoApply(view.cards, loopId);
+        await Promise.allSettled(view.changes.map((card) => card.ready()));
+      },
       edits: () => editSummary(view.cards),
+      changes: () => changeSummary(view.changes),
       reads: parse.reads,
       readFiles: async () => {
         if (!view.read) return { files: [], refused: [], disconnected: false };
@@ -445,8 +638,9 @@ export class ChatController {
     text: string
   ): Promise<MessageView> {
     const parse = parseChat(text);
-    const { edits, reads, runs } = parse;
+    const { edits, reads, runs, deletes, renames } = parse;
     const view: MessageView = {
+      id: messageId,
       element,
       text,
       parse,
@@ -454,10 +648,15 @@ export class ChatController {
       fences: edits.map((edit) => edit.fence),
       read: null,
       runs: [],
+      changes: [],
       bar: null,
       ready: Promise.resolve()
     };
-    if (edits.length > 0 || reads.length > 0 || runs.length > 0) loadFonts();
+    const changes: FileChange[] = [
+      ...deletes.map((path) => ({ kind: 'delete' as const, path })),
+      ...renames.map((rename) => ({ kind: 'rename' as const, ...rename }))
+    ];
+    if (edits.length + reads.length + runs.length + changes.length > 0) loadFonts();
 
     const keys = await Promise.all(
       edits.map(async (edit, i) =>
@@ -468,7 +667,14 @@ export class ChatController {
       reads.length > 0
         ? blockKey(conversationId, messageId, 'read', await contentHash('', reads.join('\n')))
         : null;
-    const wanted = readKey ? [...keys, readKey] : keys;
+    const changeKeys = await Promise.all(
+      changes.map(async (change, i) =>
+        change.kind === 'delete'
+          ? blockKey(conversationId, messageId, `d${i}`, await contentHash(change.path, ''))
+          : blockKey(conversationId, messageId, `r${i}`, await contentHash(change.from, change.to))
+      )
+    );
+    const wanted = [...keys, ...(readKey ? [readKey] : []), ...changeKeys];
     const records =
       wanted.length > 0
         ? ((await this.ask<Record<string, CardRecord>>({ type: 'card-get', keys: wanted })) ?? {})
@@ -478,8 +684,12 @@ export class ChatController {
       return record && !('card' in record) ? (record satisfies DiffCardRecord) : undefined;
     };
 
-    const changed = () => view.bar?.render();
+    const changed = () => {
+      view.bar?.render();
+      this.reportRequests();
+    };
     view.cards = edits.map((edit, i) => new DiffCard(keys[i] ?? '', edit, this.ask, changed));
+    markDuplicates(view.cards);
     if (view.cards.length >= 2) view.bar = new MessageBar(view.cards);
     const loading: Promise<unknown>[] = [];
     for (const [i, card] of view.cards.entries()) {
@@ -488,18 +698,38 @@ export class ChatController {
     }
     view.bar?.render();
 
+    view.changes = changes.map(
+      (change, i) => new ChangeCard(changeKeys[i] ?? '', change, this.ask, changed)
+    );
+    for (const [i, card] of view.changes.entries()) {
+      card.setMode(this.config?.mode ?? null);
+      const record = records[changeKeys[i] ?? ''];
+      loading.push(
+        card.init(record && 'card' in record && record.card === 'change' ? record : undefined)
+      );
+    }
+
     if (readKey) {
       const record = records[readKey];
-      view.read = new ReadCard(readKey, reads, this.ask, (paths) => {
-        void this.ask({ type: 'chat-sent', paths });
+      view.read = new ReadCard(readKey, reads, this.ask, (files) => {
+        void this.ask({ type: 'chat-sent', files });
+        this.reportRequests();
       });
       loading.push(
-        view.read.init(record && 'card' in record ? (record satisfies ReadCardRecord) : undefined)
+        view.read.init(
+          record && 'card' in record && record.card === 'read'
+            ? (record satisfies ReadCardRecord)
+            : undefined
+        )
       );
     }
 
     view.runs = runs.map(
-      (command) => new RunCard(command, this.ask, (runId, card) => this.registerRun(runId, card))
+      (command) =>
+        new RunCard(command, this.ask, (runId, card) => {
+          this.registerRun(runId, card);
+          this.reportRequests();
+        })
     );
     for (const card of view.runs) card.setConfig(this.config);
     view.ready = Promise.allSettled(loading);
@@ -524,10 +754,12 @@ export class ChatController {
       last = card.host;
     }
     if (view.bar) placeAfter(view.bar.host, last);
-    // READ and RUN cards go at the end, in that order.
-    const tail = [view.read?.host, ...view.runs.map((r) => r.host)].filter(
-      (host): host is HTMLElement => host !== undefined
-    );
+    // DELETE, RENAME, READ and RUN cards go at the end, in that order.
+    const tail = [
+      ...view.changes.map((c) => c.host),
+      view.read?.host,
+      ...view.runs.map((r) => r.host)
+    ].filter((host): host is HTMLElement => host !== undefined);
     const inPlace = tail.every((host, i) => {
       const fromEnd = body.children[body.children.length - tail.length + i];
       return fromEnd === host;
@@ -537,6 +769,7 @@ export class ChatController {
 
   private setViewDisabled(view: MessageView, disabled: boolean): void {
     for (const card of view.cards) card.setDisabled(disabled);
+    for (const card of view.changes) card.setDisabled(disabled);
     view.read?.setDisabled(disabled);
     for (const run of view.runs) run.setDisabled(disabled);
     view.bar?.render();
@@ -544,6 +777,7 @@ export class ChatController {
 
   private remove(view: MessageView): void {
     for (const card of view.cards) card.host.remove();
+    for (const card of view.changes) card.host.remove();
     view.read?.host.remove();
     for (const run of view.runs) run.host.remove();
     view.bar?.host.remove();
@@ -554,6 +788,9 @@ export class ChatController {
     this.views.clear();
   }
 }
+
+/** A RUN card's id for the side panel: its message and its place there. */
+const runRequestId = (view: MessageView, index: number) => `run:${view.id}:${index}`;
 
 /** An element as tag, id, role, data-* attributes and up to 4 classes. No text. */
 function shapeOf(el: Element): string {
@@ -666,11 +903,24 @@ function pageShape(): Record<string, unknown> {
   };
 }
 
-/** Sends a request to the service worker. Undefined if it refused or isn't there. */
-export const askWorker: Ask = async <R>(request: WorkerRequest) => {
-  try {
-    return (await chrome.runtime.sendMessage<WorkerRequest, R>(request)) ?? undefined;
-  } catch {
-    return undefined;
-  }
-};
+/** The extension was reloaded or updated: this script's runtime is gone for good. */
+export function isContextInvalidated(error: unknown): boolean {
+  return (
+    !chrome.runtime?.id || (error instanceof Error && /context invalidated/i.test(error.message))
+  );
+}
+
+/**
+ * Sends requests to the service worker. Undefined if it refused or isn't there. When the
+ * extension itself is gone (reloaded or updated), `onInvalid` runs.
+ */
+export function createAskWorker(onInvalid: () => void): Ask {
+  return async <R>(request: WorkerRequest) => {
+    try {
+      return (await chrome.runtime.sendMessage<WorkerRequest, R>(request)) ?? undefined;
+    } catch (error) {
+      if (isContextInvalidated(error)) onInvalid();
+      return undefined;
+    }
+  };
+}

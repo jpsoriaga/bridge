@@ -14,7 +14,7 @@ export async function contentHash(path: string, content: string): Promise<string
 export function blockKey(
   conversationId: string,
   messageId: string,
-  slot: number | 'read',
+  slot: number | 'read' | `d${number}` | `r${number}`,
   hash: string
 ): string {
   return `${conversationId}:${messageId}:${slot}:${hash}`;

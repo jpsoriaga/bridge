@@ -52,7 +52,8 @@ describe('read', () => {
     expect(await readFile(sandbox, 'a.txt')).toEqual({
       content: 'one\ntwo\n',
       hash: hashOf('a.txt'),
-      eol: 'lf'
+      eol: 'lf',
+      bom: false
     });
     expect(await readFile(sandbox, 'b.txt')).toMatchObject({
       content: 'one\r\ntwo\r\n',
@@ -96,7 +97,8 @@ describe('write', () => {
       afterHash: result.hash
     });
     // A create records "didn't exist": a folder with no `before` file.
-    expect(readdirSync(join(backups, result.opId))).toEqual([]);
+    // A create has nothing before it; only what it wrote is kept, for the app's diff view.
+    expect(readdirSync(join(backups, result.opId))).toEqual(['after']);
   });
 
   it('modifies a file read with the same hash, backing up the old bytes first', async () => {

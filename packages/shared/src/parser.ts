@@ -8,6 +8,10 @@ import type { FileEdit } from './types';
 const MARKER = /^@@(FILE|READ|CONTEXT|RUN)\s+((?:(?!@@)[^`])+?)\s*@@$/;
 /** `@@DONE@@`: the chat says the task is finished. Ends a Full auto run. */
 const DONE = /^@@DONE\s*@@$/;
+/** `@@DELETE path@@`: remove a file. No fence follows. */
+const DELETE = /^@@DELETE\s+((?:(?!@@)[^`])+?)\s*@@$/;
+/** `@@RENAME old/path -> new/path@@` (or `→`): move a file. No fence follows. */
+const RENAME = /^@@RENAME\s+((?:(?!@@|->|→)[^`])+?)\s*(?:->|→)\s*([^\s`](?:(?!@@)[^`])*?)\s*@@$/;
 const FENCE_OPEN = /^(`{3,}|~{3,})[^`]*$/;
 const BULLET = /^(?:[-*+]|\d{1,3}[.)])\s+/;
 /** A line made only of `@@READ path@@` markers, for when line breaks were lost. */
@@ -40,6 +44,15 @@ export interface ChatParse {
   runs: string[];
   /** The reply has a `@@DONE@@` line. */
   done: boolean;
+  /** Files to delete with `@@DELETE path@@`, without repeats, in order. */
+  deletes: string[];
+  /** Files to move with `@@RENAME from -> to@@`, without repeats, in order. */
+  renames: FileRename[];
+}
+
+export interface FileRename {
+  from: string;
+  to: string;
 }
 
 type Marker = { kind: 'FILE' | 'READ' | 'CONTEXT' | 'RUN'; path: string };
@@ -91,6 +104,8 @@ function readFence(lines: string[], open: number): { body: string[]; close: numb
  *
  *   `@@READ relative/path.ts@@`
  *   `@@RUN pnpm test@@`
+ *   `@@DELETE relative/old.ts@@`
+ *   `@@RENAME relative/a.ts -> relative/b.ts@@`
  *   `@@DONE@@`
  *
  * The marker may be plain or in inline code, and the fence may follow it after up to two
@@ -106,6 +121,8 @@ export function parseChat(text: string): ChatParse {
   const edits: ParsedEdit[] = [];
   const reads: string[] = [];
   const runs: string[] = [];
+  const deletes: string[] = [];
+  const renames: FileRename[] = [];
   let done = false;
   let fences = 0;
 
@@ -130,6 +147,23 @@ export function parseChat(text: string): ChatParse {
 
     if (DONE.test(unwrap(line))) {
       done = true;
+      i += 1;
+      continue;
+    }
+
+    const deleted = DELETE.exec(unwrap(line))?.[1];
+    if (deleted) {
+      if (!deletes.includes(deleted)) deletes.push(deleted);
+      i += 1;
+      continue;
+    }
+
+    const renamed = RENAME.exec(unwrap(line));
+    if (renamed?.[1] && renamed[2]) {
+      const [from, to] = [renamed[1], renamed[2]];
+      if (from !== to && !renames.some((r) => r.from === from && r.to === to)) {
+        renames.push({ from, to });
+      }
       i += 1;
       continue;
     }
@@ -169,7 +203,7 @@ export function parseChat(text: string): ChatParse {
     i += 1;
   }
 
-  return { edits, reads, runs, done };
+  return { edits, reads, runs, done, deletes, renames };
 }
 
 /** The `@@FILE` edits in `text`. See `parseChat`. */

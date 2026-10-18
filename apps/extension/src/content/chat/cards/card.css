@@ -5,17 +5,40 @@
    beats the page from inside the shadow root. */
 :host {
   all: initial !important;
+  /* `all` resets this too; the tokens' light-dark() colours need it back. */
+  color-scheme: light dark !important;
   display: block !important;
   margin: var(--space-3) 0 !important;
 }
-/* The Full auto chip sits in the page's corner. Set here: inline styles on the host can't
-   beat the reset above. */
-:host([data-bridge-host='loop-chip']) {
+/* The Full auto chip and the page notice sit in a corner of the page, the one the user
+   dragged the chip to. Set here: inline styles on the host can't beat the reset above. */
+:host([data-bridge-host='loop-chip']),
+:host([data-bridge-host='page-notice']) {
   position: fixed !important;
-  right: 16px !important;
-  bottom: 96px !important;
   z-index: 2147483646 !important;
   margin: 0 !important;
+}
+:host([data-bridge-host='loop-chip'][data-corner='bottom-right']),
+:host([data-bridge-host='loop-chip']:not([data-corner])) {
+  right: 16px !important;
+  bottom: 96px !important;
+}
+:host([data-bridge-host='loop-chip'][data-corner='bottom-left']) {
+  left: 16px !important;
+  bottom: 96px !important;
+}
+:host([data-bridge-host='loop-chip'][data-corner='top-right']) {
+  right: 16px !important;
+  top: 72px !important;
+}
+:host([data-bridge-host='loop-chip'][data-corner='top-left']) {
+  left: 16px !important;
+  top: 72px !important;
+}
+:host([data-bridge-host='page-notice']) {
+  left: 50% !important;
+  top: 16px !important;
+  transform: translateX(-50%) !important;
 }
 :host([hidden]) {
   display: none !important;
@@ -301,6 +324,57 @@
   outline: none;
   box-shadow: var(--focus-ring);
 }
+/* "Show" from the side panel: the card it points at, for a moment. */
+.card[data-revealed='true'] {
+  box-shadow: var(--focus-ring);
+}
+
+/* Copy path, and other icon-only buttons in a card header. */
+.icon-btn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-subtle);
+  cursor: pointer;
+}
+.icon-btn .icon {
+  width: 14px;
+  height: 14px;
+  color: inherit;
+}
+.icon-btn:hover,
+.icon-btn[data-copied='true'] {
+  color: var(--fg);
+  background: var(--bg-hover);
+}
+.time {
+  flex: none;
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* DELETE card: the one card that removes something, so it reads red until it's done. */
+.card[data-kind='delete'][data-state='pending'] {
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+}
+.card[data-kind='delete'][data-state='pending'] .header > .icon {
+  color: var(--danger);
+}
+/* RENAME card: old → new. */
+.rename .from {
+  color: var(--fg-muted);
+}
+.rename .arrow {
+  color: var(--fg-subtle);
+}
 
 /* READ card */
 .files {
@@ -389,6 +463,42 @@
 }
 .dot[data-tone='warning'] {
   background: var(--warning);
+}
+
+/* Chip: the label is the drag handle. */
+.chip-handle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.chip[data-dragging='true'] .chip-handle {
+  cursor: grabbing;
+}
+
+/* One-line notice at the top of the page: session elsewhere, Bridge reloaded. */
+.notice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: min(560px, calc(100vw - 32px));
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  -webkit-font-smoothing: antialiased;
+}
+.notice .btn {
+  height: 28px;
+  border-radius: var(--radius-full);
+}
+.notice[data-tone='warning'] {
+  border-color: color-mix(in srgb, var(--warning) 35%, transparent);
 }
 
 @media (prefers-reduced-motion: reduce) {

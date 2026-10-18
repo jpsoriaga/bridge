@@ -1,20 +1,25 @@
 import { z } from 'zod';
 import {
+  DeleteParams,
   FileError,
+  ListParams,
   ProjectInfo,
   ReadParams,
+  RenameParams,
   RunCancelParams,
   RunId,
   RunParams,
+  StatParams,
   TreeParams,
   UndoParams,
+  WatchParams,
   WriteParams
 } from './files';
 import { LoopReport, MAX_STEP_LIMIT } from './loop';
 import { MODES } from './types';
 
 /** Bumped when a message shape changes incompatibly. Both sides reject other versions. */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 /** The desktop listens on the first free port in `DEFAULT_PORT .. DEFAULT_PORT + PORT_RANGE - 1`. */
 export const DEFAULT_PORT = 47821;
@@ -134,7 +139,12 @@ export const BridgeConfig = z.strictObject({
   /** Full auto: pause on a non-zero exit instead of sending the output to the chat. */
   pauseOnFailure: z.boolean(),
   /** The command running now, if any. */
-  running: z.strictObject({ runId: RunId, argv: z.array(z.string()) }).nullable()
+  running: z.strictObject({ runId: RunId, argv: z.array(z.string()) }).nullable(),
+  /**
+   * Random per app launch. A new one after a reconnect means the app restarted: Full auto
+   * was reset, so a loop that was running pauses.
+   */
+  instance: z.string().regex(/^[\w-]{1,64}$/)
 });
 export type BridgeConfig = z.infer<typeof BridgeConfig>;
 
@@ -150,14 +160,24 @@ export const StatusMessage = message(
 
 // File requests. The reply is a `response` whose `id` is the request's `id`.
 export const TreeRequest = message('tree', TreeParams);
+export const ListRequest = message('list', ListParams);
 export const ReadRequest = message('read', ReadParams);
+export const StatRequest = message('stat', StatParams);
 export const WriteRequest = message('write', WriteParams);
+export const DeleteRequest = message('delete', DeleteParams);
+export const RenameRequest = message('rename', RenameParams);
 export const UndoRequest = message('undo', UndoParams);
+export const WatchRequest = message('watch', WatchParams);
 export const FileRequest = z.discriminatedUnion('type', [
   TreeRequest,
+  ListRequest,
   ReadRequest,
+  StatRequest,
   WriteRequest,
-  UndoRequest
+  DeleteRequest,
+  RenameRequest,
+  UndoRequest,
+  WatchRequest
 ]);
 export type FileRequest = z.infer<typeof FileRequest>;
 
@@ -189,11 +209,27 @@ export const RunResult = z.strictObject({
 export type RunResult = z.infer<typeof RunResult>;
 export const RunExitMessage = message('run_exit', RunResult);
 
+/** Most paths in one `file_changed`. Past that, `overflow` says "re-check everything". */
+export const FILE_CHANGED_MAX_PATHS = 500;
+/**
+ * Files in the project changed on disk (added, changed or removed), batched. From the
+ * watcher, or from polling the files in context when the project is too big to watch.
+ */
+export const FileChangedMessage = message(
+  'file_changed',
+  z.strictObject({
+    paths: z.array(z.string().max(4096)).max(FILE_CHANGED_MAX_PATHS),
+    overflow: z.boolean()
+  })
+);
+
 // Full auto. The extension reports the loop; the app can stop it.
 export const LoopReportMessage = message('loop_report', LoopReport);
 export const LoopStopMessage = message('loop_stop', empty);
 /** The extension ended a chat session. The app drops out of Full auto. */
 export const SessionEndMessage = message('session_end', empty);
+/** The extension started a chat session. The app's first-run checklist ticks it off. */
+export const SessionStartMessage = message('session_start', empty);
 
 /** `result` is checked against `FILE_RESULTS[request type]` by the side that asked. */
 export const ResponseMessage = message(
@@ -218,13 +254,19 @@ export const ClientMessage = z.discriminatedUnion('type', [
   PingMessage,
   PongMessage,
   TreeRequest,
+  ListRequest,
   ReadRequest,
+  StatRequest,
   WriteRequest,
+  DeleteRequest,
+  RenameRequest,
   UndoRequest,
+  WatchRequest,
   RunRequest,
   RunCancelRequest,
   LoopReportMessage,
-  SessionEndMessage
+  SessionEndMessage,
+  SessionStartMessage
 ]);
 export type ClientMessage = z.infer<typeof ClientMessage>;
 
@@ -240,7 +282,8 @@ export const ServerMessage = z.discriminatedUnion('type', [
   ErrorMessage,
   RunOutputMessage,
   RunExitMessage,
-  LoopStopMessage
+  LoopStopMessage,
+  FileChangedMessage
 ]);
 export type ServerMessage = z.infer<typeof ServerMessage>;
 

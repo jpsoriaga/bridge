@@ -15,6 +15,7 @@ import {
   type StatusUpdate,
   type WorkerRequest
 } from '../messages';
+import { ContextFiles, Requests } from './ContextFiles';
 import { DevFileTester } from './DevFileTester';
 import { PageDiagnostics } from './PageDiagnostics';
 import {
@@ -27,9 +28,10 @@ import {
 } from './FullAuto';
 import { Logo } from './Logo';
 import { panelWindowId, request } from './request';
+import { SendFiles } from './SendFiles';
 import { SessionSection } from './SessionSection';
 
-const NO_CHAT: ChatPanelState = { tab: null, session: null, loop: null };
+const NO_CHAT: ChatPanelState = { tab: null, session: null, loop: null, requests: [], watch: null };
 
 const STATUS_LABELS: Record<ConnectionStatus, string> = {
   'app-not-running': 'App not running',
@@ -141,11 +143,36 @@ function PairForm() {
   );
 }
 
-function ProjectSection({ project }: { project: ProjectInfo | null }) {
+/** The app, the project it has open, and Unpair. */
+function ConnectionSection({ project }: { project: ProjectInfo | null }) {
+  const [busy, setBusy] = useState(false);
   return (
-    <section>
-      <p className="label">Project</p>
-      {project ? (
+    <section aria-labelledby="connection-label">
+      <div className="label-row">
+        <p className="label" id="connection-label">
+          Connection
+        </p>
+        <button
+          type="button"
+          className="link-button"
+          disabled={busy}
+          onClick={() => {
+            setBusy(true);
+            void request({ type: 'unpair' }).finally(() => setBusy(false));
+          }}
+        >
+          Unpair
+        </button>
+      </div>
+      {project?.missing ? (
+        <>
+          <p className="value">{project.name}</p>
+          <p className="notice" role="status">
+            The project folder is missing. It may have been moved, renamed or unmounted. Open it
+            again in the Bridge app.
+          </p>
+        </>
+      ) : project ? (
         <>
           <p className="value">{project.name}</p>
           <p className="hint mono path" title={project.path}>
@@ -155,9 +182,20 @@ function ProjectSection({ project }: { project: ProjectInfo | null }) {
       ) : (
         <>
           <p className="value">No project open</p>
-          <p className="hint">Open a project folder in the Bridge app.</p>
+          <p className="hint">Open a project folder in the Bridge app to start.</p>
         </>
       )}
+    </section>
+  );
+}
+
+/** Placeholder rows while the worker hasn't answered yet. */
+function Loading() {
+  return (
+    <section aria-busy="true" aria-label="Loading">
+      <span className="skeleton short" />
+      <span className="skeleton" />
+      <span className="skeleton" />
     </section>
   );
 }
@@ -180,6 +218,8 @@ function Body({
     setBusy(true);
     void request(message).finally(() => setBusy(false));
   };
+  const session = chat.session;
+  const active = session?.state === 'active';
 
   switch (status) {
     case 'not-paired':
@@ -187,39 +227,34 @@ function Body({
     case 'connected':
       return (
         <>
-          <ProjectSection project={project} />
-          <ModeSection config={config} />
+          <ConnectionSection project={project} />
           <SessionSection chat={chat} project={project} />
+          <ModeSection config={config} />
           <LoopSection config={config} loop={chat.loop} />
           <CommandSection config={config} live={live} />
+          {active && <Requests requests={chat.requests} />}
+          {active && <ContextFiles files={session.context} watch={chat.watch} />}
+          {/* Applied edits can add files, so the tree reloads when the count changes. */}
+          {active && project && !project.missing && (
+            <SendFiles project={project} version={session.applied} />
+          )}
           {import.meta.env.DEV && <PageDiagnostics />}
           {import.meta.env.DEV && <DevFileTester />}
-          <section>
-            <p className="label">Desktop app</p>
-            <p className="value">Paired and connected.</p>
-            <button
-              type="button"
-              className="btn btn-danger action"
-              disabled={busy}
-              onClick={() => act({ type: 'unpair' })}
-            >
-              Unpair
-            </button>
-          </section>
         </>
       );
     case 'connecting':
       return (
         <section>
-          <p className="label">Desktop app</p>
+          <p className="label">Connection</p>
           <p className="value">Connecting to the Bridge app…</p>
+          <p className="hint">This takes a second or two. Keep the Bridge app open.</p>
         </section>
       );
     case 'app-not-running':
     case 'error':
       return (
         <section>
-          <p className="label">Desktop app</p>
+          <p className="label">Connection</p>
           <p className="value">
             {status === 'error'
               ? 'The Bridge app refused the connection.'
@@ -275,6 +310,7 @@ export function App() {
       </header>
 
       <main className="panel-body">
+        {!update && <Loading />}
         {update && (
           <Body
             status={update.status}

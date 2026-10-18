@@ -12,7 +12,7 @@ import {
 import type { RequestOutcome } from '../../../messages';
 import { insertIntoComposer } from '../composer';
 import { DIFF_RENDER_LIMIT, failureText, modeTag, type Ask } from './diff-card';
-import { formatCount, h, icon } from './dom';
+import { copyButton, formatCount, formatTime, h, icon, renderCard } from './dom';
 import { createHost } from './host';
 
 export type RunBadge =
@@ -59,6 +59,8 @@ export class RunCard {
   private expanded = true;
   private showAll = false;
   private waiter: ((result: RunResult) => void) | null = null;
+  /** Epoch ms when the last run ended, for the header. */
+  private finishedAt: number | null = null;
 
   constructor(
     readonly command: string,
@@ -165,11 +167,26 @@ export class RunCard {
 
   onExit(result: RunResult): void {
     this.result = result;
+    this.finishedAt = Date.now();
     this.output = result.output;
     this.cancelling = false;
     this.render();
     this.waiter?.(result);
     this.waiter = null;
+  }
+
+  /** Waiting for a click: not run yet, not running. For the side panel's request list. */
+  get waiting(): boolean {
+    return !this.running && this.result === null;
+  }
+
+  /** Scrolls the card into view and focuses Run, for "Show" in the side panel. */
+  reveal(): void {
+    this.host.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    (
+      this.root.querySelector<HTMLElement>('[data-focus="run"]:not(:disabled)') ??
+      this.root.querySelector<HTMLElement>('button')
+    )?.focus();
   }
 
   async cancel(): Promise<void> {
@@ -250,7 +267,11 @@ export class RunCard {
             'button',
             {
               class: 'link',
-              attrs: { type: 'button', 'aria-expanded': String(this.expanded) },
+              attrs: {
+                type: 'button',
+                'aria-expanded': String(this.expanded),
+                'data-focus': 'toggle'
+              },
               onClick: () => {
                 this.expanded = !this.expanded;
                 this.render();
@@ -265,7 +286,11 @@ export class RunCard {
     if (this.running) {
       const cancel = h(
         'button',
-        { class: 'btn btn-danger', attrs: { type: 'button' }, onClick: () => void this.cancel() },
+        {
+          class: 'btn btn-danger',
+          attrs: { type: 'button', 'data-focus': 'cancel' },
+          onClick: () => void this.cancel()
+        },
         this.cancelling ? 'Cancelling…' : 'Cancel'
       );
       cancel.disabled = this.cancelling || this.runId === null;
@@ -274,7 +299,11 @@ export class RunCard {
       if (this.result) {
         const send = h(
           'button',
-          { class: 'btn btn-primary', attrs: { type: 'button' }, onClick: () => this.sendOutput() },
+          {
+            class: 'btn btn-primary',
+            attrs: { type: 'button', 'data-focus': 'send' },
+            onClick: () => this.sendOutput()
+          },
           this.sent ? 'Send again' : 'Send output'
         );
         send.disabled = this.disabled;
@@ -285,7 +314,7 @@ export class RunCard {
           'button',
           {
             class: this.result ? 'btn' : 'btn btn-primary',
-            attrs: { type: 'button' },
+            attrs: { type: 'button', 'data-focus': 'run' },
             onClick: () => void this.run()
           },
           this.result ? 'Run again' : 'Run'
@@ -300,13 +329,19 @@ export class RunCard {
       'div',
       {
         class: 'card',
-        attrs: { 'data-kind': 'run', 'data-state': this.running ? 'running' : 'idle' }
+        attrs: {
+          'data-kind': 'run',
+          'data-state': this.running ? 'running' : 'idle',
+          role: 'group',
+          'aria-label': `Command ${this.command}`
+        }
       },
       h(
         'div',
         { class: 'header' },
-        h('span', { class: 'prompt' }, '$'),
+        h('span', { class: 'prompt', attrs: { 'aria-hidden': 'true' } }, '$'),
         h('span', { class: 'path command', attrs: { title: this.command } }, this.command),
+        copyButton(this.command, 'Copy command'),
         h(
           'span',
           {
@@ -320,6 +355,7 @@ export class RunCard {
         this.result
           ? h('span', { class: 'meta' }, `${(this.result.durationMs / 1000).toFixed(1)}s`)
           : null,
+        this.finishedAt !== null ? h('span', { class: 'time' }, formatTime(this.finishedAt)) : null,
         h('span', { class: 'spacer' }),
         toggle
       ),
@@ -334,7 +370,6 @@ export class RunCard {
         ...buttons
       )
     );
-    const style = this.root.querySelector('style');
-    this.root.replaceChildren(...(style ? [style] : []), card);
+    renderCard(this.root, card);
   }
 }

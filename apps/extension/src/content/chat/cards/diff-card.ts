@@ -2,6 +2,8 @@ import {
   diffFile,
   FILE_ERROR_LABELS,
   FILE_ERROR_MESSAGES,
+  looksBinary,
+  matchTrailingNewline,
   MAX_FILE_BYTES,
   MODE_LABELS,
   type FileDiff,
@@ -14,7 +16,7 @@ import {
   type WriteResult
 } from '@bridge/shared';
 import type { CardState, DiffCardRecord, RequestOutcome, WorkerRequest } from '../../../messages';
-import { formatCount, h, icon } from './dom';
+import { copyButton, formatCount, formatTime, h, icon, renderCard } from './dom';
 import { createHost } from './host';
 
 /** Diff rows rendered before "Show all". */
@@ -31,7 +33,8 @@ const BLOCKING: ReadonlySet<string> = new Set<FileErrorCode>([
   'outside-root',
   'not-a-file',
   'binary',
-  'too-large'
+  'too-large',
+  'encoding'
 ]);
 
 type Failure = Exclude<RequestOutcome<unknown>, { ok: true }>['error'];
@@ -103,6 +106,12 @@ export class DiffCard {
   hold: Hold | null = null;
   private mode: Mode | null = null;
   private loading: Promise<void> = Promise.resolve();
+  private appliedAt: number | undefined;
+  /**
+   * The same reply edits this path more than once. `earlier`: a later card has another
+   * version (Apply all skips this one). `later`: this is the last version.
+   */
+  duplicate: 'earlier' | 'later' | null = null;
 
   constructor(
     readonly key: string,
@@ -120,12 +129,55 @@ export class DiffCard {
       this.opId = record.opId;
       this.kind = record.kind;
       this.auto = record.auto === true;
+      this.appliedAt = record.appliedAt;
       this.counts = { added: record.added ?? 0, removed: record.removed ?? 0 };
       this.render();
       return;
     }
     if (!record) void this.persist();
+    // Content Bridge would never write: say so without reading or diffing it.
+    const unwritable = looksBinary(this.edit.content)
+      ? 'binary'
+      : new TextEncoder().encode(this.edit.content).length > MAX_FILE_BYTES
+        ? 'too-large'
+        : null;
+    if (unwritable) {
+      this.blocked = FILE_ERROR_LABELS[unwritable];
+      this.error =
+        unwritable === 'binary'
+          ? 'This block has binary content. Bridge only writes text files.'
+          : 'This file is over 1 MB. Bridge won’t write files that big.';
+      this.expanded = false;
+      this.render();
+      this.onChange();
+      return;
+    }
     await this.load();
+  }
+
+  /** Marks this card as one of several edits to the same path in its reply. */
+  setDuplicate(duplicate: 'earlier' | 'later' | null): void {
+    if (this.duplicate === duplicate) return;
+    this.duplicate = duplicate;
+    this.render();
+  }
+
+  /**
+   * The file changed on disk. A pending card reads it again; if it isn't what the diff
+   * was made against, the new diff shows with a "changed on disk" note, before Apply would
+   * find out the hard way.
+   */
+  async refresh(): Promise<void> {
+    if (this.state !== 'pending' || this.busy !== null || this.base === undefined) return;
+    if (this.blocked) return;
+    const before = this.base?.hash ?? null;
+    await this.load();
+    const after = this.base === undefined ? before : (this.base?.hash ?? null);
+    if (after !== before) {
+      this.conflict = true;
+      this.render();
+      this.onChange();
+    }
   }
 
   /** Pending, readable, not blocked, and not already identical on disk. */
@@ -205,7 +257,9 @@ export class DiffCard {
       this.error = failureText(outcome?.error);
     }
     if (this.base !== undefined) {
-      this.diff = diffFile(this.base?.content ?? null, this.edit.content);
+      // Compare what would really be written: the file keeps its final newline (or lack).
+      const current = this.base?.content ?? null;
+      this.diff = diffFile(current, matchTrailingNewline(this.edit.content, current));
       this.counts = { added: this.diff.added, removed: this.diff.removed };
     }
     this.render();
@@ -251,6 +305,7 @@ export class DiffCard {
       this.opId = outcome.result.opId;
       this.kind = outcome.result.kind;
       this.auto = trigger === 'auto';
+      this.appliedAt = Date.now();
       this.conflict = false;
       this.hold = null;
       void this.persist();
@@ -322,6 +377,8 @@ export class DiffCard {
       ...(this.opId && { opId: this.opId }),
       ...(this.kind && { kind: this.kind }),
       ...(this.auto && this.state === 'applied' && { auto: true as const }),
+      ...(this.appliedAt !== undefined &&
+        this.state !== 'pending' && { appliedAt: this.appliedAt }),
       added: this.counts.added,
       removed: this.counts.removed
     };
@@ -440,15 +497,26 @@ export class DiffCard {
       hint = 'This may be only part of the file (it has a placeholder like “…rest unchanged”).';
       tone = 'warning';
     } else if (this.conflict) {
-      hint = 'The file was updated since this diff was first shown. This is the new diff.';
+      hint = 'The file changed on disk since this diff was first shown. This is the new diff.';
       tone = 'warning';
-    } else if (this.diff?.status === 'unchanged') hint = 'Already up to date.';
+    } else if (this.duplicate === 'earlier') {
+      hint =
+        'This reply has another version of this file further down. Apply all uses the last one.';
+      tone = 'warning';
+    } else if (this.duplicate === 'later') {
+      hint = 'This reply changes this file more than once. This is the last version.';
+      tone = 'warning';
+    } else if (this.diff?.status === 'unchanged') hint = 'Already up to date. Nothing to apply.';
 
     const retry =
       this.base === undefined && !this.blocked && this.busy === null
         ? h(
             'button',
-            { class: 'btn', attrs: { type: 'button' }, onClick: () => void this.load() },
+            {
+              class: 'btn',
+              attrs: { type: 'button', 'data-focus': 'retry' },
+              onClick: () => void this.load()
+            },
             'Retry'
           )
         : null;
@@ -456,7 +524,7 @@ export class DiffCard {
       'button',
       {
         class: 'btn',
-        attrs: { type: 'button' },
+        attrs: { type: 'button', 'data-focus': 'reject' },
         onClick: () => this.reject()
       },
       'Reject'
@@ -466,7 +534,7 @@ export class DiffCard {
       'button',
       {
         class: 'btn btn-primary btn-lg',
-        attrs: { type: 'button' },
+        attrs: { type: 'button', 'data-focus': 'apply' },
         onClick: () => void this.apply()
       },
       this.busy === 'apply' ? 'Applying…' : this.confirmingPartial ? 'Apply anyway' : 'Apply'
@@ -484,6 +552,8 @@ export class DiffCard {
 
   private render(): void {
     const path = h('span', { class: 'path', attrs: { title: this.edit.path } }, this.edit.path);
+    const copy = copyButton(this.edit.path);
+    const group = { role: 'group', 'aria-label': `Edit to ${this.edit.path}` };
     let card: HTMLElement;
 
     if (this.state === 'pending') {
@@ -492,7 +562,11 @@ export class DiffCard {
             'button',
             {
               class: 'link',
-              attrs: { type: 'button', 'aria-expanded': String(this.expanded) },
+              attrs: {
+                type: 'button',
+                'aria-expanded': String(this.expanded),
+                'data-focus': 'toggle'
+              },
               onClick: () => {
                 this.expanded = !this.expanded;
                 this.render();
@@ -504,12 +578,13 @@ export class DiffCard {
         : null;
       card = h(
         'div',
-        { class: 'card', attrs: { 'data-state': 'pending' } },
+        { class: 'card', attrs: { 'data-state': 'pending', ...group } },
         h(
           'div',
           { class: 'header' },
           icon('file'),
           path,
+          copy,
           ...this.badgeElements(),
           this.meta(),
           h('span', { class: 'spacer' }),
@@ -522,18 +597,23 @@ export class DiffCard {
     } else if (this.state === 'applied') {
       const undo = h(
         'button',
-        { class: 'btn', attrs: { type: 'button' }, onClick: () => void this.undo() },
+        {
+          class: 'btn',
+          attrs: { type: 'button', 'data-focus': 'undo' },
+          onClick: () => void this.undo()
+        },
         this.busy === 'undo' ? 'Undoing…' : 'Undo'
       );
       undo.disabled = this.disabled || this.busy !== null || !this.opId;
       card = h(
         'div',
-        { class: 'card', attrs: { 'data-state': 'applied' } },
+        { class: 'card', attrs: { 'data-state': 'applied', ...group } },
         h(
           'div',
           { class: 'header' },
           icon('check', 'icon-success'),
           path,
+          copy,
           this.meta(),
           h('span', { class: 'spacer' }),
           h(
@@ -541,6 +621,9 @@ export class DiffCard {
             { class: 'word', attrs: { 'data-tone': 'success' } },
             this.auto ? 'Auto-applied' : 'Applied'
           ),
+          this.appliedAt !== undefined
+            ? h('span', { class: 'time' }, formatTime(this.appliedAt))
+            : null,
           undo
         ),
         this.messageLine()
@@ -548,12 +631,13 @@ export class DiffCard {
     } else {
       card = h(
         'div',
-        { class: 'card struck', attrs: { 'data-state': this.state } },
+        { class: 'card struck', attrs: { 'data-state': this.state, ...group } },
         h(
           'div',
           { class: 'header' },
           icon('file'),
           path,
+          copy,
           this.meta(),
           h('span', { class: 'spacer' }),
           h('span', { class: 'word' }, this.state === 'rejected' ? 'Rejected' : 'Undone')
@@ -561,7 +645,6 @@ export class DiffCard {
       );
     }
 
-    const style = this.root.querySelector('style');
-    this.root.replaceChildren(...(style ? [style] : []), card);
+    renderCard(this.root, card);
   }
 }

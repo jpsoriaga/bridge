@@ -41,6 +41,14 @@ export interface EditSummary {
   held: { path: string; hold: EditHold; reason: string }[];
 }
 
+/** Where a reply's deletes and renames stand. They never apply on their own. */
+export interface ChangeSummary {
+  /** "src/old.ts (deleted)", "a.ts → b.ts (renamed)". */
+  applied: string[];
+  /** Still waiting for a click, as the same kind of text. */
+  pending: string[];
+}
+
 export type RunOutcome =
   { ok: true; result: RunResult } | { ok: false; disconnected: boolean; message: string };
 
@@ -62,6 +70,8 @@ export interface ReplyActions {
   applyEdits(loopId?: string): Promise<void>;
   /** Where the edits stand now, after Auto-apply and any clicks. */
   edits(): EditSummary;
+  /** Where the reply's deletes and renames stand. */
+  changes(): ChangeSummary;
   reads: readonly string[];
   readFiles(): Promise<{ files: ContextFile[]; refused: RefusedFile[]; disconnected: boolean }>;
   /** The READ card's files went out with the follow-up. */
@@ -89,6 +99,8 @@ interface Step {
   phase: Phase;
   /** Edits held for a click have paused the loop once already. */
   editsReviewed: boolean;
+  /** Deletes and renames have paused the loop once already. */
+  changesReviewed: boolean;
   /** Commands that aren't allowed have paused the loop once already. */
   disallowedReviewed: boolean;
   files: ContextFile[];
@@ -132,7 +144,10 @@ export class FullAutoLoop {
   private lastSendAt = Number.NEGATIVE_INFINITY;
   /** Bumped by Stop and by a new run, so work still in flight drops its result. */
   private generation = 0;
-  private running = false;
+  /** The generation whose work is running now, if any. */
+  private working: number | null = null;
+  /** The app launch the config came from. A new one means the app restarted. */
+  private instance: string | null = null;
 
   constructor(private readonly deps: LoopDeps) {}
 
@@ -168,6 +183,8 @@ export class FullAutoLoop {
       this.loopId = this.deps.newId();
       this.step = 0;
       this.limit = this.deps.config()?.stepLimit ?? 1;
+      // The app launch this run belongs to, so a restart mid-run is noticed.
+      this.instance = this.deps.config()?.instance ?? this.instance;
       this.conversation = this.deps.page.conversationId();
       this.reason = undefined;
       this.lastSendAt = Number.NEGATIVE_INFINITY;
@@ -182,6 +199,7 @@ export class FullAutoLoop {
       actions,
       phase: 'edits',
       editsReviewed: false,
+      changesReviewed: false,
       disallowedReviewed: false,
       files: [],
       refused: [],
@@ -255,6 +273,15 @@ export class FullAutoLoop {
       if (this.active && this.state !== 'paused') this.pause('disconnected');
       return;
     }
+    const restarted = this.instance !== null && config.instance !== this.instance;
+    this.instance = config.instance;
+    if (restarted && this.active) {
+      // The app came back as a new launch, in Manual. The run waits for the user.
+      this.interrupt('app-restarted');
+      return;
+    }
+    // Paused because the app restarted: it stays paused until Full auto is back and Resume.
+    if (this.state === 'paused' && this.reason === 'app-restarted') return;
     if (config.mode !== 'full-auto' && this.state !== 'idle') {
       this.generation += 1;
       this.current = null;
@@ -264,18 +291,33 @@ export class FullAutoLoop {
     }
   }
 
+  /** The computer woke from sleep. A step that was half done waits for the user. */
+  onWake(): void {
+    if (this.state === 'acting' || this.state === 'sending') this.interrupt('slept');
+  }
+
+  /** Pauses from outside the step, dropping whatever it was waiting on. */
+  private interrupt(reason: PauseReason): void {
+    this.generation += 1;
+    this.deps.cancelRun();
+    this.pause(reason);
+  }
+
   /** Called about once a second: an error banner while waiting for a reply pauses the loop. */
   tick(): void {
     if (this.state === 'waiting-reply' && this.deps.page.error()) this.pause('page-error');
   }
 
   private async advance(): Promise<void> {
-    if (this.running) return;
-    this.running = true;
+    // Work from an older generation (before a Stop or a pause from outside) may still be
+    // unwinding; it drops its results, so it doesn't block this one.
+    const generation = this.generation;
+    if (this.working === generation) return;
+    this.working = generation;
     try {
-      await this.work(this.generation);
+      await this.work(generation);
     } finally {
-      this.running = false;
+      if (this.working === generation) this.working = null;
     }
   }
 
@@ -305,6 +347,15 @@ export class FullAutoLoop {
       if (first && !step.editsReviewed) {
         step.editsReviewed = true;
         this.pause(HOLD_REASON[first.hold]);
+        return;
+      }
+    }
+
+    if (step.phase === 'reads' && !step.changesReviewed) {
+      step.changesReviewed = true;
+      // Deletes and renames never happen on their own, in any mode.
+      if (actions.changes().pending.length > 0) {
+        this.pause('needs-click');
         return;
       }
     }
@@ -366,9 +417,13 @@ export class FullAutoLoop {
 
     if (step.phase === 'build') {
       const { applied, held } = actions.edits();
+      const changes = actions.changes();
       const built = buildFollowUp({
-        applied,
-        skipped: held.map(({ path, reason }) => ({ path, reason })),
+        applied: [...applied, ...changes.applied],
+        skipped: [
+          ...held.map(({ path, reason }) => ({ path, reason })),
+          ...changes.pending.map((path) => ({ path, reason: 'not confirmed' }))
+        ],
         files: step.files,
         refused: step.refused,
         runs: step.runs

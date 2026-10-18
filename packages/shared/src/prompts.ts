@@ -138,10 +138,10 @@ export interface SessionPromptInput {
 
 function commandRules(allowlist: readonly string[]): string {
   if (allowlist.length === 0) {
-    return "7. Bridge can't run commands in this project. Don't ask it to; tell me what to run instead.";
+    return "8. Bridge can't run commands in this project. Don't ask it to; tell me what to run instead.";
   }
   return [
-    '7. To run a command, write one marker per command on its own line, then wait for my reply with the output:',
+    '8. To run a command, write one marker per command on its own line, then wait for my reply with the output:',
     '',
     '`@@RUN pnpm test@@`',
     '',
@@ -149,7 +149,7 @@ function commandRules(allowlist: readonly string[]): string {
     '',
     ...allowlist.map((entry) => `- \`${entry}\``),
     '',
-    '8. When the task is finished and you need nothing more from me, end your reply with:',
+    '9. When the task is finished and you need nothing more from me, end your reply with:',
     '',
     '`@@DONE@@`'
   ].join('\n');
@@ -189,6 +189,12 @@ export function buildSessionPrompt({
       '`@@READ package.json@@`',
       '',
       "6. I'll send files as `@@CONTEXT path@@` blocks. Those are for reading, not edits.",
+      '7. To delete or move a file, write one marker per file on its own line, with no code block. I confirm each one myself:',
+      '',
+      '`@@DELETE src/old.ts@@`',
+      '`@@RENAME src/a.ts -> src/b.ts@@`',
+      '',
+      'A rename moves the file as it is. If its content should change too, send that `@@FILE` block in a later reply, after I confirm the rename.',
       commandRules(allowlist)
     ].join('\n'),
     `Project files (${summary.total} ${summary.total === 1 ? 'entry' : 'entries'}${truncated ? ', list cut short' : ''}).${trimmed}`,

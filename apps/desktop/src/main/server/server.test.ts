@@ -664,7 +664,8 @@ describe('modes, commands and the loop (real project, real runner)', () => {
         allowlist: ['node -e'],
         stepLimit: 10,
         pauseOnFailure: false,
-        running: runner.current
+        running: runner.current,
+        instance: 'test'
       }),
       onLoopReport: (report) => loopReports.push(report),
       onSessionEnd: () => {

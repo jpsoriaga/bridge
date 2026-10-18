@@ -16,6 +16,16 @@ export default defineConfig({
         }
       },
       {
+        // The desktop renderer's React pages, with Testing Library and axe in jsdom.
+        esbuild: { jsx: 'automatic' },
+        test: {
+          name: 'renderer',
+          root: 'apps/desktop',
+          include: ['src/renderer/**/*.test.{ts,tsx}'],
+          environment: 'jsdom'
+        }
+      },
+      {
         test: {
           name: 'extension',
           root: 'apps/extension',

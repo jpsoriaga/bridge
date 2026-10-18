@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import {
   BridgeConfig,
+  DeleteParams,
+  ListParams,
   LoopId,
   LoopReport,
   OpId,
@@ -14,6 +16,7 @@ import {
   UndoParams,
   WriteParams,
   PairingCode,
+  RenameParams,
   type ConnectionStatus,
   type FileErrorCode,
   type FileOutcome,
@@ -27,11 +30,12 @@ export const MAX_FILES_PER_SEND = 50;
 
 /**
  * `conversationId:messageId:slot:contentHash`. See `blockKey`. The slot is a diff card's
- * block index, or `read` for the message's READ card.
+ * block index, `read` for the message's READ card, or `d<n>` / `r<n>` for its n-th
+ * DELETE or RENAME card.
  */
 export const BlockKey = z
   .string()
-  .regex(/^[\w-]{1,64}:[\w-]{1,128}:(?:\d{1,4}|read):[0-9a-f]{16}$/);
+  .regex(/^[\w-]{1,64}:[\w-]{1,128}:(?:\d{1,4}|read|[dr]\d{1,4}):[0-9a-f]{16}$/);
 
 export const CardState = z.enum(['pending', 'applied', 'rejected', 'undone']);
 export type CardState = z.infer<typeof CardState>;
@@ -47,10 +51,22 @@ export const DiffCardRecord = z.strictObject({
   removed: z.number().int().nonnegative().optional(),
   /** Applied by Auto-apply or Full auto rather than a click. The card says "Auto-applied". */
   auto: z.literal(true).optional(),
+  /** Epoch ms when it was applied, for the card's timestamp. */
+  appliedAt: z.number().int().nonnegative().optional(),
   /** Epoch ms. Records older than 30 days are pruned. */
   updatedAt: z.number().int().nonnegative()
 });
 export type DiffCardRecord = z.infer<typeof DiffCardRecord>;
+
+/** A DELETE or RENAME card. Always applied by a click. */
+export const ChangeCardRecord = z.strictObject({
+  card: z.literal('change'),
+  state: CardState,
+  opId: OpId.optional(),
+  appliedAt: z.number().int().nonnegative().optional(),
+  updatedAt: z.number().int().nonnegative()
+});
+export type ChangeCardRecord = z.infer<typeof ChangeCardRecord>;
 
 /** A READ card: whether its files went into the composer. */
 export const ReadCardRecord = z.strictObject({
@@ -60,7 +76,7 @@ export const ReadCardRecord = z.strictObject({
 });
 export type ReadCardRecord = z.infer<typeof ReadCardRecord>;
 
-export const CardRecord = z.union([DiffCardRecord, ReadCardRecord]);
+export const CardRecord = z.union([DiffCardRecord, ReadCardRecord, ChangeCardRecord]);
 export type CardRecord = z.infer<typeof CardRecord>;
 
 const WindowId = z.number().int().nonnegative();
@@ -70,7 +86,32 @@ export const PanelHello = z.strictObject({ type: z.literal('panel-window'), wind
 export type PanelHello = z.infer<typeof PanelHello>;
 
 export const ConversationId = z.string().regex(/^[A-Za-z0-9-]{8,64}$/);
+/** Where the page chip sits. The user drags it; the worker remembers. */
+export const ChipCorner = z.enum(['bottom-right', 'bottom-left', 'top-left', 'top-right']);
+export type ChipCorner = z.infer<typeof ChipCorner>;
 export const LayoutHealth = z.enum(['ok', 'unknown']);
+
+/** A file the chat was sent this session: what it cost and what it held then. */
+export const SentFile = z.strictObject({
+  path: ChatPath,
+  /** Characters it took up in the message. */
+  chars: z.number().int().nonnegative(),
+  /** SHA-256 of the file as sent. Missing for files recorded before Bridge kept hashes. */
+  hash: Sha256Hex.optional()
+});
+export type SentFile = z.infer<typeof SentFile>;
+
+/** A READ or RUN card still waiting for a click, as the side panel lists it. */
+export const PendingRequest = z.strictObject({
+  /** Identifies the card on its page, for "Show". */
+  id: z.string().max(200),
+  kind: z.enum(['read', 'run']),
+  /** The files asked for, or the command. */
+  text: z.string().max(2_000),
+  /** RUN: whether the allowlist allows it. READ: whether any file can be sent. */
+  allowed: z.boolean()
+});
+export type PendingRequest = z.infer<typeof PendingRequest>;
 
 /** chrome.runtime messages to the service worker, from the side panel or content script. */
 export const WorkerRequest = z.discriminatedUnion('type', [
@@ -88,6 +129,19 @@ export const WorkerRequest = z.discriminatedUnion('type', [
   // content script. Needs no permission and touches only that one tab.
   z.strictObject({ type: z.literal('reload-tab'), windowId: WindowId }),
   z.strictObject({ type: z.literal('get-tree') }),
+  // One folder of the project, for the lazy tree. '' is the root.
+  z.strictObject({ type: z.literal('get-list'), dir: ListParams.shape.dir }),
+  // Files in context: send the changed ones again, or drop one from the list.
+  z.strictObject({ type: z.literal('context-resend'), windowId: WindowId }),
+  z.strictObject({ type: z.literal('context-remove'), windowId: WindowId, path: ChatPath }),
+  // Moves this conversation's session to the panel's active tab.
+  z.strictObject({ type: z.literal('session-move'), windowId: WindowId }),
+  // Scrolls a pending READ or RUN card into view in the panel's active tab.
+  z.strictObject({
+    type: z.literal('reveal-request'),
+    windowId: WindowId,
+    id: z.string().max(200)
+  }),
   z.strictObject({
     type: z.literal('send-files'),
     windowId: WindowId,
@@ -110,9 +164,33 @@ export const WorkerRequest = z.discriminatedUnion('type', [
     conversationId: ConversationId.nullable(),
     layout: LayoutHealth,
     /** The content script just started (a load or reload): any loop it had is gone. */
-    start: z.literal(true).optional()
+    start: z.literal(true).optional(),
+    /** The tab's timers stalled: the computer slept. Reconnect now. */
+    wake: z.literal(true).optional()
   }),
   z.strictObject({ type: z.literal('chat-read'), path: ChatPath }),
+  z.strictObject({ type: z.literal('chat-stat'), path: ChatPath }),
+  z.strictObject({
+    type: z.literal('chat-delete'),
+    path: ChatPath,
+    baseHash: DeleteParams.shape.baseHash
+  }),
+  z.strictObject({
+    type: z.literal('chat-rename'),
+    from: ChatPath,
+    to: RenameParams.shape.to,
+    baseHash: RenameParams.shape.baseHash
+  }),
+  z.strictObject({ type: z.literal('chip-corner'), corner: ChipCorner }),
+  // The page says this conversation doesn't exist (deleted, or a 404): end its session.
+  z.strictObject({ type: z.literal('chat-gone') }),
+  // "Move here" from the notice in a tab whose session lives in another tab.
+  z.strictObject({ type: z.literal('chat-move-here') }),
+  // The READ and RUN cards still waiting in this tab, for the side panel.
+  z.strictObject({
+    type: z.literal('chat-requests'),
+    requests: z.array(PendingRequest).max(100)
+  }),
   z.strictObject({
     type: z.literal('chat-write'),
     path: ChatPath,
@@ -132,7 +210,7 @@ export const WorkerRequest = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('chat-undo'), opId: OpId }),
   z.strictObject({
     type: z.literal('chat-sent'),
-    paths: z.array(ChatPath).max(MAX_FILES_PER_SEND)
+    files: z.array(SentFile).max(MAX_FILES_PER_SEND)
   }),
   z.strictObject({ type: z.literal('card-get'), keys: z.array(BlockKey).max(500) }),
   z.strictObject({ type: z.literal('card-set'), key: BlockKey, record: CardRecord }),
@@ -155,6 +233,13 @@ export type WorkerRequestOf<T extends WorkerRequest['type']> = Extract<WorkerReq
 export const CONTENT_SCRIPT_REQUESTS: ReadonlySet<WorkerRequest['type']> = new Set([
   'chat-sync',
   'chat-read',
+  'chat-stat',
+  'chat-delete',
+  'chat-rename',
+  'chat-gone',
+  'chat-move-here',
+  'chat-requests',
+  'chip-corner',
   'chat-write',
   'chat-undo',
   'chat-sent',
@@ -176,6 +261,11 @@ export const EXTENSION_PAGE_REQUESTS: ReadonlySet<WorkerRequest['type']> = new S
   'session-end',
   'reload-tab',
   'get-tree',
+  'get-list',
+  'context-resend',
+  'context-remove',
+  'session-move',
+  'reveal-request',
   'send-files',
   'loop-control',
   'run-cancel',
@@ -188,8 +278,15 @@ export const TabMessage = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('insert-text'), text: z.string().min(1).max(4_000_000) }),
   z.strictObject({
     type: z.literal('session-changed'),
-    session: z.enum(['active', 'ended']).nullable()
+    session: z.enum(['active', 'ended', 'elsewhere']).nullable()
   }),
+  // Files changed on disk. Open cards re-read them; `overflow`: re-check every card.
+  z.strictObject({
+    type: z.literal('files-changed'),
+    paths: z.array(z.string().max(4096)).max(500),
+    overflow: z.boolean()
+  }),
+  z.strictObject({ type: z.literal('reveal-request'), id: z.string().max(200) }),
   // The app's mode and allowlist, whenever they or the connection change. Null: not connected.
   z.strictObject({ type: z.literal('bridge-config'), config: BridgeConfig.nullable() }),
   z.strictObject({ type: z.literal('run-output'), runId: RunId, chunk: z.string() }),
@@ -206,8 +303,11 @@ export type InsertResult =
   | { ok: true; method: 'paste' | 'insert-text' | 'textarea'; chars: number }
   | { ok: false; error: 'no-composer' | 'not-inserted' };
 
-/** The chat session for one conversation, or the tab waiting for its first message. */
-export type SessionState = 'active' | 'ended';
+/**
+ * The chat session for one conversation, or the tab waiting for its first message.
+ * `elsewhere`: the conversation has an active session, but another tab owns it.
+ */
+export type SessionState = 'active' | 'ended' | 'elsewhere';
 
 /** `chat-sync`'s reply. */
 export interface ChatSyncReply {
@@ -215,6 +315,8 @@ export interface ChatSyncReply {
   session: SessionState | null;
   /** The app's mode and allowlist while connected. */
   config: BridgeConfig | null;
+  /** Where the user last put the page chip. */
+  chipCorner: ChipCorner;
 }
 
 export type PairResult =
@@ -250,13 +352,30 @@ export interface ChatPanelState {
     /** Null while a new chat waits for its first message. */
     conversationId: string | null;
     startedAt: number;
-    filesSent: string[];
+    /** Files sent to the chat this session, newest last, with whether they changed since. */
+    context: ContextEntry[];
     applied: number;
     pending: number;
   } | null;
   /** The Full auto loop in this tab, as it last reported. */
   loop: LoopReport | null;
+  /** READ and RUN cards in this tab still waiting for a click. */
+  requests: PendingRequest[];
+  /** How the app watches the project: every change, or only the files in context. */
+  watch: 'watch' | 'poll' | null;
 }
+
+/** One file in context, as the side panel shows it. */
+export interface ContextEntry extends SentFile {
+  /** Changed on disk since it was sent. */
+  stale: boolean;
+  /** Gone from disk since it was sent. */
+  missing: boolean;
+}
+
+export type ContextResendResult =
+  | { ok: true; sent: string[]; refused: { path: string; code: FileErrorCode }[] }
+  | { ok: false; error: SessionError };
 
 /** Pushed to the side panel over its `chrome.runtime` port. */
 export interface StatusUpdate {

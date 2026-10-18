@@ -43,7 +43,7 @@ export interface BridgeServerOptions {
   version: string;
   /** Called whenever pairing or connection state changes. */
   onChange?: () => void;
-  /** Answers tree/read/write/undo. Without it every file request gets `no-project`. */
+  /** Answers file requests (tree, read, write…). Without it every one gets `no-project`. */
   files?: (request: FileRequest) => Promise<FileOutcome<unknown>>;
   /** Answers run/run_cancel. Without it every command gets `no-project`. */
   commands?: (request: CommandRequest) => Promise<FileOutcome<unknown>>;
@@ -55,6 +55,8 @@ export interface BridgeServerOptions {
   onLoopReport?: (report: LoopReport) => void;
   /** The extension ended a chat session. */
   onSessionEnd?: () => void;
+  /** The extension started a chat session. */
+  onSessionStart?: () => void;
   /** The pairing was revoked or replaced: the old extension is gone. */
   onUnpaired?: () => void;
   allowedOrigins?: ReadonlySet<string>;
@@ -105,10 +107,12 @@ export function createBridgeServer(options: BridgeServerOptions) {
       allowlist: [],
       stepLimit: 10,
       pauseOnFailure: false,
-      running: null
+      running: null,
+      instance: 'default'
     }),
     onLoopReport = () => {},
     onSessionEnd = () => {},
+    onSessionStart = () => {},
     onUnpaired = () => {},
     allowedOrigins = ALLOWED_ORIGINS,
     authTimeoutMs = AUTH_TIMEOUT_MS,
@@ -309,9 +313,14 @@ export function createBridgeServer(options: BridgeServerOptions) {
             send(serverMessage(randomUUID(), 'pong', {}));
             break;
           case 'tree':
+          case 'list':
           case 'read':
+          case 'stat':
           case 'write':
+          case 'delete':
+          case 'rename':
           case 'undo':
+          case 'watch':
           case 'run':
           case 'run_cancel':
             // The reply carries the request's id.
@@ -331,6 +340,9 @@ export function createBridgeServer(options: BridgeServerOptions) {
             break;
           case 'session_end':
             onSessionEnd();
+            break;
+          case 'session_start':
+            onSessionStart();
             break;
           default:
             break;

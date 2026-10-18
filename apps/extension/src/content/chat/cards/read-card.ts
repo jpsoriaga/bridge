@@ -2,20 +2,21 @@ import {
   buildContextMessage,
   COMPOSER_WARN_CHARS,
   FILE_ERROR_LABELS,
+  formatContextBlock,
   type ContextFile,
   type FileErrorCode,
   type ReadResult,
   type RefusedFile
 } from '@bridge/shared';
-import type { ReadCardRecord, RequestOutcome } from '../../../messages';
+import type { ReadCardRecord, RequestOutcome, SentFile } from '../../../messages';
 import { insertIntoComposer } from '../composer';
 import { failureText, type Ask } from './diff-card';
-import { formatCount, h, icon } from './dom';
+import { formatCount, h, icon, renderCard } from './dom';
 import { createHost } from './host';
 
 type Entry =
   | { path: string; status: 'loading' }
-  | { path: string; status: 'ok'; content: string }
+  | { path: string; status: 'ok'; content: string; hash: string }
   | { path: string; status: 'refused'; reason: string };
 
 /**
@@ -35,12 +36,13 @@ export class ReadCard {
   /** A read failed because the app wasn't there, not because the file was refused. */
   private unreachable = false;
   private reading: Promise<void> = Promise.resolve();
+  private expanded = true;
 
   constructor(
     readonly key: string,
     readonly paths: readonly string[],
     private readonly ask: Ask,
-    private readonly onSent: (paths: string[]) => void
+    private readonly onSent: (files: SentFile[]) => void
   ) {
     ({ host: this.host, root: this.root } = createHost('read-card'));
     this.entries = paths.map((path) => ({ path, status: 'loading' }));
@@ -77,8 +79,28 @@ export class ReadCard {
     if (this.sent) return;
     this.sent = true;
     void this.persist();
-    this.onSent(this.entries.flatMap((e) => (e.status === 'ok' ? [e.path] : [])));
+    this.onSent(this.sentFiles());
     this.render();
+  }
+
+  /** The files that go out, with what each costs in the message and its hash. */
+  private sentFiles(): SentFile[] {
+    return this.entries.flatMap((e) =>
+      e.status === 'ok'
+        ? [{ path: e.path, chars: formatContextBlock(e.path, e.content).length, hash: e.hash }]
+        : []
+    );
+  }
+
+  /** Whether any file can be sent, for the side panel's request list. */
+  get sendable(): boolean {
+    return this.entries.some((e) => e.status !== 'refused');
+  }
+
+  /** Scrolls the card into view and puts focus on its button, for "Show" in the panel. */
+  reveal(): void {
+    this.host.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    this.root.querySelector<HTMLElement>('[data-focus="send"]')?.focus();
   }
 
   private async readAll(): Promise<void> {
@@ -87,7 +109,12 @@ export class ReadCard {
     for (const [i, path] of this.paths.entries()) {
       const outcome = await this.ask<RequestOutcome<ReadResult>>({ type: 'chat-read', path });
       if (outcome?.ok) {
-        this.entries[i] = { path, status: 'ok', content: outcome.result.content };
+        this.entries[i] = {
+          path,
+          status: 'ok',
+          content: outcome.result.content,
+          hash: outcome.result.hash
+        };
       } else if (
         outcome &&
         outcome.error.code !== 'not-connected' &&
@@ -140,8 +167,7 @@ export class ReadCard {
     this.sent = true;
     this.error = null;
     void this.persist();
-    const paths = this.entries.flatMap((e) => (e.status === 'ok' ? [e.path] : []));
-    this.onSent(paths);
+    this.onSent(this.sentFiles());
     this.render();
   }
 
@@ -192,25 +218,42 @@ export class ReadCard {
 
     const button = h(
       'button',
-      { class: 'btn btn-primary btn-lg', attrs: { type: 'button' }, onClick: () => this.send() },
+      {
+        class: this.sent ? 'btn btn-lg' : 'btn btn-primary btn-lg',
+        attrs: { type: 'button', 'data-focus': 'send' },
+        onClick: () => this.send()
+      },
       this.sent ? 'Send again' : 'Send these files'
     );
     button.disabled = this.disabled || loading || okCount === 0;
+    const title = `The chat asked for ${this.paths.length} ${this.paths.length === 1 ? 'file' : 'files'}`;
+    const toggle = h(
+      'button',
+      {
+        class: 'link',
+        attrs: { type: 'button', 'aria-expanded': String(this.expanded), 'data-focus': 'toggle' },
+        onClick: () => {
+          this.expanded = !this.expanded;
+          this.render();
+        }
+      },
+      this.expanded ? 'Hide files' : 'Show files',
+      icon('chevron')
+    );
 
     const card = h(
       'div',
-      { class: 'card', attrs: { 'data-kind': 'read' } },
+      { class: 'card', attrs: { 'data-kind': 'read', role: 'group', 'aria-label': title } },
       h(
         'div',
         { class: 'header' },
         icon('file'),
-        h(
-          'span',
-          { class: 'title' },
-          `The chat asked for ${this.paths.length} ${this.paths.length === 1 ? 'file' : 'files'}`
-        )
+        h('span', { class: 'title' }, title),
+        this.sent ? h('span', { class: 'badge', attrs: { 'data-tone': 'success' } }, 'sent') : null,
+        h('span', { class: 'spacer' }),
+        toggle
       ),
-      h('ul', { class: 'files' }, ...rows),
+      this.expanded ? h('ul', { class: 'files' }, ...rows) : null,
       this.error
         ? h('p', { class: 'message', attrs: { 'data-tone': 'danger', role: 'alert' } }, this.error)
         : null,
@@ -221,7 +264,6 @@ export class ReadCard {
         button
       )
     );
-    const style = this.root.querySelector('style');
-    this.root.replaceChildren(...(style ? [style] : []), card);
+    renderCard(this.root, card);
   }
 }

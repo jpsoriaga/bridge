@@ -54,8 +54,9 @@ function Suggestions({ suggestions }: { suggestions: string[] }) {
   return (
     <>
       <p className="hint">
-        Bridge found these in the project. Nothing runs until you confirm the list. You can change
-        it at any time.
+        {suggestions.length === 0
+          ? 'Bridge found no check scripts in this project. Confirm an empty list, then add commands below if you want any.'
+          : 'Bridge found these in the project. Nothing runs until you confirm the list. You can change it at any time.'}
       </p>
       <ul className="patterns suggestions">
         {suggestions.map((entry) => (
@@ -119,7 +120,7 @@ function Allowlist({ entries }: { entries: string[] }) {
         so is any shell syntax.
       </p>
       {entries.length === 0 ? (
-        <p className="hint">No commands allowed in this project.</p>
+        <p className="empty">No commands allowed in this project. Add one below.</p>
       ) : (
         <ul className="patterns">
           {entries.map((entry) => (
@@ -128,6 +129,7 @@ function Allowlist({ entries }: { entries: string[] }) {
               <button
                 type="button"
                 className="btn"
+                aria-label={`Remove ${entry}`}
                 onClick={() => void save(entries.filter((e) => e !== entry))}
               >
                 Remove
@@ -161,14 +163,11 @@ function Allowlist({ entries }: { entries: string[] }) {
   );
 }
 
-function RunSettingsForm({ settings }: { settings: RunSettings }) {
-  const [timeout, setTimeoutValue] = useState(String(settings.timeoutMs / 1000));
-  const [steps, setSteps] = useState(String(settings.stepLimit));
+/** Saves one field of the run settings, keeping the rest as they are. */
+function useRunSettings(settings: RunSettings) {
   const [error, setError] = useState<string | null>(null);
-
   const save = (patch: Partial<RunSettings>) => {
-    const next = { ...settings, ...patch };
-    void window.bridge.setRunSettings(next).then((ok) => {
+    void window.bridge.setRunSettings({ ...settings, ...patch }).then((ok) => {
       setError(
         ok
           ? null
@@ -176,7 +175,13 @@ function RunSettingsForm({ settings }: { settings: RunSettings }) {
       );
     });
   };
+  return { save, error };
+}
 
+/** How long one command may run before Bridge stops it. */
+export function TimeoutField({ settings }: { settings: RunSettings }) {
+  const [timeout, setTimeoutValue] = useState(String(settings.timeoutMs / 1000));
+  const { save, error } = useRunSettings(settings);
   return (
     <div className="run-settings">
       <label className="field">
@@ -187,15 +192,32 @@ function RunSettingsForm({ settings }: { settings: RunSettings }) {
             type="number"
             min={MIN_RUN_TIMEOUT_MS / 1000}
             max={MAX_RUN_TIMEOUT_MS / 1000}
+            aria-invalid={error !== null}
             value={timeout}
             onChange={(e) => setTimeoutValue(e.target.value)}
             onBlur={() => save({ timeoutMs: Math.round(Number(timeout) * 1000) })}
           />
-          <span className="unit">s</span>
+          <span className="unit">seconds</span>
         </span>
       </label>
+      <p className="hint">Bridge stops a command, and anything it started, after this long.</p>
+      {error && (
+        <p className="error-text" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Full auto's step limit and whether a failing command pauses it. */
+export function FullAutoFields({ settings }: { settings: RunSettings }) {
+  const [steps, setSteps] = useState(String(settings.stepLimit));
+  const { save, error } = useRunSettings(settings);
+  return (
+    <div className="run-settings">
       <label className="field">
-        <span>Full auto step limit</span>
+        <span>Step limit</span>
         <span className="field-input">
           <input
             className="input mono"
@@ -203,6 +225,7 @@ function RunSettingsForm({ settings }: { settings: RunSettings }) {
             min={1}
             max={MAX_STEP_LIMIT}
             placeholder={String(DEFAULT_STEP_LIMIT)}
+            aria-invalid={error !== null}
             value={steps}
             onChange={(e) => setSteps(e.target.value)}
             onBlur={() => save({ stepLimit: Math.round(Number(steps)) })}
@@ -210,6 +233,9 @@ function RunSettingsForm({ settings }: { settings: RunSettings }) {
           <span className="unit">messages</span>
         </span>
       </label>
+      <p className="hint">
+        The most messages Full auto sends on its own in one run before it pauses for you.
+      </p>
       <label className="check">
         <input
           type="checkbox"
@@ -249,7 +275,7 @@ export function PathOverride({ commandPath }: { commandPath: CommandPath }) {
     });
   return (
     <div className="pattern-list">
-      <p className="label">PATH for commands</p>
+      <h3 className="subsection-title">PATH for commands</h3>
       <p className="hint">
         {commandPath.source === null
           ? 'Reading your login shell…'
@@ -327,25 +353,17 @@ export function RunningCommand({ state }: { state: DesktopState }) {
   );
 }
 
-/** The allowlist, then timeout, step limit and pause-on-failure. */
-export function CommandsSection({ state }: { state: DesktopState }) {
-  return (
-    <section>
-      <p className="label">Commands</p>
-      {!state.project ? (
-        <p className="hint">Open a project to choose which commands the chat may run.</p>
-      ) : state.allowlist === null ? (
-        <Suggestions
-          key={`${state.project.path}:${state.allowlistSuggestions.join('|')}`}
-          suggestions={state.allowlistSuggestions}
-        />
-      ) : (
-        <Allowlist entries={state.allowlist} />
-      )}
-      <RunSettingsForm
-        key={`${state.runSettings.timeoutMs}:${state.runSettings.stepLimit}`}
-        settings={state.runSettings}
-      />
-    </section>
+/** The project's allowlist: the suggestions to confirm first, then the list itself. */
+export function AllowlistEditor({ state }: { state: DesktopState }) {
+  if (!state.project) {
+    return <p className="empty">Open a project to choose which commands the chat may run.</p>;
+  }
+  return state.allowlist === null ? (
+    <Suggestions
+      key={`${state.project.path}:${state.allowlistSuggestions.join('|')}`}
+      suggestions={state.allowlistSuggestions}
+    />
+  ) : (
+    <Allowlist entries={state.allowlist} />
   );
 }

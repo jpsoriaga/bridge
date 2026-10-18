@@ -4,19 +4,16 @@ import { BRIDGE_HOST_ATTRIBUTE } from '../selectors';
 import cardCss from './card.css?inline';
 
 /**
- * The tokens with `:root` swapped for `:host`, plus copies keyed to the page's own theme
- * class, so cards follow chatgpt.com's light/dark setting rather than only the OS.
+ * The tokens with `:root` swapped for `:host`, plus the page's own theme class picking the
+ * colour scheme, so cards follow chatgpt.com's light/dark setting rather than only the OS.
+ * Every colour token is `light-dark()`, so `color-scheme` is all that has to change.
  */
 export function hostTokens(css: string): string {
-  const light = /:root\s*\{[^}]*\}/.exec(css)?.[0];
-  const dark = /@media \(prefers-color-scheme: dark\)\s*\{\s*(:root\s*\{[^}]*\})/.exec(css)?.[1];
   return [
     css.replaceAll(':root', ':host'),
-    light?.replace(':root', ':host-context(html.light)'),
-    dark?.replace(':root', ':host-context(html.dark)')
-  ]
-    .filter(Boolean)
-    .join('\n');
+    ':host-context(html.light) { color-scheme: light !important; }',
+    ':host-context(html.dark) { color-scheme: dark !important; }'
+  ].join('\n');
 }
 
 const STYLES = `${hostTokens(tokens)}\n${cardCss}`;

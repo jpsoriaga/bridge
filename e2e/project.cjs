@@ -46,8 +46,11 @@ const SHOTS = process.env.E2E_SCREENSHOTS;
   );
 
   const { app, win } = await launchApp(appData);
-  await win.locator('.project-name').filter({ hasText: 'demo-app' }).waitFor();
-  step('desktop header: ' + (await win.locator('.project-head').innerText()).replace(/\n/g, ' '));
+  await win.locator('.switcher-name').filter({ hasText: 'demo-app' }).waitFor();
+  step(
+    'desktop header: ' + (await win.locator('.switcher-button').innerText()).replace(/\n/g, ' ')
+  );
+  const nav = (name) => win.getByRole('navigation', { name: 'Main' }).getByRole('button', { name });
 
   const { ctx, extId } = await launchChrome(extDir);
   const panel = await ctx.newPage();
@@ -143,6 +146,7 @@ const SHOTS = process.env.E2E_SCREENSHOTS;
   if (fs.existsSync(path.join(project, '.env.local'))) throw new Error('.env.local was written');
 
   // The desktop activity list: writes with Undo, and the blocked requests.
+  await nav('Activity').click();
   await win.locator('.activity-row').first().waitFor();
   const rows = await win.locator('.activity-row').allInnerTexts();
   step(
@@ -156,9 +160,6 @@ const SHOTS = process.env.E2E_SCREENSHOTS;
     `backups in userData: ${backups.length} project(s), none in project=${!fs.readdirSync(project).some((n) => n.includes('backup'))}`
   );
   if (SHOTS) {
-    await win.evaluate(() => window.scrollTo(0, 0));
-    await win.screenshot({ path: path.join(SHOTS, 'desktop-top.png') });
-    await win.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
     await win.screenshot({ path: path.join(SHOTS, 'desktop.png') });
   }
 
@@ -168,10 +169,14 @@ const SHOTS = process.env.E2E_SCREENSHOTS;
   step(
     `undo last: win.txt ${JSON.stringify(fs.readFileSync(path.join(project, 'win.txt'), 'utf8'))}`
   );
+  // Per-entry undo is in the row's detail view.
   await win
     .locator('.activity-row', { hasText: 'src/new/util.ts' })
-    .getByRole('button', { name: 'Undo' })
+    .filter({ hasText: 'Created' })
+    .getByRole('button')
     .click();
+  await win.getByRole('button', { name: 'Undo', exact: true }).click();
+  await win.getByRole('button', { name: 'Back to activity' }).click();
   await win.locator('.activity-row[data-undone="true"]', { hasText: 'src/new/util.ts' }).waitFor();
   step(`undo create: exists=${fs.existsSync(path.join(project, 'src/new/util.ts'))}`);
 
@@ -184,8 +189,11 @@ const SHOTS = process.env.E2E_SCREENSHOTS;
   await win
     .locator('.activity-row', { hasText: 'src/index.ts' })
     .filter({ hasText: 'Modified' })
-    .getByRole('button', { name: 'Undo' })
+    .first()
+    .getByRole('button')
     .click();
+  await win.getByRole('button', { name: 'Undo', exact: true }).click();
+  await win.getByRole('button', { name: 'Back to activity' }).click();
   await win.locator('.activity-row[data-undone="true"]', { hasText: 'src/index.ts' }).waitFor();
   step(
     `undo after external edit (confirmed): ${JSON.stringify(fs.readFileSync(path.join(project, 'src/index.ts'), 'utf8'))}`

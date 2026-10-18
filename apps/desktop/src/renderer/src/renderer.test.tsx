@@ -1,0 +1,352 @@
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, describe, expect, it } from 'vitest';
+import { ActivityView, filterActivity, groupActivity } from './ActivityView';
+import { App, applyTheme } from './App';
+import { ACTIVITY_KINDS, kindsOf } from './errors';
+import { Onboarding, onboardingSteps } from './Onboarding';
+import { ModeSection } from './SessionView';
+import { SettingsView } from './SettingsView';
+import { entry, installBridge, makeState } from './test-utils';
+
+afterEach(cleanup);
+
+describe('Onboarding', () => {
+  const fresh = makeState({
+    paired: false,
+    status: 'not-paired',
+    project: null,
+    allowlist: null,
+    onboarding: { dismissed: false, sessionStarted: false }
+  });
+
+  it('ticks off each step as it happens', () => {
+    expect(onboardingSteps(fresh).map((s) => s.done)).toEqual([false, false, false, false]);
+    const paired = { ...fresh, paired: true };
+    expect(onboardingSteps(paired).map((s) => s.done)).toEqual([true, false, false, false]);
+    const project = { ...paired, project: { name: 'app', path: '~/app' } };
+    expect(onboardingSteps(project).map((s) => s.done)).toEqual([true, true, false, false]);
+    const missing = { ...project, project: { ...project.project, missing: true as const } };
+    expect(onboardingSteps(missing)[1]!.done).toBe(false);
+    const commands = { ...project, allowlist: [] };
+    expect(onboardingSteps(commands).map((s) => s.done)).toEqual([true, true, true, false]);
+    const done = { ...commands, onboarding: { dismissed: false, sessionStarted: true } };
+    expect(onboardingSteps(done).every((s) => s.done)).toBe(true);
+  });
+
+  it('shows the next step’s hint and action, and can be dismissed', () => {
+    const { bridge } = installBridge(fresh);
+    const steps: string[] = [];
+    render(<Onboarding state={fresh} onGo={(step) => steps.push(step)} />);
+    expect(screen.getByText('0 of 4 done')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Pair' }));
+    expect(steps).toEqual(['pair']);
+    fireEvent.click(screen.getByRole('button', { name: 'Close the checklist' }));
+    expect(bridge.setOnboardingDismissed).toHaveBeenCalledWith(true);
+  });
+
+  it('shows in the app until dismissed, and Help brings it back', async () => {
+    const t = installBridge(fresh);
+    render(<App />);
+    expect(await screen.findByRole('heading', { name: 'Get started' })).toBeTruthy();
+    act(() => t.push({ ...fresh, onboarding: { dismissed: true, sessionStarted: false } }));
+    expect(screen.queryByRole('heading', { name: 'Get started' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Getting started' }));
+    expect(t.bridge.setOnboardingDismissed).toHaveBeenCalledWith(false);
+    act(() => t.menu('onboarding'));
+    expect(t.bridge.setOnboardingDismissed).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('Activity', () => {
+  const rows = [
+    entry({ id: '1', kind: 'modify', path: 'src/a.ts', opId: 'op-1', source: 'chat' }),
+    entry({ id: '2', kind: 'delete', path: 'src/old.ts', opId: 'op-2' }),
+    entry({ id: '3', kind: 'rename', path: 'lib/b.ts', from: 'src/b.ts', opId: 'op-3' }),
+    entry({
+      id: '4',
+      kind: 'run',
+      path: 'pnpm test',
+      op: 'run',
+      runId: 'run-1',
+      run: { status: 'exited', exitCode: 1, durationMs: 1200 }
+    }),
+    entry({ id: '5', kind: 'rejected', path: '.env', op: 'read', code: 'denied' }),
+    entry({
+      id: '6',
+      kind: 'create',
+      path: 'src/new.ts',
+      opId: 'op-6',
+      trigger: 'auto',
+      loopId: 'loop-1'
+    }),
+    entry({ id: '7', kind: 'loop', path: '', text: 'Sent message 1 of 10.', loopId: 'loop-1' })
+  ];
+
+  it('sorts each row into the filter kinds', () => {
+    expect(kindsOf(rows[0]!)).toEqual(['write']);
+    expect(kindsOf(rows[1]!)).toEqual(['delete']);
+    expect(kindsOf(rows[2]!)).toEqual(['rename']);
+    expect(kindsOf(rows[3]!)).toEqual(['run']);
+    expect(kindsOf(rows[4]!)).toEqual(['blocked']);
+    expect(kindsOf(rows[5]!)).toEqual(['write', 'auto']);
+    // Every kind matches something here.
+    for (const kind of ACTIVITY_KINDS) {
+      expect(filterActivity(rows, new Set([kind]), '').length).toBeGreaterThan(0);
+    }
+  });
+
+  it('filters by kind and searches by path, old path included', () => {
+    expect(filterActivity(rows, new Set(['delete', 'rename']), '').map((e) => e.id)).toEqual([
+      '2',
+      '3'
+    ]);
+    expect(filterActivity(rows, new Set(), 'src/b').map((e) => e.id)).toEqual(['3']);
+    expect(groupActivity(rows).map((i) => i.kind)).toEqual([
+      'row',
+      'row',
+      'row',
+      'row',
+      'row',
+      'loop'
+    ]);
+  });
+
+  it('filters with chips, clears, and shows an empty state', () => {
+    installBridge();
+    render(<ActivityView entries={rows} hasProject />);
+    const list = () => within(screen.getByRole('list', { name: 'Activity' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Deletes' }));
+    expect(screen.getByRole('button', { name: 'Deletes' }).getAttribute('aria-pressed')).toBe(
+      'true'
+    );
+    expect(list().getAllByRole('button')).toHaveLength(1);
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search by path' }), {
+      target: { value: 'nothing-like-this' }
+    });
+    expect(screen.getByText(/Nothing matches/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    expect(list().getAllByRole('button').length).toBe(6);
+  });
+
+  it('opens a row’s diff and undoes from it', async () => {
+    const { bridge } = installBridge();
+    render(<ActivityView entries={rows} hasProject />);
+    fireEvent.click(screen.getByRole('button', { name: /^src\/a\.ts, Modified/ }));
+    expect(await screen.findByRole('heading', { name: 'src/a.ts' })).toBeTruthy();
+    expect(bridge.getOpDetail).toHaveBeenCalledWith('op-1');
+    const changes = await screen.findByRole('region', { name: 'Changes' });
+    expect(changes.textContent).toContain('- two');
+    expect(changes.textContent).toContain('+ three');
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(bridge.undo).toHaveBeenCalledWith('op-1'));
+    fireEvent.click(screen.getByRole('button', { name: 'Back to activity' }));
+    expect(screen.getByRole('heading', { name: 'Activity' })).toBeTruthy();
+  });
+
+  it('shows a command’s full output, or says it’s gone', async () => {
+    const { bridge } = installBridge();
+    bridge.getRunDetail.mockResolvedValueOnce({
+      argv: ['pnpm', 'test'],
+      status: 'exited',
+      exitCode: 1,
+      durationMs: 1200,
+      output: 'FAIL src/a.test.ts',
+      truncated: false
+    } as never);
+    render(<ActivityView entries={rows} hasProject />);
+    fireEvent.click(screen.getByRole('button', { name: /^pnpm test, Exit 1/ }));
+    expect((await screen.findByLabelText('Output')).textContent).toBe('FAIL src/a.test.ts');
+  });
+
+  it('says what to do with no project, and with nothing yet', () => {
+    installBridge();
+    const { rerender } = render(<ActivityView entries={[]} hasProject={false} />);
+    expect(screen.getByText('Open a project to see its activity.')).toBeTruthy();
+    rerender(<ActivityView entries={[]} hasProject />);
+    expect(screen.getByText(/Nothing yet/)).toBeTruthy();
+    rerender(<ActivityView entries={null} hasProject />);
+    expect(screen.getByLabelText('Loading activity')).toBeTruthy();
+  });
+});
+
+describe('Settings forms', () => {
+  it('adds an allowed command, refusing shell syntax with the reason', async () => {
+    const { bridge } = installBridge();
+    render(<SettingsView state={makeState()} />);
+    const input = screen.getByRole('textbox', { name: 'Add an allowed command' });
+    fireEvent.change(input, { target: { value: 'pnpm test && rm -rf /' } });
+    fireEvent.submit(input.closest('form')!);
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(bridge.setAllowlist).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: 'pnpm lint' } });
+    fireEvent.submit(input.closest('form')!);
+    await waitFor(() =>
+      expect(bridge.setAllowlist).toHaveBeenCalledWith(['pnpm test', 'pnpm lint'])
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Remove pnpm test' }));
+    expect(bridge.setAllowlist).toHaveBeenLastCalledWith([]);
+  });
+
+  it('adds a protected pattern and says when one is invalid', async () => {
+    const { bridge } = installBridge();
+    bridge.setDenyPatterns.mockResolvedValueOnce(false);
+    render(<SettingsView state={makeState()} />);
+    const input = screen.getByRole('textbox', { name: 'Add to protected files' });
+    fireEvent.change(input, { target: { value: '!keep' } });
+    fireEvent.submit(input.closest('form')!);
+    expect(await screen.findByText(/without “!” or “#”/)).toBeTruthy();
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+  });
+
+  it('saves the timeout, step limit and pause on failure', async () => {
+    const { bridge } = installBridge();
+    render(<SettingsView state={makeState()} />);
+    const timeout = screen.getByRole('spinbutton', { name: /Command timeout/ });
+    fireEvent.change(timeout, { target: { value: '30' } });
+    fireEvent.blur(timeout);
+    expect(bridge.setRunSettings).toHaveBeenLastCalledWith({
+      timeoutMs: 30_000,
+      stepLimit: 10,
+      pauseOnFailure: false
+    });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Pause Full auto when a command fails' }));
+    expect(bridge.setRunSettings).toHaveBeenLastCalledWith({
+      timeoutMs: 120_000,
+      stepLimit: 10,
+      pauseOnFailure: true
+    });
+    bridge.setRunSettings.mockResolvedValueOnce(false);
+    const steps = screen.getByRole('spinbutton', { name: /Step limit/ });
+    fireEvent.change(steps, { target: { value: '99' } });
+    fireEvent.blur(steps);
+    expect(await screen.findByText(/step limit of 1–25/)).toBeTruthy();
+  });
+
+  it('keeps backups for 1–90 days, and clears or opens them', async () => {
+    const { bridge } = installBridge();
+    render(<SettingsView state={makeState()} />);
+    const days = screen.getByRole('spinbutton', { name: /Keep backups for/ });
+    fireEvent.change(days, { target: { value: '120' } });
+    fireEvent.blur(days);
+    expect(await screen.findByText('Keep backups for 1 to 90 days.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear for this project…' }));
+    expect(await screen.findByText('Deleted every backup for app.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Open the backups folder' }));
+    expect(bridge.openBackupsFolder).toHaveBeenCalled();
+  });
+
+  it('sets the PATH override, and warns when the login shell couldn’t be read', async () => {
+    const { bridge } = installBridge();
+    render(
+      <SettingsView
+        state={makeState({
+          commandPath: {
+            source: 'fallback',
+            path: '/usr/bin',
+            override: '',
+            warning: 'Your login shell took longer than 5s to start.'
+          }
+        })}
+      />
+    );
+    expect(screen.getByText(/took longer than 5s/)).toBeTruthy();
+    const input = screen.getByRole('textbox', { name: 'PATH override' });
+    fireEvent.change(input, { target: { value: '/opt/homebrew/bin:/usr/bin' } });
+    fireEvent.submit(input.closest('form')!);
+    await waitFor(() =>
+      expect(bridge.setPathOverride).toHaveBeenCalledWith('/opt/homebrew/bin:/usr/bin')
+    );
+  });
+
+  it('switches the appearance, with the keyboard too', () => {
+    const { bridge } = installBridge();
+    render(<SettingsView state={makeState()} />);
+    const group = screen.getByRole('radiogroup', { name: 'Appearance' });
+    fireEvent.click(within(group).getByRole('radio', { name: 'Dark' }));
+    expect(bridge.setTheme).toHaveBeenLastCalledWith('dark');
+    fireEvent.keyDown(group, { key: 'ArrowLeft' });
+    expect(bridge.setTheme).toHaveBeenLastCalledWith('dark');
+    const root = document.createElement('html');
+    applyTheme('light', root);
+    expect(root.dataset.theme).toBe('light');
+    applyTheme('system', root);
+    expect(root.dataset.theme).toBeUndefined();
+  });
+});
+
+describe('Mode switch', () => {
+  it('asks main, which confirms Full auto in a native dialog, and shows what main says', async () => {
+    const { bridge } = installBridge();
+    // The user cancels the native dialog: main answers with the mode it stayed in.
+    bridge.setMode.mockResolvedValueOnce('manual');
+    const { rerender } = render(<ModeSection state={makeState()} />);
+    fireEvent.click(screen.getByRole('radio', { name: 'Full auto' }));
+    expect(bridge.setMode).toHaveBeenCalledWith('full-auto');
+    expect(screen.getByText('Confirm in the dialog to turn on Full auto.')).toBeTruthy();
+    await waitFor(() =>
+      expect(screen.getByRole('radio', { name: 'Manual' }).getAttribute('aria-checked')).toBe(
+        'true'
+      )
+    );
+    // Confirmed: main pushes the new state.
+    rerender(<ModeSection state={makeState({ mode: 'full-auto' })} />);
+    expect(screen.getByRole('radio', { name: 'Full auto' }).getAttribute('aria-checked')).toBe(
+      'true'
+    );
+    expect(screen.getByText(/sends messages for you/)).toBeTruthy();
+  });
+
+  it('moves with the arrow keys', async () => {
+    const { bridge } = installBridge();
+    render(<ModeSection state={makeState()} />);
+    fireEvent.keyDown(screen.getByRole('radiogroup', { name: 'Mode' }), { key: 'ArrowRight' });
+    await waitFor(() => expect(bridge.setMode).toHaveBeenCalledWith('auto-apply'));
+  });
+});
+
+describe('App shell', () => {
+  it('navigates between pages, from the nav and from the menu', async () => {
+    const t = installBridge(makeState(), [entry({ id: '1', opId: 'op-1' })]);
+    render(<App />);
+    expect(await screen.findByRole('heading', { name: 'Project' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Activity' }));
+    expect(screen.getByRole('heading', { name: 'Activity' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Activity' }).getAttribute('aria-current')).toBe(
+      'page'
+    );
+    act(() => t.menu('settings'));
+    expect(screen.getByRole('heading', { name: 'Backups' })).toBeTruthy();
+  });
+
+  it('shows Stop on every page while Full auto runs', async () => {
+    const running = makeState({
+      mode: 'full-auto',
+      loop: { loopId: 'l1', state: 'acting', step: 2, limit: 10 }
+    });
+    const { bridge } = installBridge(running);
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Settings' }));
+    expect(screen.getByText('Step 2 of 10')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
+    expect(bridge.stopLoop).toHaveBeenCalled();
+  });
+
+  it('says the project is missing, with a way to reopen it', async () => {
+    installBridge(makeState({ project: { name: 'app', path: '~/code/app', missing: true } }));
+    render(<App />);
+    expect(await screen.findByText('Project missing.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
+  });
+
+  it('toasts an auto-applied edit that lands while the window is open', async () => {
+    const t = installBridge(makeState(), []);
+    render(<App />);
+    await screen.findByRole('heading', { name: 'Project' });
+    act(() =>
+      t.pushActivity([entry({ id: 'n1', kind: 'create', path: 'src/new.ts', trigger: 'auto' })])
+    );
+    const toast = (await screen.findByText('Auto-applied')).closest('.toast') as HTMLElement;
+    expect(within(toast).getByText('src/new.ts')).toBeTruthy();
+    expect(within(toast).getByText('Undo it in Activity.')).toBeTruthy();
+  });
+});

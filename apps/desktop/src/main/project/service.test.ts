@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { PROTOCOL_VERSION, type FileRequest } from '@bridge/shared';
@@ -35,9 +35,14 @@ describe('ProjectService', () => {
   it('answers every operation with no-project before a folder is open', async () => {
     for (const request of [
       req('tree', {}),
+      req('list', { dir: '' }),
       req('read', { path: 'a.txt' }),
+      req('stat', { path: 'a.txt' }),
       req('write', { path: 'a.txt', content: 'x', trigger: 'click' }),
-      req('undo', { opId: 'x' })
+      req('delete', { path: 'a.txt', baseHash: '0'.repeat(64), trigger: 'click' }),
+      req('rename', { from: 'a.txt', to: 'b.txt', baseHash: '0'.repeat(64), trigger: 'click' }),
+      req('undo', { opId: 'x' }),
+      req('watch', { paths: [] })
     ]) {
       expect(await service.handle(request)).toMatchObject({
         ok: false,
@@ -212,5 +217,60 @@ describe('displayPath', () => {
     expect(displayPath('a\0b\nc')).toBe('a�b�c');
     expect(displayPath('x'.repeat(300))).toHaveLength(200);
     expect(displayPath(42)).toBe('(not a path)');
+  });
+
+  it('reports a missing project folder, fails every operation cleanly, and recovers', async () => {
+    writeFileSync(join(project.root, 'a.txt'), 'a');
+    await service.open(project.root);
+    const before = changes;
+    renameSync(project.root, `${project.root}-moved`);
+    for (const request of [
+      req('tree', {}),
+      req('read', { path: 'a.txt' }),
+      req('write', { path: 'b.txt', content: 'x', trigger: 'click' }),
+      req('delete', { path: 'a.txt', baseHash: '0'.repeat(64), trigger: 'click' })
+    ]) {
+      expect(await service.handle(request)).toMatchObject({
+        ok: false,
+        error: { code: 'project-missing' }
+      });
+    }
+    expect(await service.undo('some-op')).toMatchObject({ error: { code: 'project-missing' } });
+    expect(service.project).toMatchObject({ name: 'project', missing: true });
+    expect(changes).toBeGreaterThan(before);
+    // No absolute path in any refusal.
+    expect(JSON.stringify(service.activity())).not.toContain(project.base);
+
+    renameSync(`${project.root}-moved`, project.root);
+    expect(await service.checkRoot()).toBe(true);
+    expect(service.project?.missing).toBeUndefined();
+    expect(await service.handle(req('read', { path: 'a.txt' }))).toMatchObject({ ok: true });
+  });
+
+  it('logs deletes and renames in the activity list, undoable', async () => {
+    writeFileSync(join(project.root, 'a.txt'), 'a');
+    writeFileSync(join(project.root, 'b.txt'), 'b');
+    await service.open(project.root);
+    const hashOf = async (path: string) => {
+      const outcome = await service.handle(req('stat', { path }));
+      return outcome.ok ? (outcome.result as { hash: string }).hash : '';
+    };
+    const deleted = await service.handle(
+      req('delete', { path: 'a.txt', baseHash: await hashOf('a.txt'), trigger: 'click' })
+    );
+    const renamed = await service.handle(
+      req('rename', {
+        from: 'b.txt',
+        to: 'c.txt',
+        baseHash: await hashOf('b.txt'),
+        trigger: 'click'
+      })
+    );
+    expect(deleted.ok && renamed.ok).toBe(true);
+    const rows = service.activity();
+    expect(rows[0]).toMatchObject({ kind: 'rename', path: 'c.txt', from: 'b.txt' });
+    expect(rows[1]).toMatchObject({ kind: 'delete', path: 'a.txt' });
+    expect(await service.undo(rows[1]!.opId!)).toMatchObject({ ok: true });
+    expect(readFileSync(join(project.root, 'a.txt'), 'utf8')).toBe('a');
   });
 });

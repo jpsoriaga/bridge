@@ -33,7 +33,10 @@ export const PAUSE_REASONS = [
   'disconnected',
   'navigated',
   'step-limit',
-  'send-failed'
+  'send-failed',
+  'needs-click',
+  'app-restarted',
+  'slept'
 ] as const;
 export const PauseReason = z.enum(PAUSE_REASONS);
 export type PauseReason = z.infer<typeof PauseReason>;
@@ -50,7 +53,12 @@ export const PAUSE_REASON_TEXT: Record<PauseReason, string> = {
   disconnected: 'The connection to the Bridge app was lost.',
   navigated: 'You left the conversation the loop was running in.',
   'step-limit': 'The loop reached its step limit.',
-  'send-failed': 'Bridge pressed send, but no new message appeared.'
+  'send-failed': 'Bridge pressed send, but no new message appeared.',
+  'needs-click':
+    'The reply deletes or renames files. Those always need your click: review them on their cards, then Resume.',
+  'app-restarted':
+    'The Bridge app restarted, which turns Full auto off. Turn it on again in the app, then Resume.',
+  slept: 'The computer slept in the middle of a step. Check the cards, then Resume.'
 };
 
 export const LOOP_STATE_LABELS: Record<LoopState, string> = {

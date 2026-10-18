@@ -15,6 +15,20 @@ import { isUsablePath } from './commands/login-env';
 
 export const MAX_DENY_PATTERNS = 50;
 export const MAX_DENY_PATTERN_LENGTH = 200;
+export const DEFAULT_RETENTION_DAYS = 7;
+export const MAX_RETENTION_DAYS = 90;
+
+export type Theme = 'system' | 'light' | 'dark';
+export const THEMES: readonly Theme[] = ['system', 'light', 'dark'];
+
+/** Where the window was, to open it there again. */
+export interface WindowBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  maximized: boolean;
+}
 
 export interface Settings {
   /** The port the server bound last time it started. Shown in the UI. */
@@ -44,6 +58,26 @@ export interface Settings {
   pauseOnFailure: boolean;
   /** The PATH commands get instead of the login shell's. Empty: no override. */
   pathOverride: string;
+  theme: Theme;
+  /** Days ops and backups are kept, 1–90. */
+  backupRetentionDays: number;
+  /** The first-run checklist was closed. Help reopens it. */
+  onboardingDismissed: boolean;
+  /** A chat session was started at least once (the checklist's last step). */
+  sessionStarted: boolean;
+  windowBounds?: WindowBounds;
+}
+
+function isWindowBounds(value: unknown): value is WindowBounds {
+  const b = value as Partial<WindowBounds> | null;
+  return (
+    typeof b === 'object' &&
+    b !== null &&
+    [b.x, b.y, b.width, b.height].every((n) => Number.isInteger(n) && Math.abs(n!) < 100_000) &&
+    b.width! >= 200 &&
+    b.height! >= 200 &&
+    typeof b.maximized === 'boolean'
+  );
 }
 
 /** An allowlist entry the user may save: a command shell-quote can split, with no shell syntax. */
@@ -119,8 +153,18 @@ export function settingsFile(path: string) {
       ),
       stepLimit: clampInt(data.stepLimit, 1, MAX_STEP_LIMIT, DEFAULT_STEP_LIMIT),
       pauseOnFailure: data.pauseOnFailure === true,
-      pathOverride: isUsablePath(data.pathOverride) ? data.pathOverride : ''
+      pathOverride: isUsablePath(data.pathOverride) ? data.pathOverride : '',
+      theme: THEMES.includes(data.theme as Theme) ? (data.theme as Theme) : 'system',
+      backupRetentionDays: clampInt(
+        data.backupRetentionDays,
+        1,
+        MAX_RETENTION_DAYS,
+        DEFAULT_RETENTION_DAYS
+      ),
+      onboardingDismissed: data.onboardingDismissed === true,
+      sessionStarted: data.sessionStarted === true
     };
+    if (isWindowBounds(data.windowBounds)) settings.windowBounds = data.windowBounds;
     if (Number.isInteger(data.port)) settings.port = data.port as number;
     if (isAbsolutePath(data.project)) settings.project = data.project;
     return settings;

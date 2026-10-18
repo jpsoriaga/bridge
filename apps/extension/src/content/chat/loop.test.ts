@@ -19,7 +19,8 @@ const CONFIG: BridgeConfig = {
   allowlist: ['pnpm test'],
   stepLimit: 10,
   pauseOnFailure: false,
-  running: null
+  running: null,
+  instance: 'launch-1'
 };
 
 const result = (exitCode: number, output = 'ok'): RunResult => ({
@@ -85,6 +86,8 @@ interface FakeReply {
     outcome?: RunOutcome | (() => Promise<RunOutcome>);
   }[];
   done?: boolean;
+  /** Deletes and renames. Mutate `pending`/`applied` to stand for a click. */
+  changes?: { applied: string[]; pending: string[] };
 }
 
 function reply(spec: FakeReply = {}) {
@@ -93,7 +96,13 @@ function reply(spec: FakeReply = {}) {
   const held = spec.edits?.held ?? [];
   const runs = spec.runs ?? [];
   const actions: ReplyActions = {
-    hasActions: applied.length + held.length + (spec.reads?.length ?? 0) + runs.length > 0,
+    hasActions:
+      applied.length +
+        held.length +
+        (spec.reads?.length ?? 0) +
+        runs.length +
+        (spec.changes ? spec.changes.applied.length + spec.changes.pending.length : 0) >
+      0,
     done: spec.done ?? false,
     applyEdits: async (loopId) => {
       log.push(`apply:${loopId ?? '-'}`);
@@ -101,6 +110,10 @@ function reply(spec: FakeReply = {}) {
     edits: () => ({
       applied: [...applied],
       held: held.map((h) => ({ ...h, reason: h.hold }))
+    }),
+    changes: () => ({
+      applied: [...(spec.changes?.applied ?? [])],
+      pending: [...(spec.changes?.pending ?? [])]
     }),
     reads: spec.reads ?? [],
     readFiles: async () => {
@@ -571,5 +584,88 @@ describe('FullAutoLoop', () => {
     expect(t.loop.state).toBe('waiting-reply');
     expect(t.loop.loopId).toBe('loop-2');
     expect(t.events()).toContain('done: A new reply arrived while paused, so that run ended.');
+  });
+
+  it('pauses for deletes and renames, which only a click applies, then carries on', async () => {
+    const t = setup();
+    const changes = { applied: [] as string[], pending: ['old.ts (deleted)'] };
+    const r = reply({ edits: { applied: ['a.ts'] }, changes });
+    t.loop.onReply(r.actions);
+    await settle();
+    expect(t.loop.state).toBe('paused');
+    expect(t.loop.reason).toBe('needs-click');
+    expect(t.page.sent).toHaveLength(0);
+
+    // The user clicks Delete on the card, then Resume.
+    changes.pending = [];
+    changes.applied = ['old.ts (deleted)'];
+    t.loop.resume();
+    await settle();
+    expect(t.loop.state).toBe('waiting-reply');
+    expect(t.page.sent[0]).toContain('Applied: a.ts, old.ts (deleted).');
+  });
+
+  it('reports a delete left unclicked as not applied', async () => {
+    const t = setup();
+    const r = reply({
+      runs: [{ command: 'pnpm test' }],
+      changes: { applied: [], pending: ['x.ts (deleted)'] }
+    });
+    t.loop.onReply(r.actions);
+    await settle();
+    expect(t.loop.reason).toBe('needs-click');
+    t.loop.resume();
+    await settle();
+    expect(t.page.sent[0]).toContain('Not applied: x.ts (deleted) (not confirmed).');
+  });
+
+  it('pauses with “app restarted” when the app comes back as a new launch, until Full auto is on again', async () => {
+    const t = setup();
+    t.loop.onReply(reply({ runs: [{ command: 'pnpm test' }] }).actions);
+    await settle();
+    expect(t.loop.state).toBe('waiting-reply');
+    t.setConfig(null);
+    expect(t.loop.reason).toBe('disconnected');
+    // The app restarted: a new instance, back in Manual.
+    t.setConfig({ ...CONFIG, mode: 'manual', instance: 'launch-2' });
+    expect(t.loop.state).toBe('paused');
+    expect(t.loop.reason).toBe('app-restarted');
+    // Another status in Manual doesn't end it, and Resume does nothing until Full auto.
+    t.setConfig({ ...CONFIG, mode: 'manual', instance: 'launch-2' });
+    t.loop.resume();
+    expect(t.loop.reason).toBe('app-restarted');
+    t.setConfig({ ...CONFIG, instance: 'launch-2' });
+    t.loop.resume();
+    expect(t.loop.state).toBe('waiting-reply');
+  });
+
+  it('pauses after sleep only when it was in the middle of a step', async () => {
+    const t = setup();
+    t.loop.onReply(reply({ runs: [{ command: 'pnpm test' }] }).actions);
+    await settle();
+    t.loop.onWake();
+    expect(t.loop.state).toBe('waiting-reply');
+
+    let finish: (outcome: RunOutcome) => void = () => {};
+    const slow = reply({
+      runs: [{ command: 'pnpm test', outcome: () => new Promise((r) => (finish = r)) }]
+    });
+    t.loop.onReply(slow.actions);
+    await settle();
+    expect(t.loop.state).toBe('acting');
+    t.loop.onWake();
+    expect(t.loop.state).toBe('paused');
+    expect(t.loop.reason).toBe('slept');
+    expect(t.cancels).toBeGreaterThan(0);
+    // The run that was cut short drops its result; Resume runs it again.
+    finish({ ok: true, result: result(0) });
+    await settle();
+    expect(t.page.sent).toHaveLength(1);
+    t.loop.resume();
+    await settle();
+    finish({ ok: true, result: result(0) });
+    await settle();
+    expect(t.loop.state).toBe('waiting-reply');
+    expect(t.page.sent).toHaveLength(2);
   });
 });

@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { COMPOSER_WARN_CHARS, type ProjectInfo } from '@bridge/shared';
 import type { ChatPanelState, SessionPreview, SessionStartResult } from '../messages';
 import { formatCount, panelWindowId, request, sessionErrorText } from './request';
-import { SendFiles } from './SendFiles';
 
 const shortId = (id: string) => (id.length > 8 ? `${id.slice(0, 8)}…` : id);
 
@@ -72,7 +71,7 @@ function StartSession({ project, restart }: { project: ProjectInfo | null; resta
   );
 }
 
-/** Start/end the chat session in the active tab, its stats, and Send files. */
+/** Start, end or move the chat session in the active tab, and its stats. */
 export function SessionSection({
   chat,
   project
@@ -127,6 +126,31 @@ export function SessionSection({
     );
   }
 
+  if (session?.state === 'elsewhere') {
+    return (
+      <section>
+        <p className="label">Session</p>
+        <p className="status session-status">
+          <span className="dot" />
+          <span>Session active in another tab</span>
+        </p>
+        <p className="hint">
+          A session belongs to one tab, so cards here are off. Move it here to use this tab instead;
+          the other tab stops.
+        </p>
+        <button
+          type="button"
+          className="btn btn-primary btn-lg action"
+          onClick={() =>
+            void panelWindowId().then((windowId) => request({ type: 'session-move', windowId }))
+          }
+        >
+          Move here
+        </button>
+      </section>
+    );
+  }
+
   if (!session || session.state === 'ended') {
     return (
       <section>
@@ -177,23 +201,8 @@ export function SessionSection({
             <span className="dot" data-tone={session.pending > 0 ? 'warning' : undefined} />
             <span className="activity-text">{session.pending} waiting for review</span>
           </li>
-          <li className="activity-row">
-            <span className="dot" />
-            <span className="activity-text">
-              {session.filesSent.length === 0
-                ? 'No files sent yet'
-                : `Sent ${session.filesSent.length} ${session.filesSent.length === 1 ? 'file' : 'files'} to the chat`}
-              {session.filesSent.length > 0 && (
-                <span className="activity-meta activity-path" title={session.filesSent.join('\n')}>
-                  {session.filesSent.join(', ')}
-                </span>
-              )}
-            </span>
-          </li>
         </ul>
       </section>
-      {/* Applied edits can add files, so the tree reloads when the count changes. */}
-      <SendFiles project={project} version={session.applied} />
     </>
   );
 }

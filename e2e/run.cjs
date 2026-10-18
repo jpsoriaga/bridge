@@ -6,6 +6,8 @@ const { tempDir, launchApp, launchChrome } = require('./lib.cjs');
 const APP_DATA = tempDir('app-data');
 const step = (m) => console.log('•', m);
 const desktopStatus = (win) => win.locator('header .status');
+const nav = (win, name) =>
+  win.getByRole('navigation', { name: 'Main' }).getByRole('button', { name });
 
 /** Runs in the service worker: the pairing key from its IndexedDB, or null. */
 function readIdbKey() {
@@ -25,9 +27,11 @@ function readIdbKey() {
 (async () => {
   let { app, win } = await launchApp(APP_DATA);
   await desktopStatus(win).filter({ hasText: 'Not paired' }).waitFor();
+  await nav(win, 'Settings').click();
   step(
-    `desktop: ${await desktopStatus(win).innerText()} / ${await win.locator('.settings dd').innerText()}`
+    `desktop: ${await desktopStatus(win).innerText()} / ${await win.locator('.settings dd').first().innerText()}`
   );
+  await nav(win, 'Session').click();
 
   const { ctx, sw, extId } = await launchChrome();
   step('extension id: ' + extId);
@@ -87,7 +91,9 @@ function readIdbKey() {
   // Pair, then unpair from the desktop.
   await enter(await getCode());
   await panelStatus.filter({ hasText: 'Connected' }).waitFor({ timeout: 10000 });
+  await nav(win, 'Settings').click();
   await win.getByRole('button', { name: 'Unpair' }).click();
+  await nav(win, 'Session').click();
   await panelStatus.filter({ hasText: 'Not paired' }).waitFor({ timeout: 10000 });
   step('unpaired from desktop: panel=' + (await panelStatus.innerText()));
 

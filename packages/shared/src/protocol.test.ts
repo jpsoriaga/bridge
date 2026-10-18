@@ -29,7 +29,8 @@ const config: BridgeConfig = {
   allowlist: ['pnpm test'],
   stepLimit: 10,
   pauseOnFailure: false,
-  running: null
+  running: null,
+  instance: 'launch-1'
 };
 
 describe('client messages', () => {

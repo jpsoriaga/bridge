@@ -1,5 +1,13 @@
 import ignore, { type Ignore } from 'ignore';
-import type { FileErrorCode, FileOutcome, FileRequest, Mode, WriteParams } from '@bridge/shared';
+import type {
+  DeleteParams,
+  FileErrorCode,
+  FileOutcome,
+  FileRequest,
+  Mode,
+  RenameParams,
+  WriteParams
+} from '@bridge/shared';
 
 /**
  * Files that change what a command does, or what runs around one: installs, scripts,
@@ -122,13 +130,29 @@ export function writeRefusal(
   return null;
 }
 
+/**
+ * Why the server refuses a delete or rename before it reaches the sandbox, or null. Both
+ * always need a click, in every mode: `gated` if either path is gated, else `mode`.
+ */
+export function changeRefusal(
+  params: Pick<DeleteParams, 'path' | 'trigger'> | Pick<RenameParams, 'from' | 'to' | 'trigger'>,
+  gated: GatedFiles
+): FileErrorCode | null {
+  if (params.trigger !== 'auto') return null;
+  const paths = 'path' in params ? [params.path] : [params.from, params.to];
+  return paths.some((path) => gated.matches(path)) ? 'gated' : 'mode';
+}
+
 export interface GuardedProject {
   handle(request: FileRequest): Promise<FileOutcome<unknown>>;
   /** Logs the refusal and returns it. */
   refuse(op: FileRequest['type'], path: unknown, code: FileErrorCode): FileOutcome<never>;
 }
 
-/** File requests as the server answers them: `writeRefusal` first, then the sandbox. */
+/**
+ * File requests as the server answers them: `writeRefusal` (or `changeRefusal` for deletes
+ * and renames) first, then the sandbox.
+ */
 export function guardedFiles(
   project: GuardedProject,
   mode: () => Mode,
@@ -138,6 +162,11 @@ export function guardedFiles(
     if (request.type === 'write') {
       const refusal = writeRefusal(request.payload, mode(), gated());
       if (refusal) return project.refuse('write', request.payload.path, refusal);
+    }
+    if (request.type === 'delete' || request.type === 'rename') {
+      const refusal = changeRefusal(request.payload, gated());
+      const path = request.type === 'delete' ? request.payload.path : request.payload.from;
+      if (refusal) return project.refuse(request.type, path, refusal);
     }
     return project.handle(request);
   };

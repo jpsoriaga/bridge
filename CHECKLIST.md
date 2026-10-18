@@ -159,9 +159,58 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 
 - [x] Phases renumbered in PLAN.md: 7 is security hardening, 8 is packaging and release
 - [x] Step 0: login shell PATH read once at startup (`$SHELL -ilc env`, 5s timeout, markers), fallback with a warning in Settings, PATH override field; tests for `.zshrc` junk, timeout, fallback
-- [ ] Desktop UI pass (not started)
-- [ ] Carried over from the old Phase 5: files-in-context tree with `new` tags in the side panel
-- [ ] Carried over from the old Phase 5: delete and rename (`@@DELETE path@@`), backed up like writes
+- [x] Protocol v4: `list`, `stat`, `delete`, `rename`, `watch`, `file_changed`, `session_start`, `read.bom`, `config.instance`; codes `encoding`, `project-missing`
+
+### Delete and rename
+
+- [x] `@@DELETE path@@` and `@@RENAME old -> new@@` in `parseChat` and the session prompt
+- [x] `delete { path, baseHash }` and `rename { from, to, baseHash }`: sandbox, denylist, gated list, `exists` on a taken target, parents created inside the sandbox, case-only rename
+- [x] Backed up first; undo restores (with conflict checks and the app's forced undo)
+- [x] Never automatic: the server refuses `trigger: 'auto'` in every mode; Full auto pauses with `needs-click`
+- [x] DELETE card (path, size, red) and RENAME card (`old → new`), Delete file / Rename / Reject / Undo
+
+### Files in context and watcher
+
+- [x] chokidar watcher on the open project: denylist, `.gitignore`, skip dirs, debounced, capped at 20,000 entries with polling of the files in context past that
+- [x] `file_changed` pushed to the extension: stale markers, pending cards re-read and pre-flag conflicts
+- [x] Side panel Files in context: size per file, `changed` / `deleted`, Resend changed, Remove from list; the chat's own changes don't go stale
+
+### Desktop app polish
+
+- [x] Layout: left nav (Session, Activity, Settings), header with project switcher, connection and mode, Stop on every page while Full auto runs
+- [x] First-run checklist (pair, project, commands, session) that ticks itself, dismissible, Help → Getting started
+- [x] Activity: kind filters, path search, grouped by loop run, detail with diff viewer or full output, Undo from the detail
+- [x] Settings sections: Connection, Project, Commands (allowlist, timeout, env, PATH), Full auto, Backups (retention, open folder, clear), Appearance (system/light/dark)
+- [x] Empty states, loading placeholders, plain-language text for every error code, toasts for background events
+- [x] Single-instance lock, window bounds remembered, native menu (About, Settings ⌘,, Open folder ⌘O, Stop ⌘.)
+- [x] Accessibility: keyboard everywhere, focus rings, labelled icon buttons, WCAG AA token contrast in both themes, reduced motion
+
+### Extension polish
+
+- [x] Side panel sections: Connection, Session, Mode / Full auto, Command, Requests (with Show), Files in context, Send files; plain copy for every status and pause reason; loading state
+- [x] Cards: shared header and badges, collapse, keyboard focus kept, Copy path, applied time
+- [x] Page chip: mode, step count and Stop in Full auto, draggable to a remembered corner
+
+### Edge cases
+
+- [x] Project folder deleted, moved or unmounted: "Project missing", every op fails with `project-missing`, recovers on return
+- [x] Case-only rename on a case-insensitive disk
+- [x] Non-UTF-8 refused (`encoding`) for reads and writes; BOM kept; trailing newline kept; empty files
+- [x] Same path twice in one reply: both cards warn, Apply all and Auto-apply take the last; no-op edit `unchanged`; binary or huge content refused on the card
+- [x] Large repos: side panel tree loads a folder at a time
+- [x] One tab per session: "Session active in another tab" with Move here
+- [x] Extension reloaded mid-session: UI removed, "Reload the page" notice
+- [x] App restarted mid-session: session kept, loop pauses with `app-restarted`; sleep/wake: socket kept, reconnect at once, loop paused mid-step (`slept`)
+- [x] Long conversations: remounted messages keep their cards, acted on once
+- [x] Deleted conversation or 404: session ends (`chat-gone`)
+
+### Tests
+
+- [x] Vitest: delete/rename with sandbox and undo cases, watcher and stale logic, content edge cases, sessions/tabs, loop pauses, controller remount/reload/tabs, copy for every code and pause reason
+- [x] Testing Library: onboarding, Activity filters and detail, Settings forms, mode switch with native confirm, app shell; axe on every page in both themes; token contrast test
+- [x] `e2e/phase6.cjs`: checklist, delete and rename with undo, stale files with Resend changed, two tabs with Move here, extension reload; `chat.cjs`, `project.cjs`, `run.cjs` updated for the new layout
+- [x] README screenshots of the app and the cards in light and dark (`e2e/screenshots.cjs`)
+- [ ] Manual run of the Phase 6 script on real chatgpt.com (README / e2e README)
 
 ## Phase 7: Security hardening
 

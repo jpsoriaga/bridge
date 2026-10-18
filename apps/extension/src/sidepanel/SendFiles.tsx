@@ -1,7 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   COMPOSER_WARN_CHARS,
   FILE_ERROR_LABELS,
+  FILE_ERROR_MESSAGES,
+  type FileErrorCode,
+  type ListResult,
   type ProjectInfo,
   type TreeEntry,
   type TreeResult
@@ -15,84 +18,173 @@ const FILTER_LIMIT = 200;
 
 const depthOf = (path: string) => path.split('/').length - 1;
 const nameOf = (path: string) => path.slice(path.lastIndexOf('/') + 1);
-const parentOf = (path: string) => path.slice(0, Math.max(0, path.lastIndexOf('/')));
 
 /** Estimated characters for a selection: file sizes plus the context format around them. */
-export function estimateChars(
-  entries: readonly TreeEntry[],
-  selected: ReadonlySet<string>
-): number {
+export function estimateChars(sizes: ReadonlyMap<string, number>, selected: ReadonlySet<string>) {
   let total = 0;
-  for (const entry of entries) {
-    if (selected.has(entry.path)) total += entry.size + entry.path.length + PER_FILE_OVERHEAD;
-  }
+  for (const path of selected) total += (sizes.get(path) ?? 0) + path.length + PER_FILE_OVERHEAD;
   return total;
 }
 
-/** The project tree, fetched again when the project or `version` changes. */
-function useTree(projectPath: string | undefined, version: number) {
-  const [tree, setTree] = useState<TreeResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
+type Folder =
+  { status: 'loading' } | { status: 'ok'; result: ListResult } | { status: 'error'; text: string };
+
+const errorText = (outcome: Exclude<RequestOutcome<unknown>, { ok: true }>) =>
+  outcome.error.code in FILE_ERROR_MESSAGES
+    ? FILE_ERROR_MESSAGES[outcome.error.code as FileErrorCode]
+    : 'Couldn’t list this folder. Check the Bridge app is connected.';
+
+const NO_FOLDERS: ReadonlyMap<string, Folder> = new Map();
+
+/**
+ * Folders, loaded one at a time as they're opened, so a 50,000-file project lists as
+ * quickly as a small one. Everything is kept per `key` (project and version): a new key
+ * starts empty.
+ */
+function useFolders(key: string) {
+  const [state, setState] = useState<{ key: string; folders: ReadonlyMap<string, Folder> }>({
+    key,
+    folders: NO_FOLDERS
+  });
+  const cache = useRef<{ key: string; dirs: Map<string, Promise<TreeEntry[]>> }>({
+    key,
+    dirs: new Map()
+  });
+  const folders = state.key === key ? state.folders : NO_FOLDERS;
+
+  /** One folder's entries, fetched once per key. */
+  const load = useCallback(
+    (dir: string): Promise<TreeEntry[]> => {
+      if (cache.current.key !== key) cache.current = { key, dirs: new Map() };
+      const cached = cache.current.dirs.get(dir);
+      if (cached) return cached;
+      const put = (folder: Folder) =>
+        setState((current) => ({
+          key,
+          folders: new Map(current.key === key ? current.folders : []).set(dir, folder)
+        }));
+      put({ status: 'loading' });
+      const promise = request<RequestOutcome<ListResult>>({ type: 'get-list', dir })
+        .then((outcome) => {
+          put(
+            outcome.ok
+              ? { status: 'ok', result: outcome.result }
+              : { status: 'error', text: errorText(outcome) }
+          );
+          return outcome.ok ? outcome.result.entries : [];
+        })
+        .catch(() => {
+          put({ status: 'error', text: 'Couldn’t list this folder.' });
+          return [];
+        });
+      cache.current.dirs.set(dir, promise);
+      return promise;
+    },
+    [key]
+  );
+
+  return { folders, load };
+}
+
+/** The whole tree (capped by the app), fetched only once someone filters. */
+function useFullTree(enabled: boolean, key: string) {
+  const [state, setState] = useState<{ key: string; tree: TreeResult } | null>(null);
+  const tree = state?.key === key ? state.tree : null;
   useEffect(() => {
+    if (!enabled || tree) return;
     let live = true;
     void request<RequestOutcome<TreeResult>>({ type: 'get-tree' })
-      .then((outcome) => {
-        if (!live) return;
-        if (outcome.ok) {
-          setTree(outcome.result);
-          setError(null);
-        } else setError(outcome.error.message);
-      })
-      .catch(() => live && setError('Couldn’t list the project files.'));
+      .then((outcome) => live && outcome.ok && setState({ key, tree: outcome.result }))
+      .catch(() => undefined);
     return () => {
       live = false;
     };
-  }, [projectPath, version]);
-  return { tree, error };
+  }, [enabled, tree, key]);
+  return tree;
 }
 
 /** A tree of the project with checkboxes. Inserts the chosen files into the composer. */
 export function SendFiles({ project, version }: { project: ProjectInfo; version: number }) {
-  const { tree, error } = useTree(project.path, version);
+  const key = `${project.path}\u0000${version}`;
+  const { folders, load } = useFolders(key);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState('');
   const [busy, setBusy] = useState(false);
+  const [picking, setPicking] = useState<string | null>(null);
   const [result, setResult] = useState<{ text: string; tone?: 'danger' } | null>(null);
+  const query = filter.trim().toLowerCase();
+  const fullTree = useFullTree(query !== '', key);
 
-  const entries = useMemo(() => tree?.entries ?? [], [tree]);
-  const files = useMemo(() => entries.filter((e) => e.type === 'file' && !e.collapsed), [entries]);
-  const filesUnder = useMemo(() => {
-    const map = new Map<string, string[]>();
-    for (const file of files) {
-      for (let dir = parentOf(file.path); dir; dir = parentOf(dir)) {
-        const list = map.get(dir) ?? [];
-        list.push(file.path);
-        map.set(dir, list);
-      }
+  useEffect(() => {
+    void load('');
+  }, [load]);
+
+  // Every file size seen so far, for the budget meter.
+  const sizes = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const folder of folders.values()) {
+      if (folder.status !== 'ok') continue;
+      for (const entry of folder.result.entries)
+        if (entry.type === 'file') map.set(entry.path, entry.size);
     }
+    for (const entry of fullTree?.entries ?? [])
+      if (entry.type === 'file') map.set(entry.path, entry.size);
     return map;
-  }, [files]);
+  }, [folders, fullTree]);
 
-  const visible = useMemo(() => {
-    const query = filter.trim().toLowerCase();
+  /** Rows in tree order: each open folder's entries right after it. */
+  const rows = useMemo(() => {
     if (query) {
-      return files.filter((f) => f.path.toLowerCase().includes(query)).slice(0, FILTER_LIMIT);
+      return (fullTree?.entries ?? [])
+        .filter((e) => e.type === 'file' && !e.collapsed && e.path.toLowerCase().includes(query))
+        .slice(0, FILTER_LIMIT);
     }
-    // A row shows when every folder above it is open.
-    return entries.filter((entry) => {
-      for (let dir = parentOf(entry.path); dir; dir = parentOf(dir)) {
-        if (!open.has(dir)) return false;
+    const out: TreeEntry[] = [];
+    const walk = (dir: string) => {
+      const folder = folders.get(dir);
+      if (folder?.status !== 'ok') return;
+      for (const entry of folder.result.entries) {
+        out.push(entry);
+        if (entry.type === 'dir' && !entry.collapsed && open.has(entry.path)) walk(entry.path);
       }
-      return true;
-    });
-  }, [entries, files, filter, open]);
+    };
+    walk('');
+    return out;
+  }, [folders, fullTree, open, query]);
 
-  const chars = estimateChars(files, selected);
+  const chars = estimateChars(sizes, selected);
   const over = chars > COMPOSER_WARN_CHARS;
   const tooMany = selected.size > MAX_FILES_PER_SEND;
+  const root = folders.get('');
 
-  const toggle = (paths: string[], on: boolean) => {
+  const toggleOpen = (dir: string) => {
+    setOpen((current) => {
+      const next = new Set(current);
+      if (next.has(dir)) next.delete(dir);
+      else {
+        next.add(dir);
+        void load(dir);
+      }
+      return next;
+    });
+  };
+
+  /** Every file under a folder, loading folders as needed, stopping past the send limit. */
+  const filesUnder = async (dir: string): Promise<string[]> => {
+    const found: string[] = [];
+    const queue = [dir];
+    while (queue.length > 0 && found.length <= MAX_FILES_PER_SEND) {
+      for (const entry of await load(queue.shift()!)) {
+        if (entry.collapsed) continue;
+        if (entry.type === 'file') found.push(entry.path);
+        else queue.push(entry.path);
+      }
+    }
+    return found;
+  };
+
+  const setMany = (paths: string[], on: boolean) => {
     setResult(null);
     setSelected((current) => {
       const next = new Set(current);
@@ -102,6 +194,20 @@ export function SendFiles({ project, version }: { project: ProjectInfo; version:
       }
       return next;
     });
+  };
+
+  const pickFolder = (dir: string, on: boolean) => {
+    if (!on) {
+      setMany(
+        [...selected].filter((p) => p.startsWith(`${dir}/`)),
+        false
+      );
+      return;
+    }
+    setPicking(dir);
+    void filesUnder(dir)
+      .then((paths) => setMany(paths, true))
+      .finally(() => setPicking(null));
   };
 
   const send = () => {
@@ -133,17 +239,30 @@ export function SendFiles({ project, version }: { project: ProjectInfo; version:
   };
 
   return (
-    <section>
+    <section aria-labelledby="send-files-label">
       <div className="label-row">
-        <p className="label">Send files</p>
+        <p className="label" id="send-files-label">
+          Send files
+        </p>
         {selected.size > 0 && (
           <button type="button" className="link-button" onClick={() => setSelected(new Set())}>
             Clear
           </button>
         )}
       </div>
-      {error && <p className="error-text">{error}</p>}
-      {tree && (
+      {root?.status === 'error' && (
+        <p className="error-text" role="alert">
+          {root.text}
+        </p>
+      )}
+      {(!root || root.status === 'loading') && (
+        <div className="skeleton-group" aria-busy="true" aria-label="Loading project files">
+          <span className="skeleton" />
+          <span className="skeleton" />
+          <span className="skeleton short" />
+        </div>
+      )}
+      {root?.status === 'ok' && (
         <>
           <input
             className="input tree-filter mono"
@@ -153,59 +272,74 @@ export function SendFiles({ project, version }: { project: ProjectInfo; version:
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
           />
-          <ul className="tree" aria-label="Project files">
-            {visible.map((entry) => {
-              const isDir = entry.type === 'dir';
-              const under = isDir ? (filesUnder.get(entry.path) ?? []) : [entry.path];
-              const count = under.filter((p) => selected.has(p)).length;
-              const checked = under.length > 0 && count === under.length;
-              const depth = filter.trim() ? 0 : depthOf(entry.path);
-              const expanded = open.has(entry.path);
-              return (
-                <li
-                  key={entry.path}
-                  className="tree-row"
-                  style={{ paddingInlineStart: depth * 16 }}
-                >
-                  <input
-                    type="checkbox"
-                    aria-label={`Send ${entry.path}`}
-                    checked={checked}
-                    disabled={entry.collapsed === true || under.length === 0}
-                    ref={(box) => {
-                      if (box) box.indeterminate = count > 0 && !checked;
-                    }}
-                    onChange={(e) => toggle(under, e.target.checked)}
-                  />
-                  {isDir && !entry.collapsed ? (
-                    <button
-                      type="button"
-                      className="tree-folder"
-                      aria-expanded={expanded}
-                      onClick={() =>
-                        setOpen((current) => {
-                          const next = new Set(current);
-                          if (expanded) next.delete(entry.path);
-                          else next.add(entry.path);
-                          return next;
-                        })
+          {root.result.entries.length === 0 ? (
+            <p className="hint">This project has no files Bridge can send.</p>
+          ) : (
+            <ul className="tree" aria-label="Project files">
+              {query && !fullTree && <li className="hint tree-note">Searching…</li>}
+              {query && fullTree && rows.length === 0 && (
+                <li className="hint tree-note">No files match “{filter.trim()}”.</li>
+              )}
+              {rows.map((entry) => {
+                const isDir = entry.type === 'dir';
+                const depth = query ? 0 : depthOf(entry.path);
+                const expanded = open.has(entry.path);
+                const folder = folders.get(entry.path);
+                const inside = isDir
+                  ? [...selected].filter((p) => p.startsWith(`${entry.path}/`)).length
+                  : 0;
+                const checked = isDir
+                  ? inside > 0 && picking !== entry.path
+                  : selected.has(entry.path);
+                return (
+                  <li
+                    key={entry.path}
+                    className="tree-row"
+                    style={{ paddingInlineStart: depth * 16 }}
+                  >
+                    <input
+                      type="checkbox"
+                      aria-label={`Send ${entry.path}${isDir ? ' and everything in it' : ''}`}
+                      checked={checked}
+                      disabled={entry.collapsed === true || picking !== null}
+                      onChange={(e) =>
+                        isDir
+                          ? pickFolder(entry.path, e.target.checked)
+                          : setMany([entry.path], e.target.checked)
                       }
-                    >
-                      {nameOf(entry.path)}/
-                    </button>
-                  ) : (
-                    <span className="tree-name" title={entry.path}>
-                      {filter.trim() ? entry.path : nameOf(entry.path)}
-                      {isDir ? '/' : ''}
-                    </span>
-                  )}
-                  {!isDir && <span className="tree-size">{formatCount(entry.size)}</span>}
-                </li>
-              );
-            })}
-          </ul>
-          {tree.truncated && (
-            <p className="hint">The project is large, so Bridge listed only part of it.</p>
+                    />
+                    {isDir && !entry.collapsed ? (
+                      <button
+                        type="button"
+                        className="tree-folder"
+                        aria-expanded={expanded}
+                        onClick={() => toggleOpen(entry.path)}
+                      >
+                        {nameOf(entry.path)}/
+                        {expanded && folder?.status === 'loading' && (
+                          <span className="tree-size"> Loading…</span>
+                        )}
+                      </button>
+                    ) : (
+                      <span className="tree-name" title={entry.path}>
+                        {query ? entry.path : nameOf(entry.path)}
+                        {isDir ? '/' : ''}
+                      </span>
+                    )}
+                    {!isDir && <span className="tree-size">{formatCount(entry.size)}</span>}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {query && fullTree?.truncated && (
+            <p className="hint">
+              The project is large, so the filter searches only the first part of it. Open folders
+              to see everything.
+            </p>
+          )}
+          {[...folders.values()].some((f) => f.status === 'ok' && f.result.truncated) && (
+            <p className="hint">A folder has too many entries to list them all.</p>
           )}
           <div className="meter" data-tone={over ? 'warning' : undefined}>
             <div className="meter-track">

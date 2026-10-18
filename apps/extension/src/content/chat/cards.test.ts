@@ -36,7 +36,10 @@ function fakeWorker(files: Record<string, { content: string; hash: string }>) {
           return { ok: false, error: { code: 'denied', message: 'protected' } };
         }
         return file
-          ? ({ ok: true, result: { ...file, eol: 'lf' } } satisfies RequestOutcome<ReadResult>)
+          ? ({
+              ok: true,
+              result: { ...file, eol: 'lf', bom: false }
+            } satisfies RequestOutcome<ReadResult>)
           : { ok: false, error: { code: 'not-found', message: 'missing' } };
       }
       case 'chat-write': {
@@ -330,7 +333,8 @@ const CONFIG: BridgeConfig = {
   allowlist: ['pnpm test'],
   stepLimit: 10,
   pauseOnFailure: false,
-  running: null
+  running: null,
+  instance: 'launch-1'
 };
 
 const exit = (runId: string, exitCode: number, output = 'ok\n'): RunResult => ({
@@ -484,7 +488,9 @@ describe('ReadCard', () => {
     // The Send button's handler.
     (c as unknown as { send(): void }).send();
     expect(document.getElementById('prompt-textarea')?.textContent).toContain('@@CONTEXT a.ts@@');
-    expect(sent).toHaveBeenCalledWith(['a.ts']);
+    expect(sent).toHaveBeenCalledWith([
+      { path: 'a.ts', chars: expect.any(Number) as number, hash: expect.any(String) as string }
+    ]);
     expect(saved(worker).at(-1)).toMatchObject({ card: 'read', state: 'sent' });
   });
 

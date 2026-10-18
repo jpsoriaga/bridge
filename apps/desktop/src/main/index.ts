@@ -3,10 +3,14 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  Menu,
+  nativeTheme,
   safeStorage,
+  screen,
   session,
   shell,
-  type IpcMainInvokeEvent
+  type IpcMainInvokeEvent,
+  type MenuItemConstructorOptions
 } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
@@ -20,16 +24,20 @@ import {
   MIN_RUN_TIMEOUT_MS,
   MODES,
   OpId,
+  RunId,
   serverMessage,
   type BridgeConfig,
   type LoopReport,
-  type Mode
+  type Mode,
+  type RunResult
 } from '@bridge/shared';
 import {
   IPC,
   type CommandPath,
   type DesktopState,
+  type MenuAction,
   type OpenFolderResult,
+  type RunDetail,
   type RunningCommand,
   type RunSettings,
   type SaveListResult,
@@ -46,8 +54,21 @@ import { ProjectService } from './project/service';
 import { Pairing } from './server/pairing';
 import { createBridgeServer, type BridgeServer } from './server/server';
 import { fileTokenStore } from './server/token-store';
-import { isValidAllowlist, isValidDenyPattern, MAX_DENY_PATTERNS, settingsFile } from './settings';
+import {
+  isValidAllowlist,
+  isValidDenyPattern,
+  MAX_DENY_PATTERNS,
+  MAX_RETENTION_DAYS,
+  settingsFile,
+  THEMES,
+  type Theme,
+  type WindowBounds
+} from './settings';
 import { createWindowOptions } from './window';
+
+// One Bridge at a time: a second launch (from the Dock, say) focuses the first one's window.
+const primary = app.requestSingleInstanceLock();
+if (!primary) app.quit();
 
 let mainWindow: BrowserWindow | null = null;
 let pairing: Pairing;
@@ -68,6 +89,12 @@ let running: RunningCommand | null = null;
 /** Which loop run each command belongs to, for grouping its activity row. */
 const runLoops = new Map<string, string>();
 let loop: LoopReport | null = null;
+/** New every launch, so the extension can tell the app restarted. */
+const instance = randomUUID();
+/** Recent commands' full results, for Activity's detail view, while the app is open. */
+const runDetails = new Map<string, RunResult>();
+const MAX_RUN_DETAILS = 50;
+const DAY_MS = 24 * 60 * 60_000;
 /** The login shell's PATH, read once per launch (macOS, Linux). */
 const loginEnv = loginEnvOnce();
 let login: LoginEnv | null = null;
@@ -96,7 +123,8 @@ function bridgeConfig(): BridgeConfig {
     allowlist: allowlist() ?? [],
     stepLimit,
     pauseOnFailure,
-    running: runner.current
+    running: runner.current,
+    instance
   };
 }
 
@@ -130,8 +158,120 @@ function desktopState(): DesktopState {
     runSettings: runSettings(),
     commandPath: commandPath(),
     running,
-    loop
+    loop,
+    watch: projects.watchMode,
+    theme: saved.theme,
+    backupRetentionDays: saved.backupRetentionDays,
+    onboarding: { dismissed: saved.onboardingDismissed, sessionStarted: saved.sessionStarted }
   };
+}
+
+/** Tells the window to do something a menu item asked for. */
+function menuAction(action: MenuAction): void {
+  if (!mainWindow) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+  mainWindow.webContents.send(IPC.menu, action);
+}
+
+/** Stops the Full auto loop and its command. Reverts nothing; undo is still there. */
+function stopLoop(): void {
+  server.broadcast(serverMessage(randomUUID(), 'loop_stop', {}));
+  runner.cancelAll();
+}
+
+function buildMenu(): void {
+  const isMac = process.platform === 'darwin';
+  const about: MenuItemConstructorOptions = isMac
+    ? { role: 'about' }
+    : {
+        label: 'About Bridge',
+        click: () =>
+          void dialog.showMessageBox({
+            message: 'Bridge',
+            detail: `Version ${app.getVersion()}`
+          })
+      };
+  const settingsItem: MenuItemConstructorOptions = {
+    label: 'Settings…',
+    accelerator: 'CmdOrCtrl+,',
+    click: () => menuAction('settings')
+  };
+  const template: MenuItemConstructorOptions[] = [
+    ...(isMac
+      ? [
+          {
+            label: app.name,
+            submenu: [
+              about,
+              { type: 'separator' },
+              settingsItem,
+              { type: 'separator' },
+              { role: 'services' },
+              { type: 'separator' },
+              { role: 'hide' },
+              { role: 'hideOthers' },
+              { role: 'unhide' },
+              { type: 'separator' },
+              { role: 'quit' }
+            ]
+          } satisfies MenuItemConstructorOptions
+        ]
+      : []),
+    {
+      label: 'File',
+      submenu: [
+        {
+          label: 'Open folder…',
+          accelerator: 'CmdOrCtrl+O',
+          click: () => void openFolder().then(() => menuAction('session'))
+        },
+        ...(isMac ? [] : [{ type: 'separator' } as const, settingsItem]),
+        { type: 'separator' },
+        isMac ? { role: 'close' } : { role: 'quit' }
+      ]
+    },
+    { role: 'editMenu' },
+    {
+      label: 'Session',
+      submenu: [
+        { label: 'Session', accelerator: 'CmdOrCtrl+1', click: () => menuAction('session') },
+        { label: 'Activity', accelerator: 'CmdOrCtrl+2', click: () => menuAction('activity') },
+        { type: 'separator' },
+        {
+          label: 'Stop Full auto',
+          accelerator: 'CmdOrCtrl+.',
+          click: () => stopLoop()
+        }
+      ]
+    },
+    {
+      label: 'View',
+      submenu: [
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        ...(app.isPackaged
+          ? []
+          : [{ type: 'separator' } as const, { role: 'toggleDevTools' } as const])
+      ]
+    },
+    { role: 'windowMenu' },
+    {
+      role: 'help',
+      submenu: [
+        { label: 'Getting started', click: () => menuAction('onboarding') },
+        ...(isMac ? [] : [about])
+      ]
+    }
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+/** Follows the Appearance setting in native dialogs and menus too. */
+function applyTheme(theme: Theme): void {
+  nativeTheme.themeSource = theme;
 }
 
 function broadcast(): void {
@@ -356,10 +496,56 @@ function registerIpc(): void {
   handle(IPC.cancelRun, () => {
     runner.cancelAll();
   });
-  handle(IPC.stopLoop, () => {
-    // Stop halts the loop and its command. It reverts nothing; undo is still there.
-    server.broadcast(serverMessage(randomUUID(), 'loop_stop', {}));
-    runner.cancelAll();
+  handle(IPC.stopLoop, stopLoop);
+  handle(IPC.getOpDetail, (opId) =>
+    OpId.safeParse(opId).success ? projects.opDetail(opId as string) : null
+  );
+  handle(IPC.getRunDetail, (runId): RunDetail | null => {
+    const result = RunId.safeParse(runId).success ? runDetails.get(runId as string) : undefined;
+    if (!result) return null;
+    const { argv, status, exitCode, durationMs, output, truncated } = result;
+    return { argv, status, exitCode, durationMs, output, truncated };
+  });
+  handle(IPC.setTheme, (theme) => {
+    if (!THEMES.includes(theme as Theme)) return false;
+    settings.update({ theme: theme as Theme });
+    applyTheme(theme as Theme);
+    broadcast();
+    return true;
+  });
+  handle(IPC.setBackupRetention, async (days) => {
+    if (!Number.isInteger(days) || (days as number) < 1 || (days as number) > MAX_RETENTION_DAYS) {
+      return false;
+    }
+    settings.update({ backupRetentionDays: days as number });
+    await projects.setRetention((days as number) * DAY_MS);
+    broadcast();
+    return true;
+  });
+  handle(IPC.openBackupsFolder, async () => {
+    const dir = projects.backupsPath;
+    // An empty string means it opened; anything else is the error.
+    return dir !== null && (await shell.openPath(dir)) === '';
+  });
+  handle(IPC.clearBackups, async () => {
+    if (!mainWindow || !projects.project) return false;
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      message: `Delete every backup for ${projects.project.name}?`,
+      detail:
+        'Nothing Bridge changed in this project can be undone afterwards. Your files stay as they are.',
+      buttons: ['Cancel', 'Delete backups'],
+      defaultId: 0,
+      cancelId: 0
+    });
+    if (response !== 1) return false;
+    await projects.clearHistory();
+    return true;
+  });
+  handle(IPC.setOnboardingDismissed, (dismissed) => {
+    if (typeof dismissed !== 'boolean') return;
+    settings.update({ onboardingDismissed: dismissed });
+    broadcast();
   });
 }
 
@@ -381,10 +567,13 @@ async function startServer(): Promise<void> {
       server.broadcast(serverMessage(randomUUID(), 'run_exit', result));
       const loopId = runLoops.get(result.runId);
       runLoops.delete(result.runId);
+      runDetails.set(result.runId, result);
+      if (runDetails.size > MAX_RUN_DETAILS) runDetails.delete(runDetails.keys().next().value!);
       projects.record({
         kind: 'run',
         path: formatArgv(result.argv),
         op: 'run',
+        runId: result.runId,
         run: { status: result.status, exitCode: result.exitCode, durationMs: result.durationMs },
         ...(loopId && { loopId, trigger: 'auto' as const })
       });
@@ -403,7 +592,10 @@ async function startServer(): Promise<void> {
     homeDir: homedir(),
     protectedDirs: [userData],
     onChange: projectChanged,
-    onActivity: broadcastActivity
+    onActivity: broadcastActivity,
+    onFilesChanged: (paths, overflow) =>
+      server?.broadcast(serverMessage(randomUUID(), 'file_changed', { paths, overflow })),
+    retentionMs: () => settings.read().backupRetentionDays * DAY_MS
   });
   commands = new CommandService({
     runner,
@@ -421,6 +613,8 @@ async function startServer(): Promise<void> {
       projects.record({ kind: 'failed', op: 'run', path: formatArgv(argv), code })
   });
   await projects.restore();
+  // A project folder can vanish without an event (an unmounted disk): check now and then.
+  setInterval(() => void projects.checkRoot(), 5_000).unref();
   pairing = new Pairing({ store: fileTokenStore(join(userData, 'pairing.json'), safeStorage) });
   server = createBridgeServer({
     pairing,
@@ -456,6 +650,11 @@ async function startServer(): Promise<void> {
       broadcast();
     },
     onSessionEnd: leaveFullAuto,
+    onSessionStart: () => {
+      if (settings.read().sessionStarted) return;
+      settings.update({ sessionStarted: true });
+      broadcast();
+    },
     onUnpaired: () => {
       leaveFullAuto();
       loop = null;
@@ -470,12 +669,46 @@ async function startServer(): Promise<void> {
   broadcast();
 }
 
+/** The saved bounds, if they still fit on a connected display. */
+function savedBounds(): WindowBounds | undefined {
+  const bounds = settings.read().windowBounds;
+  if (!bounds) return undefined;
+  const { workArea } = screen.getDisplayMatching(bounds);
+  const visible =
+    bounds.x < workArea.x + workArea.width - 50 &&
+    bounds.x + bounds.width > workArea.x + 50 &&
+    bounds.y < workArea.y + workArea.height - 50 &&
+    bounds.y + bounds.height > workArea.y;
+  return visible ? bounds : undefined;
+}
+
 function createWindow(): void {
-  const window = new BrowserWindow(createWindowOptions(join(__dirname, '../preload/index.js')));
+  const bounds = savedBounds();
+  const window = new BrowserWindow({
+    ...createWindowOptions(join(__dirname, '../preload/index.js')),
+    ...(bounds && { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height })
+  });
   mainWindow = window;
 
-  window.on('ready-to-show', () => window.show());
+  window.on('ready-to-show', () => {
+    if (bounds?.maximized) window.maximize();
+    window.show();
+  });
+  // Remember where the window is, a moment after it stops moving.
+  let saveTimer: NodeJS.Timeout | undefined;
+  const saveBounds = () => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      if (window.isDestroyed() || window.isMinimized()) return;
+      const { x, y, width, height } = window.getNormalBounds();
+      settings.update({ windowBounds: { x, y, width, height, maximized: window.isMaximized() } });
+    }, 500);
+  };
+  for (const event of ['resize', 'move', 'maximize', 'unmaximize'] as const) {
+    window.on(event as 'resize', saveBounds);
+  }
   window.on('closed', () => {
+    clearTimeout(saveTimer);
     if (mainWindow === window) mainWindow = null;
   });
 
@@ -493,7 +726,25 @@ function createWindow(): void {
   }
 }
 
+app.on('second-instance', () => {
+  if (!mainWindow) {
+    if (app.isReady()) createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+});
+
+app.setAboutPanelOptions({
+  applicationName: 'Bridge',
+  applicationVersion: app.getVersion(),
+  version: '',
+  copyright: 'Runs only on this computer.'
+});
+
 void app.whenReady().then(async () => {
+  if (!primary) return;
   // The renderer needs no camera, notifications, etc.
   session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) =>
     callback(false)
@@ -501,7 +752,9 @@ void app.whenReady().then(async () => {
 
   // safeStorage needs the app to be ready, so the server starts here.
   await startServer();
+  applyTheme(settings.read().theme);
   registerIpc();
+  buildMenu();
   createWindow();
 
   app.on('activate', () => {
@@ -513,6 +766,7 @@ app.on('before-quit', () => {
   clearTimeout(expiryTimer);
   // A running command is in its own process group; take it down with the app.
   runner?.cancelAll();
+  void projects?.close();
   void server?.close();
 });
 

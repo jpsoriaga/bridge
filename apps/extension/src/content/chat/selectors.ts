@@ -204,6 +204,29 @@ export function pageError(doc: Document = document): string | null {
   return null;
 }
 
+/**
+ * Words the page uses when a conversation doesn't exist: deleted, never there, or a 404.
+ * Best guesses; check them against the live site (see the fixtures README).
+ */
+export const MISSING_TEXT =
+  /conversation (?:not found|was deleted|has been deleted|doesn[’']t exist|does not exist)|unable to load conversation|page not found|^404\b/i;
+
+/**
+ * The page says this conversation doesn't exist, and shows no messages: it was deleted, or
+ * the URL is a 404. Headings, alerts and the main area's short text are checked, never
+ * message text.
+ */
+export function conversationMissing(doc: Document = document): boolean {
+  if (first(doc, SELECTORS.anyMessage)) return false;
+  const candidates = doc.querySelectorAll('main h1, main h2, [role="alert"], main p, title');
+  for (const element of candidates) {
+    if (element.closest(`[${BRIDGE_HOST_ATTRIBUTE}]`)) continue;
+    const text = (element.textContent ?? '').replace(/\s+/g, ' ').trim();
+    if (text.length > 0 && text.length < 200 && MISSING_TEXT.test(text)) return true;
+  }
+  return false;
+}
+
 /** The conversation id from `/c/<id>` (also under `/g/<gpt>/c/<id>`), or null. */
 export function conversationIdFrom(url: string): string | null {
   try {

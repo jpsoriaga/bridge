@@ -2,17 +2,22 @@ import {
   buildContextMessage,
   buildSessionPrompt,
   FILE_ERROR_LABELS,
+  formatContextBlock,
   summarizeTree,
   type FileErrorCode,
   type LoopReport
 } from '@bridge/shared';
 import {
+  ChipCorner,
   PanelHello,
   SIDE_PANEL_PORT,
   TabMessage,
   WorkerRequest,
   type ChatSyncReply,
+  type ContextResendResult,
   type InsertResult,
+  type PendingRequest,
+  type SentFile,
   type PanelMessage,
   type RequestOutcome,
   type SendFilesResult,
@@ -130,9 +135,102 @@ const loops = new Map<number, LoopReport>();
 const loopActive = (report: LoopReport | undefined) =>
   report !== undefined && report.state !== 'idle' && report.state !== 'stopped';
 
+/** Each chat tab's READ and RUN cards still waiting for a click. */
+const requests = new Map<number, PendingRequest[]>();
+/** How the app watches the project, from the last `watch` reply. */
+let watchMode: 'watch' | 'poll' | null = null;
+
 /** Every chatgpt.com tab with Bridge's content script running in it. */
 async function chatTabIds(): Promise<number[]> {
   return sessions.tabIds();
+}
+
+/** Where the user last put the page chip. */
+async function chipCorner(): Promise<ChipCorner> {
+  const { chipCorner: saved } = await chrome.storage.local.get('chipCorner');
+  const parsed = ChipCorner.safeParse(saved);
+  return parsed.success ? parsed.data : 'bottom-right';
+}
+
+/** A file as it went into a message: its size there and its hash. */
+const sentFile = (path: string, content: string, hash: string): SentFile => ({
+  path,
+  chars: formatContextBlock(path, content).length,
+  hash
+});
+
+/** Tells the app which files are in context, for polling when it can't watch everything. */
+async function syncWatch(): Promise<void> {
+  if (connection.current !== 'connected') return;
+  const outcome = await connection.request('watch', { paths: await sessions.contextPaths() });
+  const mode = outcome.ok ? outcome.result.mode : null;
+  if (mode !== watchMode) {
+    watchMode = mode;
+    notifyPanels();
+  }
+}
+
+/** Compares files in context with the disk now, marking them stale, missing or fresh. */
+async function recheckContext(paths?: readonly string[]): Promise<void> {
+  const inContext = await sessions.contextPaths();
+  const check = paths ? inContext.filter((path) => paths.includes(path)) : inContext;
+  for (const path of check) {
+    const outcome = await connection.request('stat', { path });
+    if (outcome.ok) await sessions.noteDisk(path, outcome.result.hash);
+    else if (outcome.error.code === 'not-found') await sessions.noteDisk(path, null);
+  }
+}
+
+/** Tells every other tab on the conversation where its session stands now. */
+async function tellOtherTabs(tabId: number, state: 'elsewhere' | 'ended'): Promise<void> {
+  const tab = await sessions.tab(tabId);
+  if (!tab?.conversationId) return;
+  for (const other of await sessions.otherTabs(tabId, tab.conversationId)) {
+    void tellTab(other, { type: 'session-changed', session: state });
+  }
+}
+
+/** Gives the conversation's session to `tabId`; the tab that had it is told and stops. */
+async function moveSession(tabId: number): Promise<void> {
+  const previous = await sessions.moveHere(tabId);
+  if (previous !== null) {
+    forgetLoop(previous, 'The session moved to another tab.');
+    void tellTab(previous, { type: 'loop-control', action: 'stop' });
+    void tellTab(previous, { type: 'session-changed', session: 'elsewhere' });
+  }
+  void tellTab(tabId, { type: 'session-changed', session: await sessions.stateFor(tabId) });
+}
+
+/** Puts the stale and missing files in context into the composer again, fresh. */
+async function resendContext(windowId: number): Promise<ContextResendResult> {
+  const tab = await chatTab(windowId);
+  if (!tab.ok) return tab;
+  if (!(await sessions.isActive(tab.tabId))) return { ok: false, error: 'no-session' };
+  const changed = (await sessions.context(tab.tabId)).filter((f) => f.stale || f.missing);
+  const files: { path: string; content: string; hash: string }[] = [];
+  const refused: { path: string; code: FileErrorCode }[] = [];
+  for (const { path } of changed) {
+    const read = await connection.request('read', { path });
+    if (read.ok) files.push({ path, content: read.result.content, hash: read.result.hash });
+    else if (read.error.code === 'not-connected' || read.error.code === 'timeout') {
+      return { ok: false, error: 'not-connected' };
+    } else if (read.error.code !== 'bad-response' && read.error.code !== 'no-session') {
+      refused.push({ path, code: read.error.code });
+    }
+  }
+  if (files.length === 0 && refused.length === 0) return { ok: true, sent: [], refused };
+  const text = buildContextMessage(
+    files,
+    refused.map(({ path, code }) => ({ path, reason: FILE_ERROR_LABELS[code] }))
+  );
+  const inserted = await insertIntoChat(tab.tabId, text);
+  if (!inserted.ok) return inserted;
+  await sessions.addSent(
+    tab.tabId,
+    files.map((f) => sentFile(f.path, f.content, f.hash))
+  );
+  // A file that's gone stays listed as missing until removed; the chat was told.
+  return { ok: true, sent: files.map((f) => f.path), refused };
 }
 
 async function sessionPrompt(): Promise<
@@ -174,7 +272,10 @@ async function startSession(windowId: number): Promise<SessionStartResult> {
   const inserted = await insertIntoChat(tab.tabId, prompt.text);
   if (!inserted.ok) return inserted;
   await sessions.start(tab.tabId);
+  connection.notify('session_start', {});
   void tellTab(tab.tabId, { type: 'session-changed', session: 'active' });
+  void tellOtherTabs(tab.tabId, 'elsewhere');
+  void syncWatch();
   return { ok: true, chars: inserted.chars };
 }
 
@@ -183,19 +284,21 @@ async function endSession(windowId: number): Promise<void> {
   if (tabId === null) return;
   await sessions.end(tabId);
   void tellTab(tabId, { type: 'session-changed', session: 'ended' });
+  void tellOtherTabs(tabId, 'ended');
   // The app drops out of Full auto when a session ends.
   connection.notify('session_end', {});
+  void syncWatch();
 }
 
 async function sendFiles(paths: string[], windowId: number): Promise<SendFilesResult> {
   const tab = await chatTab(windowId);
   if (!tab.ok) return tab;
   if (!(await sessions.isActive(tab.tabId))) return { ok: false, error: 'no-session' };
-  const files: { path: string; content: string }[] = [];
+  const files: { path: string; content: string; hash: string }[] = [];
   const refused: { path: string; code: FileErrorCode }[] = [];
   for (const path of paths) {
     const read = await connection.request('read', { path });
-    if (read.ok) files.push({ path, content: read.result.content });
+    if (read.ok) files.push({ path, content: read.result.content, hash: read.result.hash });
     else if (read.error.code === 'not-connected' || read.error.code === 'timeout') {
       return { ok: false, error: 'not-connected' };
     } else if (read.error.code !== 'bad-response' && read.error.code !== 'no-session') {
@@ -210,7 +313,11 @@ async function sendFiles(paths: string[], windowId: number): Promise<SendFilesRe
   const inserted = await insertIntoChat(tab.tabId, text);
   if (!inserted.ok) return inserted;
   const sent = files.map((f) => f.path);
-  await sessions.addSent(tab.tabId, sent);
+  await sessions.addSent(
+    tab.tabId,
+    files.map((f) => sentFile(f.path, f.content, f.hash))
+  );
+  void syncWatch();
   return { ok: true, chars: inserted.chars, sent, refused };
 }
 
@@ -218,7 +325,14 @@ async function sendFiles(paths: string[], windowId: number): Promise<SendFilesRe
 async function chatFile(
   tabId: number,
   request: WorkerRequestOf<
-    'chat-read' | 'chat-write' | 'chat-undo' | 'chat-run' | 'chat-run-cancel'
+    | 'chat-read'
+    | 'chat-stat'
+    | 'chat-write'
+    | 'chat-delete'
+    | 'chat-rename'
+    | 'chat-undo'
+    | 'chat-run'
+    | 'chat-run-cancel'
   >
 ): Promise<RequestOutcome<unknown>> {
   if (!(await sessions.isActive(tabId))) {
@@ -229,8 +343,10 @@ async function chatFile(
   switch (request.type) {
     case 'chat-read':
       return connection.request('read', { path: request.path });
-    case 'chat-write':
-      return connection.request('write', {
+    case 'chat-stat':
+      return connection.request('stat', { path: request.path });
+    case 'chat-write': {
+      const outcome = await connection.request('write', {
         path: request.path,
         content: request.content,
         ...(request.baseHash !== undefined && { baseHash: request.baseHash }),
@@ -238,6 +354,42 @@ async function chatFile(
         trigger: request.trigger,
         ...(request.loopId !== undefined && { loopId: request.loopId })
       });
+      if (outcome.ok) {
+        await sessions.noteChanged(tabId, {
+          kind: 'write',
+          path: request.path,
+          hash: outcome.result.hash,
+          chars: formatContextBlock(request.path, request.content).length
+        });
+      }
+      return outcome;
+    }
+    case 'chat-delete': {
+      // Always a click: the app refuses an automatic delete in every mode.
+      const outcome = await connection.request('delete', {
+        path: request.path,
+        baseHash: request.baseHash,
+        source: 'chat',
+        trigger: 'click'
+      });
+      if (outcome.ok) await sessions.noteChanged(tabId, { kind: 'delete', path: request.path });
+      if (outcome.ok) void syncWatch();
+      return outcome;
+    }
+    case 'chat-rename': {
+      const outcome = await connection.request('rename', {
+        from: request.from,
+        to: request.to,
+        baseHash: request.baseHash,
+        source: 'chat',
+        trigger: 'click'
+      });
+      if (outcome.ok) {
+        await sessions.noteChanged(tabId, { kind: 'rename', from: request.from, to: request.to });
+        void syncWatch();
+      }
+      return outcome;
+    }
     case 'chat-undo':
       return connection.request('undo', { opId: request.opId });
     case 'chat-run': {
@@ -259,7 +411,14 @@ async function handleChat(
   request: WorkerRequestOf<
     | 'chat-sync'
     | 'chat-read'
+    | 'chat-stat'
     | 'chat-write'
+    | 'chat-delete'
+    | 'chat-rename'
+    | 'chat-gone'
+    | 'chat-move-here'
+    | 'chat-requests'
+    | 'chip-corner'
     | 'chat-undo'
     | 'chat-sent'
     | 'card-get'
@@ -271,21 +430,48 @@ async function handleChat(
 ): Promise<unknown> {
   switch (request.type) {
     case 'chat-sync': {
-      void connection.connect();
-      if (request.start) forgetLoop(tabId, 'The chat page reloaded.');
+      if (request.wake) connection.wake();
+      else void connection.connect();
+      if (request.start) {
+        forgetLoop(tabId, 'The chat page reloaded.');
+        requests.delete(tabId);
+      }
       const session = await sessions.sync(tabId, request.conversationId, request.layout);
       return {
         connected: connection.current === 'connected',
         session,
-        config: connection.config
+        config: connection.config,
+        chipCorner: await chipCorner()
       } satisfies ChatSyncReply;
     }
     case 'chat-read':
+    case 'chat-stat':
     case 'chat-write':
+    case 'chat-delete':
+    case 'chat-rename':
     case 'chat-undo':
     case 'chat-run':
     case 'chat-run-cancel':
       return chatFile(tabId, request);
+    case 'chat-gone':
+      // The conversation was deleted or never existed. Its session ends with it.
+      if (await sessions.isActive(tabId)) {
+        await sessions.end(tabId);
+        void tellOtherTabs(tabId, 'ended');
+        connection.notify('session_end', {});
+        void syncWatch();
+      }
+      return sessions.stateFor(tabId);
+    case 'chat-move-here':
+      await moveSession(tabId);
+      return sessions.stateFor(tabId);
+    case 'chat-requests':
+      requests.set(tabId, request.requests);
+      notifyPanels();
+      return null;
+    case 'chip-corner':
+      await chrome.storage.local.set({ chipCorner: request.corner });
+      return null;
     case 'chat-loop':
       // The loop reports every change. The app logs it; the panel shows it.
       loops.set(tabId, request.report);
@@ -293,7 +479,8 @@ async function handleChat(
       notifyPanels();
       return null;
     case 'chat-sent':
-      await sessions.addSent(tabId, request.paths);
+      await sessions.addSent(tabId, request.files);
+      void syncWatch();
       return null;
     case 'card-get':
       return cards.get(request.keys);
@@ -337,6 +524,26 @@ async function handlePanel(
     }
     case 'get-tree':
       return connection.request('tree', {});
+    case 'get-list':
+      return connection.request('list', { dir: request.dir });
+    case 'context-resend':
+      return resendContext(request.windowId);
+    case 'context-remove': {
+      const tabId = await activeTabId(request.windowId);
+      if (tabId !== null) await sessions.removeContext(tabId, request.path);
+      void syncWatch();
+      return null;
+    }
+    case 'session-move': {
+      const tabId = await activeTabId(request.windowId);
+      if (tabId !== null) await moveSession(tabId);
+      return null;
+    }
+    case 'reveal-request': {
+      const tabId = await activeTabId(request.windowId);
+      if (tabId !== null) void tellTab(tabId, { type: 'reveal-request', id: request.id });
+      return null;
+    }
     case 'send-files':
       return sendFiles(request.paths, request.windowId);
     case 'loop-control': {
@@ -405,7 +612,9 @@ chrome.runtime.onConnect.addListener((port) => {
     void activeTabId(windowId)
       .then(async (tabId) => ({
         ...(await sessions.panelState(tabId)),
-        loop: tabId === null ? null : (loops.get(tabId) ?? null)
+        loop: tabId === null ? null : (loops.get(tabId) ?? null),
+        requests: tabId === null ? [] : (requests.get(tabId) ?? []),
+        watch: watchMode
       }))
       .then((chat) => {
         // A slower, older push must not overwrite a newer one.
@@ -469,7 +678,14 @@ function forgetLoop(tabId: number, why: string): void {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   void sessions.removeTab(tabId);
+  requests.delete(tabId);
   forgetLoop(tabId, 'The chat tab closed.');
+});
+
+// Back online (a new launch of the app, or after sleep): files may have changed meanwhile.
+connection.onStatus((status) => {
+  if (status !== 'connected') return;
+  void syncWatch().then(() => recheckContext());
 });
 
 // The app's mode and allowlist, and the connection itself, are mirrored in every chat tab.
@@ -503,6 +719,15 @@ connection.onEvent((event) => {
         if (loopActive(report)) void tellTab(tabId, { type: 'loop-control', action: 'stop' });
       }
       break;
+    case 'files-changed': {
+      // Open cards re-read; files in context are checked against what was sent.
+      const { paths, overflow } = event;
+      void chatTabIds().then((ids) => {
+        for (const id of ids) void tellTab(id, { type: 'files-changed', paths, overflow });
+      });
+      void recheckContext(overflow ? undefined : paths);
+      break;
+    }
   }
 });
 

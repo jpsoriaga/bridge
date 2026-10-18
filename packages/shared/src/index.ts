@@ -6,4 +6,5 @@ export * from './loop';
 export * from './parser';
 export * from './prompts';
 export * from './protocol';
+export * from './text';
 export * from './types';

@@ -60,7 +60,11 @@ export interface ConnectionDeps {
 export type DesktopEvent =
   | { type: 'run-output'; runId: string; chunk: string }
   | { type: 'run-exit'; result: RunResult }
-  | { type: 'loop-stop' };
+  | { type: 'loop-stop' }
+  | { type: 'files-changed'; paths: string[]; overflow: boolean };
+
+/** A ping tick this late means the computer slept (timers don't run while asleep). */
+export const WAKE_GAP_MS = 3 * PING_INTERVAL_MS;
 
 type Handshake =
   /** `backlog`: messages that arrived after auth_ok, before the socket was adopted. */
@@ -148,7 +152,7 @@ export class Connection {
   }
 
   /** A one-way message to the desktop (loop reports, session end). Dropped if not connected. */
-  notify<T extends 'loop_report' | 'session_end'>(
+  notify<T extends 'loop_report' | 'session_end' | 'session_start'>(
     type: T,
     payload: Extract<ClientMessage, { type: T }>['payload']
   ): boolean {
@@ -203,6 +207,21 @@ export class Connection {
       this.inFlight = null;
     });
     return this.inFlight;
+  }
+
+  /**
+   * The computer woke up (a tab noticed its timers stalled). Disconnected: try now, not
+   * after the backoff. Connected: check the socket with a ping, giving it a fresh window,
+   * rather than closing it because nothing arrived while asleep.
+   */
+  wake(): void {
+    const socket = this.socket;
+    if (!socket) {
+      void this.retry();
+      return;
+    }
+    this.lastMessageAt = this.now();
+    this.send(socket, clientMessage(this.deps.randomId(), 'ping', {}));
   }
 
   /** Skip the backoff wait, e.g. when the side panel opens. */
@@ -466,6 +485,9 @@ export class Connection {
         case 'loop_stop':
           this.emit({ type: 'loop-stop' });
           break;
+        case 'file_changed':
+          this.emit({ type: 'files-changed', ...message.payload });
+          break;
         default:
           // pong and error need no action.
           break;
@@ -503,8 +525,17 @@ export class Connection {
   private startPing(socket: WebSocket): void {
     this.stopPing();
     // Also keeps the MV3 service worker alive: socket traffic resets its idle timer.
+    let lastTick = this.now();
     this.pingTimer = setInterval(() => {
-      if (this.now() - this.lastMessageAt > STALE_AFTER_MS) {
+      const now = this.now();
+      const slept = now - lastTick > WAKE_GAP_MS;
+      lastTick = now;
+      if (slept) {
+        // Nothing could arrive while asleep. Ask now instead of calling the socket dead.
+        this.wake();
+        return;
+      }
+      if (now - this.lastMessageAt > STALE_AFTER_MS) {
         socket.close();
         return;
       }

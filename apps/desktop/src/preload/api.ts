@@ -48,7 +48,39 @@ export interface DesktopState {
   running: RunningCommand | null;
   /** The Full auto loop as the extension last reported it. */
   loop: LoopReport | null;
+  /** How the open project is watched: every change, or only the files in context. */
+  watch: 'watch' | 'poll' | null;
+  theme: Theme;
+  /** Days ops and backups are kept. */
+  backupRetentionDays: number;
+  /** The first-run checklist. */
+  onboarding: { dismissed: boolean; sessionStarted: boolean };
 }
+
+export type Theme = 'system' | 'light' | 'dark';
+
+/** One op as the Activity detail view shows it. */
+export interface OpDetail {
+  opId: string;
+  kind: 'create' | 'modify' | 'delete' | 'rename';
+  path: string;
+  from?: string;
+  time: number;
+  undone: boolean;
+  before: string | null;
+  after: string | null;
+  /** Why there's no text: binary, too big, or the backup is gone. */
+  unavailable?: 'binary' | 'too-large' | 'missing';
+}
+
+/** A command's full result, for the Activity detail view. */
+export type RunDetail = Pick<
+  RunResult,
+  'argv' | 'status' | 'exitCode' | 'durationMs' | 'output' | 'truncated'
+>;
+
+/** What a menu item asks the window to do. */
+export type MenuAction = 'settings' | 'onboarding' | 'activity' | 'session';
 
 /** One row in the activity list. */
 export interface ActivityEntry {
@@ -56,13 +88,16 @@ export interface ActivityEntry {
   /** Epoch ms. */
   time: number;
   /**
-   * A write Bridge made, or a request it refused (`rejected`: the sandbox; `failed`:
-   * other), a command that ran (`run`), or a Full auto step (`loop`).
+   * A change Bridge made (create, modify, delete, rename), or a request it refused
+   * (`rejected`: the sandbox; `failed`: other), a command that ran (`run`), or a Full auto
+   * step (`loop`).
    */
-  kind: 'create' | 'modify' | 'rejected' | 'failed' | 'run' | 'loop';
+  kind: 'create' | 'modify' | 'delete' | 'rename' | 'rejected' | 'failed' | 'run' | 'loop';
   /** Relative path, what the extension sent (sanitised) for a refusal, or the command. */
   path: string;
-  /** For create/modify: the op to undo. */
+  /** For a rename: the old path (`path` is the new one). */
+  from?: string;
+  /** For create/modify/delete/rename: the op to undo. */
   opId?: string;
   undone?: boolean;
   /** For create/modify: `chat` when applied from a diff card. */
@@ -75,6 +110,8 @@ export interface ActivityEntry {
   op?: FileRequest['type'] | 'run';
   /** For `run`: how it ended. */
   run?: Pick<RunResult, 'status' | 'exitCode' | 'durationMs'>;
+  /** For `run`: its id, to fetch the full output while the app is open. */
+  runId?: string;
   /** For `loop`: what happened, in a few words. */
   text?: string;
 }
@@ -149,6 +186,20 @@ export interface BridgeApi {
   stopLoop(): Promise<void>;
   /** Live output of the running command. Returns an unsubscribe function. */
   onRunOutput(listener: (chunk: { runId: string; text: string }) => void): () => void;
+  /** Before and after text of one op, for the diff viewer. Null if it's not in the log. */
+  getOpDetail(opId: string): Promise<OpDetail | null>;
+  /** A command's full output, while the app is still open. Null once it's forgotten. */
+  getRunDetail(runId: string): Promise<RunDetail | null>;
+  setTheme(theme: Theme): Promise<boolean>;
+  /** Days to keep ops and backups, 1–90. Prunes now. */
+  setBackupRetention(days: number): Promise<boolean>;
+  /** Opens the project's backups folder in Finder/Explorer. */
+  openBackupsFolder(): Promise<boolean>;
+  /** Asks in a native dialog, then deletes every backup for the project. */
+  clearBackups(): Promise<boolean>;
+  setOnboardingDismissed(dismissed: boolean): Promise<void>;
+  /** Menu items that act in the window. Returns an unsubscribe function. */
+  onMenu(listener: (action: MenuAction) => void): () => void;
 }
 
 /** One channel per method. Main checks the sender on each. */
@@ -172,5 +223,13 @@ export const IPC = {
   setPathOverride: 'bridge:set-path-override',
   cancelRun: 'bridge:cancel-run',
   stopLoop: 'bridge:stop-loop',
-  runOutput: 'bridge:run-output'
+  runOutput: 'bridge:run-output',
+  getOpDetail: 'bridge:get-op-detail',
+  getRunDetail: 'bridge:get-run-detail',
+  setTheme: 'bridge:set-theme',
+  setBackupRetention: 'bridge:set-backup-retention',
+  openBackupsFolder: 'bridge:open-backups-folder',
+  clearBackups: 'bridge:clear-backups',
+  setOnboardingDismissed: 'bridge:set-onboarding-dismissed',
+  menu: 'bridge:menu'
 } as const;

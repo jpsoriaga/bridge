@@ -9,12 +9,17 @@ export interface OpRecord {
   opId: string;
   /** Epoch ms. */
   time: number;
-  /** Relative POSIX path, as the sandbox normalised it. */
+  /** Relative POSIX path, as the sandbox normalised it. For a rename, the new path. */
   path: string;
-  kind: 'create' | 'modify';
-  /** sha256 of the file before the write. Null for a create. */
+  kind: 'create' | 'modify' | 'delete' | 'rename';
+  /** For a rename: the old path. */
+  from?: string;
+  /** sha256 of the file before the op. Null for a create. */
   beforeHash: string | null;
-  afterHash: string;
+  /** sha256 of the file after it. Null for a delete. */
+  afterHash: string | null;
+  /** For a delete: the file's permission bits, restored by undo. */
+  mode?: number;
   /** Epoch ms when undone. */
   undoneAt?: number;
   /** `chat`: applied from a diff card in the chat. */
@@ -41,10 +46,16 @@ function isOpRecord(value: unknown): value is OpRecord {
     /^[0-9a-z-]{1,64}$/.test(op.opId) &&
     typeof op.time === 'number' &&
     typeof op.path === 'string' &&
-    (op.kind === 'create' || op.kind === 'modify') &&
+    (op.kind === 'create' ||
+      op.kind === 'modify' ||
+      op.kind === 'delete' ||
+      op.kind === 'rename') &&
+    (op.from === undefined || (op.kind === 'rename' && typeof op.from === 'string')) &&
+    (op.kind !== 'rename' || typeof op.from === 'string') &&
     (op.beforeHash === null || (typeof op.beforeHash === 'string' && HASH.test(op.beforeHash))) &&
-    typeof op.afterHash === 'string' &&
-    HASH.test(op.afterHash) &&
+    (op.afterHash === null || (typeof op.afterHash === 'string' && HASH.test(op.afterHash))) &&
+    (op.afterHash !== null || op.kind === 'delete') &&
+    (op.mode === undefined || (Number.isInteger(op.mode) && op.mode >= 0 && op.mode <= 0o7777)) &&
     (op.undoneAt === undefined || typeof op.undoneAt === 'number') &&
     (op.source === undefined || op.source === 'chat') &&
     (op.trigger === undefined || op.trigger === 'auto') &&
@@ -67,12 +78,12 @@ export interface HistoryOptions {
 
 /**
  * One project's backups and operation log, under `userData/backups/<projectId>/`:
- * `log.json` plus one `<opId>/` folder per write holding `before` (the old bytes) for a
- * modify, or nothing for a create. Never inside the project.
+ * `log.json` plus one `<opId>/` folder per op holding `before` (the old bytes) for a
+ * modify, delete or rename, or nothing for a create. Never inside the project.
  */
 export class History {
   private ops: OpRecord[] = [];
-  private readonly maxAgeMs: number;
+  private maxAgeMs: number;
   private readonly maxOps: number;
   private readonly now: () => number;
 
@@ -123,10 +134,32 @@ export class History {
     return undefined;
   }
 
-  /** Step 1 of a write: save what's there now. `null` records that nothing was. */
-  async backup(opId: string, before: Buffer | null): Promise<void> {
+  /**
+   * Step 1 of an op: save what's there now. `null` records that nothing was. `after`, for
+   * a write, keeps what Bridge wrote, so the app can show the diff later even if the file
+   * has changed since.
+   */
+  async backup(opId: string, before: Buffer | null, after?: Buffer): Promise<void> {
     await mkdir(this.opDir(opId), { recursive: true, mode: 0o700 });
     if (before !== null) await writeFile(join(this.opDir(opId), 'before'), before, { mode: 0o600 });
+    if (after) await writeFile(join(this.opDir(opId), 'after'), after, { mode: 0o600 });
+  }
+
+  /** What a write put in the file, if it was kept. Null otherwise. */
+  async readAfter(opId: string): Promise<Buffer | null> {
+    return readFile(join(this.opDir(opId), 'after')).catch(() => null);
+  }
+
+  /** How long ops and their backups are kept. Prunes at once. */
+  async setMaxAge(ms: number): Promise<void> {
+    this.maxAgeMs = ms;
+    await this.prune();
+  }
+
+  /** Forgets every op and deletes every backup for this project. Nothing can be undone after. */
+  async clear(): Promise<void> {
+    this.ops = [];
+    await this.prune();
   }
 
   /** Step 3, after the file is written: log it and prune. */

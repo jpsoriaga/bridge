@@ -23,7 +23,8 @@ const CONFIG: BridgeConfig = {
   allowlist: ['pnpm test'],
   stepLimit: 10,
   pauseOnFailure: false,
-  running: null
+  running: null,
+  instance: 'launch-1'
 };
 
 const sign = (key: string, ...args: Parameters<typeof proofInput>) =>
@@ -495,7 +496,7 @@ describe('Connection', () => {
 });
 
 describe('file requests', () => {
-  const READ = { content: 'hi\n', hash: 'e'.repeat(64), eol: 'lf' };
+  const READ = { content: 'hi\n', hash: 'e'.repeat(64), eol: 'lf', bom: false };
 
   it('sends a request and resolves with the checked result', async () => {
     servers.set(DEFAULT_PORT, {
@@ -637,7 +638,35 @@ describe('file requests', () => {
       })
     );
     sockets[0]!.receive(serverMessage('l', 'loop_stop', {}));
-    expect(events).toEqual(['run-output', 'run-exit', 'loop-stop']);
+    sockets[0]!.receive(
+      serverMessage('f', 'file_changed', { paths: ['src/a.ts'], overflow: false })
+    );
+    expect(events).toEqual(['run-output', 'run-exit', 'loop-stop', 'files-changed']);
+  });
+
+  it('keeps a healthy socket after sleep instead of calling it stale', async () => {
+    servers.set(DEFAULT_PORT, { key: KEY });
+    const { connection } = makeConnection();
+    await connection.connect();
+    const pings = () => sockets[0]!.sent.filter((m) => m.type === 'ping').length;
+    // Asleep for ten minutes: the clock jumps, but no timer ran meanwhile.
+    vi.setSystemTime(Date.now() + 10 * 60_000);
+    await advance(PING_INTERVAL_MS);
+    expect(connection.current).toBe('connected');
+    expect(pings()).toBe(1);
+  });
+
+  it('reconnects at once on wake instead of waiting out the backoff', async () => {
+    servers.clear();
+    const { connection } = makeConnection();
+    await connection.connect();
+    await advance(1_000);
+    await advance(2_000);
+    expect(connection.current).toBe('app-not-running');
+    servers.set(DEFAULT_PORT, { key: KEY });
+    connection.wake();
+    await settle();
+    expect(connection.current).toBe('connected');
   });
 
   it('sends loop reports one way, and drops them while disconnected', async () => {

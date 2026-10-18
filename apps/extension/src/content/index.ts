@@ -1,10 +1,14 @@
 import { TabMessage, type InsertResult } from '../messages';
 import { insertIntoComposer } from './chat/composer';
-import { askWorker, ChatController } from './chat/controller';
+import { ChatController, createAskWorker } from './chat/controller';
 
 // The content script holds no secrets and never talks to the desktop. File reads and
 // writes go through the service worker, which checks this tab has an active session.
-const controller = new ChatController(askWorker);
+// If the extension is reloaded or updated, this script can't reach it any more: the
+// controller takes its UI off the page and asks for a reload.
+const controller: ChatController = new ChatController(
+  createAskWorker(() => controller.invalidate())
+);
 controller.start();
 
 chrome.runtime.onMessage.addListener((raw: unknown, sender, sendResponse) => {
@@ -33,8 +37,16 @@ chrome.runtime.onMessage.addListener((raw: unknown, sender, sendResponse) => {
     case 'loop-control':
       controller.loopControl(message.action);
       return false;
+    case 'files-changed':
+      controller.filesChanged(message.paths, message.overflow);
+      return false;
+    case 'reveal-request':
+      controller.reveal(message.id);
+      return false;
     case 'diagnose':
       sendResponse(controller.diagnose());
+      return false;
+    default:
       return false;
   }
 });

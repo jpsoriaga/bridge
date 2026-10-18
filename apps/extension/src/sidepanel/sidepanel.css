@@ -298,3 +298,117 @@
   color: var(--fg-muted);
   font-variant-numeric: tabular-nums;
 }
+
+/* Files in context and Requests: one row per item, mono path on the left. */
+.context-list,
+.request-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.context-row,
+.request-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 28px;
+  font-size: var(--text-sm);
+}
+.request-row {
+  min-height: 36px;
+}
+.context-path,
+.request-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.context-row[data-stale='true'] .context-path {
+  color: var(--fg-muted);
+}
+.context-size {
+  flex: none;
+  font-size: var(--text-xs);
+  color: var(--fg-subtle);
+  font-variant-numeric: tabular-nums;
+}
+.request-kind {
+  flex: none;
+  width: 36px;
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+}
+
+/* A small mono tag: "changed", "deleted", "not allowed". Tone from text and border. */
+.tag {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 18px;
+  color: var(--fg-muted);
+}
+.tag[data-tone='warning'] {
+  border-color: color-mix(in srgb, var(--warning) 35%, transparent);
+  color: var(--warning);
+}
+.tag[data-tone='danger'] {
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+  color: var(--danger);
+}
+
+/* Icon-only button (Remove from list). Always has an aria-label. */
+.icon-button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-subtle);
+  cursor: pointer;
+}
+.icon-button svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+.icon-button:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.tree-note {
+  padding: var(--space-1) var(--space-3);
+  font-family: var(--font-sans);
+}
+
+/* Loading placeholders: grey bars, no shimmer (nothing moves). */
+.skeleton-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.skeleton {
+  display: block;
+  height: 12px;
+  margin-bottom: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg-muted);
+}
+.skeleton.short {
+  width: 40%;
+}

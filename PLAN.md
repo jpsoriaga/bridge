@@ -32,7 +32,7 @@ It's a personal tool. It runs only on your machine, talks only to `127.0.0.1`, a
   - the path sandbox and atomic writes
   - per-edit undo history
   - the command runner
-- **Preload** exposes one typed object, `window.bridge`, through `contextBridge`. Every method maps to one narrow IPC channel whose inputs are validated in main, and main checks that each call comes from its own window's top frame. Phase 3 exposed `version`, `getStatus`, `onStatus`, `startPairing`, `unpair`, `openFolder`, `openRecent(index)`, `getActivity`, `onActivity`, `undo(opId)`, `undoLast` and `setDenyPatterns`; Phase 5 adds `setMode`, `setAllowlist`, `setGatedPatterns`, `setEnvPatterns`, `setRunSettings`, `cancelRun`, `stopLoop` and `onRunOutput`. None of them takes a filesystem path.
+- **Preload** exposes one typed object, `window.bridge`, through `contextBridge`. Every method maps to one narrow IPC channel whose inputs are validated in main, and main checks that each call comes from its own window's top frame. Phase 3 exposed `version`, `getStatus`, `onStatus`, `startPairing`, `unpair`, `openFolder`, `openRecent(index)`, `getActivity`, `onActivity`, `undo(opId)`, `undoLast` and `setDenyPatterns`; Phase 5 adds `setMode`, `setAllowlist`, `setGatedPatterns`, `setEnvPatterns`, `setRunSettings`, `cancelRun`, `stopLoop` and `onRunOutput`; Phase 6 adds `setPathOverride`, `getOpDetail`, `getRunDetail`, `setTheme`, `setBackupRetention`, `openBackupsFolder`, `clearBackups`, `setOnboardingDismissed` and `onMenu`. None of them takes a filesystem path.
 - **Renderer** is React. It's the control surface: pick the project, pair, choose the mode, watch activity, stop. It never gets Node or Electron objects.
 
 ### Extension (`apps/extension`)
@@ -51,7 +51,7 @@ It's a personal tool. It runs only on your machine, talks only to `127.0.0.1`, a
 Pure TypeScript with no Node or DOM dependencies (except `styles.css`):
 
 - types (`FileEdit`, `Mode`, …)
-- the chat parser (`parseChat`: `@@FILE`, `@@READ`, `@@CONTEXT`) and the text Bridge puts in the composer (`buildSessionPrompt`, `buildContextMessage`, `pickFence`)
+- the chat parser (`parseChat`: `@@FILE`, `@@READ`, `@@CONTEXT`, `@@RUN`, `@@DONE`, `@@DELETE`, `@@RENAME`) and the text Bridge puts in the composer (`buildSessionPrompt`, `buildContextMessage`, `pickFence`)
 - the diff helper (`diffFile`, on jsdiff)
 - the protocol message types and schemas (Phase 2)
 - the logo geometry
@@ -113,7 +113,7 @@ The project folder, the sandbox, and file access over the socket. Code: desktop 
 - **Sandbox (`sandbox.ts`).** Lexical checks first, on the NFC form of the path: a string, 1–1024 characters, no control characters (NUL included), not absolute (`/x`, `C:`, `\\srv`, `//srv`, `\x`), no backslash anywhere, no `:` (NTFS streams), no empty, `.` or `..` segments, no segment ending in a dot or space (Windows drops them, so `.git.` would open `.git`), and no Windows device names on Windows. Then the denylist. Then a walk from the real root, one component at a time, with `lstat`: a symlink is resolved with `realpath` and must land strictly inside the real root and outside the denylist; a dangling or looping link is refused; the first missing component ends the walk, so a new file's parent folders are created only under a real, checked directory. Sockets, FIFOs and devices are refused. NFC matters: U+212A KELVIN SIGN normalises to `K`, so `secret.\u212Aey` is caught as `*.key`.
 - **Denylist.** `DEFAULT_DENYLIST` in `sandbox.ts` is the one list: `.git/`, `.env`, `.env.*`, `*.pem`, `*.key`, `id_rsa*`, `node_modules/`. It uses `.gitignore` syntax through the `ignore` package, ignoring case, and each path is tested as both a file and a folder. Users add patterns in Settings. Those live in a separate matcher, and `!` patterns are refused, so a user pattern can never re-allow a default. It stays in the desktop (not `@bridge/shared`) because only the desktop enforces it.
 - **Error codes** are `FileErrorCode` in shared: `no-project`, `invalid-path`, `absolute-path`, `traversal`, `denied`, `outside-root`, `not-found`, `not-a-file`, `binary`, `too-large`, `conflict`, `exists`, `unknown-op`, `already-undone`, `io-error`. Sandbox refusals and failed writes and undos are logged in the activity list. A read that simply misses is not.
-- **Operations.** Requests are `tree`, `read`, `write` and `undo` envelopes. The reply is `response { ok, result | error }` with the request's own `id`, and the extension checks `result` against `FILE_RESULTS[type]`. Writes and undos run one at a time behind a lock in `ProjectService`. There is no delete or rename yet.
+- **Operations.** Requests are `tree`, `read`, `write` and `undo` envelopes (Phase 6 adds `list`, `stat`, `delete`, `rename` and `watch`). The reply is `response { ok, result | error }` with the request's own `id`, and the extension checks `result` against `FILE_RESULTS[type]`. Writes and undos run one at a time behind a lock in `ProjectService`.
   - `tree` walks depth-first, sorted by name. It honours every `.gitignore` on the way down, the denylist, and skips `dist`, `out`, `build` and `.next`. `node_modules` shows as one entry with `collapsed: true`. Symlinks are listed only if they stay inside and aren't denied, and symlinked folders are never descended. Caps are 5,000 entries and depth 12, with `truncated`.
   - `read`: refuses anything over 1 MB before reading it, and anything with a NUL in the first 8 KB (`binary`). Returns `{ content, hash, eol }`, where `hash` is the SHA-256 of the raw bytes and `eol` comes from the first line break.
   - `write`: with no `baseHash` it's a create. An existing file gives `exists`. With a `baseHash` it's a modify: a stale hash gives `conflict`, and so does a file that has disappeared. A modify keeps the file's EOL style and mode. Content is written to `.<name>.bridge-<random>.tmp` beside the target, fsynced, then moved into place: `rename` for a modify, and `link` for a create, which fails with `EEXIST` if a file appeared in the meantime. On filesystems without hard links, a create falls back to `copyFile` with `COPYFILE_EXCL`, which is exclusive but not atomic. The temp file is always removed.
@@ -209,6 +209,45 @@ Open points carried forward:
 
 App UI polish, delete and rename, files in context, the file watcher, and edge cases.
 
+### Protocol v4
+
+`read` returns `bom`. New requests: `list { dir }` (one folder, for lazy trees), `stat { path }` (size and hash of any file up to 50 MB, binary included), `delete { path, baseHash }`, `rename { from, to, baseHash }` (both carry `trigger` and `source`), and `watch { paths }` (the files in context, polled when the project is too big to watch). Server events: `file_changed { paths, overflow }`. The extension sends `session_start`. `status.config` carries `instance`, random per app launch. New error codes: `encoding` and `project-missing`. Proof inputs say `v4`, so old builds of either side refuse to pair or connect with new ones.
+
+### Delete and rename
+
+Code: desktop `project/operations.ts` (`deleteFile`, `renameFile`, `undo`), `policy.ts` (`changeRefusal`); extension `cards/change-card.ts`.
+
+- **Never automatic.** The server refuses `trigger: 'auto'` for both in every mode, before the sandbox: `gated` if either path is gated, else `mode`. The extension only ever sends `click`, and Full auto pauses with `needs-click` while any is pending.
+- **Checks.** Both paths go through the sandbox and the denylist. The file must be a regular file of at most 50 MB (`MAX_BACKUP_BYTES`) whose hash is still `baseHash` (`conflict` otherwise; the card got it from `stat`). A missing file is `not-found`, a folder `not-a-file`.
+- **Rename** refuses with `exists` if anything is at the new path, unless it's the same file under another case (same device and inode: `App.tsx` → `app.tsx` on a case-insensitive disk), which goes through a temp name. Otherwise the move is `link` then `unlink`, so a file appearing at the target in between gives `exists` instead of being replaced (`rename` after a check where hard links aren't supported). Missing parent folders are created under the nearest existing, checked folder.
+- **Backups.** Both back up the bytes first. Undo of a delete writes them back exclusively (`conflict` if something new is at the path); undo of a rename moves the file back if it still has the same hash and the old path is free (`conflict` otherwise). Forced undo from the app (after its native dialog) writes the backup to the old path and removes the new one. A deleted file's mode is restored.
+- **Writes keep their output.** A write's backup folder also holds `after`, what Bridge wrote, so the app's diff viewer shows the change even if the file moved on since.
+
+### File contents
+
+- `read` decodes strict UTF-8 (`encoding` otherwise) and strips a BOM, reporting `bom: true`. A write over a non-UTF-8 or binary file is refused, a BOM is put back, and content with a NUL is refused as `binary`.
+- **Trailing newline.** The chat format always ends a block with a newline. `matchTrailingNewline` (shared) gives the new content the old file's ending: a file without a final newline keeps not having one. The card diffs against the same, so an edit that only differs there is `unchanged` (Apply disabled).
+- Cards refuse binary content or content over 1 MB before reading or diffing anything.
+
+### File watcher and files in context
+
+Code: desktop `project/watcher.ts`; extension `background/sessions.ts`, `sidepanel/ContextFiles.tsx`.
+
+- On project open, the app counts what `listTree` would list (same rules: denylist, every `.gitignore`, skipped build folders, `node_modules` never entered). Up to 20,000 entries it watches with chokidar 4 (CJS, so main can `require` it) with the same rules as its `ignored` function and Bridge's temp files dropped. Changes are debounced 200ms and pushed as `file_changed` (500 paths at most, then `overflow`). Over 20,000, nothing is watched: the files in context (`watch { paths }`, at most 500) are polled every 2s by size and mtime. A watcher error falls back to polling.
+- The extension forwards `file_changed` to every chat tab: pending FILE, DELETE and RENAME cards on those paths read the file again, and if it isn't what they diffed against they show `conflict` with the new diff before any click. Auto-apply leaves those for a click.
+- **Files in context.** Each session keeps the files sent to the chat (Send files, READ cards, Full auto follow-ups) with the characters each took and the hash sent. On `file_changed`, and on every (re)connect, the worker `stat`s the ones in context and marks them `stale` (hash differs) or `missing`. The chat's own changes don't make files stale: an applied edit updates the stored hash, a delete removes the entry, a rename moves it. **Resend changed** reads the stale and missing ones and inserts them as one context message. Sessions saved before Phase 6 (`filesSent` paths only) are read as files without hashes, which can be missing but never stale.
+- Watching never touches the project; it only reads metadata. It's off for paths the sandbox would refuse anyway.
+
+### Sessions, tabs and lifecycle
+
+- **One tab per session.** A session record keeps its tab. Another tab showing the same conversation gets `elsewhere`: cards there stay off and a one-line page notice offers **Move here** (also in the side panel), which hands the session over and stops the old tab's loop. A tab whose owner closed or navigated away takes the session over on its next sync.
+- **Extension reloaded.** The content script outlives its extension. When `chrome.runtime.id` is gone or a request fails with "Extension context invalidated", it removes every card and the chip, stops polling and shows "Reload the page".
+- **App restarted.** Sessions live in the extension, so they survive. A loop that was running sees a new `instance` in the config and pauses with `app-restarted`; it stays paused (the app comes back in Manual) until Full auto is on again and the user resumes.
+- **Sleep.** The worker's ping timer notices a jump (no tick for 60s): instead of calling the socket stale it pings it now. A content script that misses its 1s poll for 150s (background tabs can be throttled to once a minute, so less could just be throttling) tells the worker (`chat-sync { wake }`, which reconnects at once if disconnected) and pauses a loop that was `acting` or `sending` with `slept`.
+- **Long conversations.** A message that unmounts and mounts again with the same text keeps its view: the cards move into the new element, nothing is read again, and a reply is handed to the mode only once.
+- **Deleted conversation or 404.** If the page shows "Conversation not found" (or similar, `MISSING_TEXT` in `selectors.ts`, best guesses) with no messages for 3 polls, the tab ends its session (`chat-gone`).
+- **Project missing.** Every file request first checks the project folder still exists (`project-missing` if not), and main checks every 5s too. The app shows **Project missing** in the header and on the Session page, the extension's panel says so, and it clears itself when the folder comes back (a remount).
+
 ### Login shell PATH (Step 0)
 
 An app opened from the Dock or a desktop launcher gets only the system PATH, so `pnpm` from nvm, Volta or Homebrew is "not found". Code: desktop `src/main/commands/login-env.ts`.
@@ -219,6 +258,28 @@ An app opened from the Dock or a desktop launcher gets only the system PATH, so 
 - Windows apps get the full PATH from the system, so the shell isn't run there (`inherited`).
 - The first command after launch waits for the read if it's still going.
 
+### Desktop app
+
+- **Shell.** A single-instance lock (a second launch focuses the window). Window bounds are saved half a second after moving or resizing and restored if they still land on a display. Native menu: About (shows the version), Settings… ⌘,, Open folder… ⌘O, Session ⌘1, Activity ⌘2, Stop Full auto ⌘., Help → Getting started. Menu items that act in the window send `bridge:menu`; Open folder and Stop run in main.
+- **Layout.** Header (project switcher, connection, mode), a Full auto strip with Stop on every page while a run is going, a left nav (Session, Activity, Settings) and one page. See DESIGN.md "Desktop app".
+- **Appearance** (System / Light / Dark) sets `data-theme` on `<html>` and `nativeTheme.themeSource`. Every colour token is `light-dark()`, so only `color-scheme` changes. The chat cards follow the chat page's `html.light` / `html.dark` the same way.
+- **Activity details.** `getOpDetail(opId)` reads the op's `before` and `after` backups as text (refusing binary or over 1 MB); the renderer diffs them with the shared `diffFile`. Commands' full results are kept in memory for the last 50 runs (`getRunDetail(runId)`), so they're gone after a restart.
+- **Backups.** Retention is 1–90 days (default 7), applied when a project opens and when changed. **Clear for this project** asks in a native dialog, then drops every op and backup.
+- **Onboarding** ticks from state: `paired`, a project open (and not missing), an allowlist confirmed, and `sessionStarted` (set by the extension's `session_start`). Dismissal is saved; Help reopens it.
+- **Accessibility.** Every control is a real button or input; menus, segmented controls and the Activity list work with the keyboard (arrows in radio groups and the project menu, Escape closes it, focus returns to where it came from); icon buttons have labels; `:focus-visible` rings everywhere; motion is off under `prefers-reduced-motion`. Text tokens meet WCAG AA (4.5:1) on every surface in both themes: `--fg-subtle` became `#6e6e6e` / `#858585` and light `--warning` `#b54f0a` for that (`tokens.test.ts`). axe runs on each page in both themes (`a11y.test.tsx`; jsdom can't compute colours, so contrast is the token test's job).
+
+### Extension
+
+- **Side panel** sections: Connection (project or **Project missing**, Unpair), Session (start, end, **Move here**), Mode and Full auto, Command, Requests (READ and RUN cards waiting in the tab, with **Show**, which scrolls the card into view), Files in context, Send files. Loading shows placeholder bars.
+- **Send files** loads one folder at a time (`list`, 2,000 entries per folder); a folder's checkbox loads what's under it up to the 50-file limit. The filter fetches the full (capped) tree only once you type.
+- **Cards** share one header (icon, path, Copy path, badges, meta, toggle), keep keyboard focus when they redraw (`renderCard`), are labelled groups, and show the time they were applied. The page chip shows the mode while a session is active, plus the step count and Stop in Full auto; drag it (or press its label and use the arrows) to another corner, which the worker keeps in `chrome.storage.local`.
+
+Open points carried forward:
+
+- `MISSING_TEXT` and the deleted-conversation detection are guesses at the live page's wording; checked only on the stand-in page.
+- chokidar on macOS uses one `fs.watch` per folder; under heavy load the OS can drop an event. Bridge copes (Apply always compares hashes, and context is rechecked on reconnect), but a stale marker can be late.
+- A command's full output in Activity lasts until the app quits.
+
 ## Modes
 
 | Mode           | Edits                                                                                                  | Commands                                                                       | Sending                                 |
@@ -227,7 +288,7 @@ An app opened from the Dock or a desktop launcher gets only the system PATH, so 
 | **Auto-apply** | Written when the reply finishes, in order, except held ones (below). Cards say Auto-applied, with Undo | As in Manual                                                                   | You press send                          |
 | **Full auto**  | As in Auto-apply                                                                                       | Allowlisted commands run one after another                                     | Bridge clicks send, within a step limit |
 
-Held for a click in every mode: suspected partial files, conflicts, files the sandbox refuses, files over 1 MB, and gated files. Every mode uses the same path sandbox and allowlist. Modes only change _when_ things happen, never _what_ is allowed.
+Held for a click in every mode: deletes and renames, suspected partial files, conflicts, files the sandbox refuses, files over 1 MB, and gated files. Every mode uses the same path sandbox and allowlist. Modes only change _when_ things happen, never _what_ is allowed.
 
 ## Security model
 
@@ -265,7 +326,8 @@ Each edit is one whole file, a marker line (in inline code, so markdown leaves `
 - `` `@@READ path@@` `` (one per line, or several on one line) asks Bridge for a file. The READ card lists them.
 - Files Bridge sends are `` `@@CONTEXT path@@` `` plus a fence longer than any backtick run in the file (`pickFence`). The parser skips them, so they're never edits.
 - The parser does no path validation. That's the desktop sandbox's job.
-- Not yet supported: deletes, renames and partial patches. Possible later syntax is `@@DELETE path@@`.
+- `` `@@DELETE path@@` `` deletes a file and `` `@@RENAME old/path -> new/path@@` `` (or `→`) moves one. No fence follows either. They're never applied on their own (see "Phase 6 decisions").
+- Not supported: partial patches.
 
 The "Start session" prompt (`buildSessionPrompt`) teaches the chat these rules: whole files only, no placeholders, one block per file, relative paths, ask with `@@READ` instead of guessing. It lists the project tree as an outline, about 1,500 entries at most; past that, the deepest folders are summarised as "(N more entries)".
 
@@ -278,6 +340,6 @@ The "Start session" prompt (`buildSessionPrompt`) teaches the chat these rules: 
 | 3   | Project and files          | The extension can read and write inside one folder, with undo      | Folder picker and recents. Path sandbox with 40+ attack tests. `tree`, `read`, `write`, `undo` over the socket. Atomic writes with conflict checks. Backups and op log in userData. Activity list with undo. Dev-only test field                                                            |
 | 4   | Chat integration           | Manual mode works end to end in the chat: read edits, send context | Start session prompt. Parser for FILE/READ/CONTEXT with partial detection. DOM adapter with fixtures. Diff cards in a shadow root with Apply, Reject, Undo, Apply all, conflict re-read. READ card. Composer insert. Send files with budget meter                                           |
 | 5   | Modes, commands, Full auto | Close the loop, safely                                             | Mode switch owned by the app, mirrored in the extension and on the cards. Auto-apply with Undo and Undo all. Gated files. Allowlisted `spawn` runner with env filter, timeout, tree kill, output cap. RUN cards. Full auto loop with step limit, Stop, pause reasons, step counter and chip |
-| 6   | App UI polish              | The app is pleasant to use daily                                   | Desktop UI pass. Carried over from the old Phase 5 and not started: files-in-context tree in the side panel, delete and rename (`@@DELETE path@@`)                                                                                                                                          |
+| 6   | App UI polish              | The app is pleasant to use daily                                   | Desktop UI pass (nav, onboarding, Activity filters and diff viewer, Settings sections, themes, a11y). Login shell PATH. Delete and rename. File watcher and files in context. Edge cases (encodings, missing project, tabs, reloads, sleep)                                                 |
 | 7   | Security hardening         | Safe to use daily                                                  | Security review against this doc. E2E smoke tests. Electron kept on a supported major                                                                                                                                                                                                       |
 | 8   | Packaging and release      | Installable without a dev setup                                    | electron-builder mac and win packages. Extension zip. Docs pass                                                                                                                                                                                                                             |

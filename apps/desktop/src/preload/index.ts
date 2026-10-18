@@ -4,8 +4,11 @@ import {
   type ActivityEntry,
   type BridgeApi,
   type DesktopState,
+  type MenuAction,
+  type OpDetail,
   type OpenFolderResult,
   type PairingCode,
+  type RunDetail,
   type SaveListResult,
   type UndoOutcome
 } from './api';
@@ -59,6 +62,22 @@ const api: BridgeApi = {
     ipcRenderer.on(IPC.runOutput, handler);
     return () => {
       ipcRenderer.removeListener(IPC.runOutput, handler);
+    };
+  },
+  getOpDetail: (opId) => ipcRenderer.invoke(IPC.getOpDetail, opId) as Promise<OpDetail | null>,
+  getRunDetail: (runId) => ipcRenderer.invoke(IPC.getRunDetail, runId) as Promise<RunDetail | null>,
+  setTheme: (theme) => ipcRenderer.invoke(IPC.setTheme, theme) as Promise<boolean>,
+  setBackupRetention: (days) =>
+    ipcRenderer.invoke(IPC.setBackupRetention, days) as Promise<boolean>,
+  openBackupsFolder: () => ipcRenderer.invoke(IPC.openBackupsFolder) as Promise<boolean>,
+  clearBackups: () => ipcRenderer.invoke(IPC.clearBackups) as Promise<boolean>,
+  setOnboardingDismissed: (dismissed) =>
+    ipcRenderer.invoke(IPC.setOnboardingDismissed, dismissed) as Promise<void>,
+  onMenu: (listener) => {
+    const handler = (_event: IpcRendererEvent, action: MenuAction) => listener(action);
+    ipcRenderer.on(IPC.menu, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.menu, handler);
     };
   }
 };

@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { FileRequest, Mode } from '@bridge/shared';
-import { GatedFiles, guardedFiles, ModeState, writeRefusal, type ModeStore } from './policy';
+import {
+  changeRefusal,
+  GatedFiles,
+  guardedFiles,
+  ModeState,
+  writeRefusal,
+  type ModeStore
+} from './policy';
 
 function memoryStore(mode: 'manual' | 'auto-apply' = 'manual') {
   const store: ModeStore & { saved: 'manual' | 'auto-apply' } = {
@@ -92,6 +99,60 @@ describe('writeRefusal', () => {
   });
 });
 
+describe('changeRefusal', () => {
+  const gated = new GatedFiles();
+  it('allows a click on any path, gated ones too', () => {
+    expect(changeRefusal({ path: 'package.json', trigger: 'click' }, gated)).toBeNull();
+    expect(changeRefusal({ from: 'a.ts', to: 'Makefile', trigger: 'click' }, gated)).toBeNull();
+  });
+
+  it('refuses every automatic delete and rename, in every mode', () => {
+    expect(changeRefusal({ path: 'src/a.ts', trigger: 'auto' }, gated)).toBe('mode');
+    expect(changeRefusal({ from: 'a.ts', to: 'b.ts', trigger: 'auto' }, gated)).toBe('mode');
+    expect(changeRefusal({ path: 'package.json', trigger: 'auto' }, gated)).toBe('gated');
+    expect(changeRefusal({ from: 'x.ts', to: '.husky/pre-push', trigger: 'auto' }, gated)).toBe(
+      'gated'
+    );
+  });
+
+  it('is enforced by guardedFiles before the sandbox, even in Full auto', async () => {
+    const handled: FileRequest[] = [];
+    const refused: string[] = [];
+    const files = guardedFiles(
+      {
+        handle: async (request) => {
+          handled.push(request);
+          return { ok: true, result: {} };
+        },
+        refuse: (_op, _path, code) => {
+          refused.push(code);
+          return { ok: false, error: { code, message: code } };
+        }
+      },
+      () => 'full-auto',
+      () => gated
+    );
+    const base = { v: 4 as const, id: '1' };
+    await files({
+      ...base,
+      type: 'delete',
+      payload: { path: 'a.ts', baseHash: '0'.repeat(64), trigger: 'auto' }
+    });
+    await files({
+      ...base,
+      type: 'rename',
+      payload: { from: 'a.ts', to: 'b.ts', baseHash: '0'.repeat(64), trigger: 'auto' }
+    });
+    await files({
+      ...base,
+      type: 'delete',
+      payload: { path: 'a.ts', baseHash: '0'.repeat(64), trigger: 'click' }
+    });
+    expect(refused).toEqual(['mode', 'mode']);
+    expect(handled.map((r) => r.type)).toEqual(['delete']);
+  });
+});
+
 describe('guardedFiles', () => {
   it('answers a refused write itself and passes everything else on', async () => {
     const handle = vi.fn(async () => ({ ok: true as const, result: {} }));
@@ -106,7 +167,7 @@ describe('guardedFiles', () => {
       () => new GatedFiles()
     );
     const write = (path: string, trigger: 'click' | 'auto'): FileRequest => ({
-      v: 3,
+      v: 4,
       id: '1',
       type: 'write',
       payload: { path, content: 'x', trigger }
@@ -120,7 +181,7 @@ describe('guardedFiles', () => {
 
     expect(await files(write('a.ts', 'auto'))).toEqual({ ok: true, result: {} });
     expect(await files(write('package.json', 'click'))).toEqual({ ok: true, result: {} });
-    expect(await files({ v: 3, id: '2', type: 'read', payload: { path: 'package.json' } })).toEqual(
+    expect(await files({ v: 4, id: '2', type: 'read', payload: { path: 'package.json' } })).toEqual(
       { ok: true, result: {} }
     );
     expect(handle).toHaveBeenCalledTimes(3);

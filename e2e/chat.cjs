@@ -4,130 +4,20 @@
 // as it would on the real site. See e2e/README.md for the manual run on chatgpt.com.
 const fs = require('node:fs');
 const path = require('node:path');
-const { ROOT, EXT, tempDir, launchApp, launchChrome } = require('./lib.cjs');
+const { EXT, tempDir, launchApp, launchChrome } = require('./lib.cjs');
 
-const step = (m) => console.log('•', m);
-const FIXTURES = path.join(ROOT, 'apps/extension/fixtures/chatgpt');
+const {
+  step,
+  SHELL,
+  turn,
+  assistantTurn,
+  hosts,
+  cardText,
+  clickInCard,
+  waitFor
+} = require('./chat-lib.cjs');
+
 const CONV = 'e2e00000-0000-4000-8000-000000000001';
-
-/** The `<article>` turn from a fixture, with its message id replaced if asked. */
-function turn(name, messageId) {
-  const html = fs.readFileSync(path.join(FIXTURES, name), 'utf8');
-  const article = html.slice(html.indexOf('<article'), html.lastIndexOf('</article>') + 10);
-  return messageId
-    ? article.replace(/data-message-id="[^"]+"/, `data-message-id="${messageId}"`)
-    : article;
-}
-
-// A stand-in for the chat page: <main>, a contenteditable composer whose paste handler
-// behaves like ProseMirror's (takes text/plain, prevents the default), and a send button
-// that turns the composer's text into a user turn, as the page does.
-const SHELL = `<!doctype html><html class="light"><head><meta charset="utf-8"><title>Chat</title></head>
-<body><main class="relative h-full w-full flex-1"></main>
-<form><div id="prompt-textarea" contenteditable="true" class="ProseMirror"><p><br></p></div>
-<button id="send" data-testid="send-button" type="button" aria-label="Send prompt">Send</button></form>
-<script>
-  const composer = document.getElementById('prompt-textarea');
-  composer.addEventListener('paste', (event) => {
-    event.preventDefault();
-    composer.textContent += event.clipboardData.getData('text/plain');
-  });
-  document.querySelector('form').addEventListener('submit', () => { window.__submitted = true; });
-  document.getElementById('send').addEventListener('click', () => {
-    const text = composer.textContent;
-    if (!text.trim()) return;
-    window.__sends = (window.__sends || []).concat([{ text, at: Date.now() }]);
-    composer.textContent = '';
-    const main = document.querySelector('main');
-    const n = main.querySelectorAll('[data-message-author-role="user"]').length;
-    main.insertAdjacentHTML('beforeend', '<article data-testid="conversation-turn-u' + n + '"><div data-message-author-role="user" data-message-id="u-' + n + '"><div class="whitespace-pre-wrap"></div></div></article>');
-    main.lastElementChild.querySelector('.whitespace-pre-wrap').textContent = text;
-  });
-</script></body></html>`;
-
-const escapeHtml = (text) =>
-  text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-/** A finished assistant turn in the page's markup, built from markdown-ish parts. */
-function assistantTurn(messageId, parts) {
-  const body = parts
-    .map((part) =>
-      part.file
-        ? `<p><code>@@FILE ${part.file}@@</code></p><pre><code>${escapeHtml(part.content)}</code></pre>`
-        : part.run
-          ? `<p><code>@@RUN ${part.run}@@</code></p>`
-          : `<p>${escapeHtml(part.text)}</p>`
-    )
-    .join('');
-  return `<article data-testid="conversation-turn-${messageId}"><div data-message-author-role="assistant" data-message-id="${messageId}"><div class="markdown prose">${body}</div></div><div><button data-testid="copy-turn-action-button" aria-label="Copy"></button></div></article>`;
-}
-
-/** Every node under the page, closed shadow roots included, from CDP. */
-async function piercedTree(cdp) {
-  const { root } = await cdp.send('DOM.getDocument', { depth: -1, pierce: true });
-  return root;
-}
-
-function* walk(node) {
-  yield node;
-  for (const child of node.children ?? []) yield* walk(child);
-  for (const shadow of node.shadowRoots ?? []) yield* walk(shadow);
-  if (node.contentDocument) yield* walk(node.contentDocument);
-}
-
-const attr = (node, name) => {
-  const a = node.attributes ?? [];
-  for (let i = 0; i < a.length; i += 2) if (a[i] === name) return a[i + 1];
-  return undefined;
-};
-function* textNodes(node) {
-  if (node.nodeName === 'STYLE') return;
-  if (node.nodeType === 3) yield node.nodeValue;
-  for (const child of node.children ?? []) yield* textNodes(child);
-  for (const shadow of node.shadowRoots ?? []) yield* textNodes(shadow);
-}
-const textOf = (node) => [...textNodes(node)].join(' ');
-
-/** Card hosts of one kind, in page order. */
-async function hosts(cdp, kind) {
-  const root = await piercedTree(cdp);
-  return [...walk(root)].filter(
-    (n) => n.nodeName === 'DIV' && attr(n, 'data-bridge-host') === kind
-  );
-}
-
-async function cardText(cdp, kind, index) {
-  const host = (await hosts(cdp, kind))[index];
-  if (!host) throw new Error(`no ${kind} #${index}`);
-  return textOf(host).replace(/\s+/g, ' ').trim();
-}
-
-/** Clicks a button inside a card (closed shadow root) with a trusted mouse click. */
-async function clickInCard(page, cdp, kind, index, label) {
-  const host = (await hosts(cdp, kind))[index];
-  if (!host) throw new Error(`no ${kind} #${index}`);
-  const button = [...walk(host)].find((n) => n.nodeName === 'BUTTON' && textOf(n).trim() === label);
-  if (!button) throw new Error(`no "${label}" in ${kind} #${index}: ${textOf(host)}`);
-  await cdp.send('DOM.scrollIntoViewIfNeeded', { backendNodeId: button.backendNodeId });
-  const { model } = await cdp.send('DOM.getBoxModel', { backendNodeId: button.backendNodeId });
-  const [x1, y1, , , x3, y3] = model.content;
-  await page.mouse.click((x1 + x3) / 2, (y1 + y3) / 2);
-}
-
-async function waitFor(what, fn, timeout = 10_000) {
-  const end = Date.now() + timeout;
-  let last;
-  while (Date.now() < end) {
-    try {
-      last = await fn();
-      if (last) return last;
-    } catch (error) {
-      last = error;
-    }
-    await new Promise((r) => setTimeout(r, 150));
-  }
-  throw new Error(`timed out waiting for ${what}: ${last instanceof Error ? last.message : last}`);
-}
 
 (async () => {
   const project = path.join(fs.realpathSync(tempDir('project')), 'chat-app');
@@ -155,15 +45,18 @@ async function waitFor(what, fn, timeout = 10_000) {
   );
 
   const { app, win } = await launchApp(appData);
-  await win.locator('.project-name').filter({ hasText: 'chat-app' }).waitFor();
+  await win.locator('.switcher-name').filter({ hasText: 'chat-app' }).waitFor();
+  const nav = (name) => win.getByRole('navigation', { name: 'Main' }).getByRole('button', { name });
 
   // First open: the app suggests commands from package.json; nothing runs until confirmed.
+  await nav('Settings').click();
   await win.getByRole('button', { name: 'Allow 3 commands' }).click();
   await win.getByLabel('Add an allowed command').fill('node check.js');
   await win.getByLabel('Add an allowed command').press('Enter');
   await win.locator('.patterns .mono').filter({ hasText: 'node check.js' }).waitFor();
   const allowed = await win.locator('.patterns .mono').allInnerTexts();
   step(`allowlist confirmed in the app: ${allowed.join(', ')}`);
+  await nav('Session').click();
   // Full auto's confirmation is a native dialog; answer "Turn on Full auto" for the test.
   await app.evaluate(({ dialog }) => {
     dialog.showMessageBox = async () => ({ response: 1, checkboxChecked: false });
@@ -300,8 +193,14 @@ async function waitFor(what, fn, timeout = 10_000) {
   step('READ card: ' + read.slice(0, 120));
   if (!read.includes('blocked · not found')) throw new Error('missing file not marked: ' + read);
   await clickInCard(chat, cdp, 'read-card', 0, 'Send these files');
-  const context = await composerText();
-  if (!context.includes('`@@CONTEXT pyproject.toml@@`')) throw new Error('context not inserted');
+  const context = await waitFor('context inserted', async () => {
+    const text = await composerText();
+    return text.includes('`@@CONTEXT pyproject.toml@@`') ? text : null;
+  }).catch(async (error) => {
+    console.error('read card:', await cardText(cdp, 'read-card', 0));
+    console.error('composer:', (await composerText()).slice(0, 300));
+    throw error;
+  });
   if (!context.includes('Bridge could not send: tests/test_client.py (not found)')) {
     throw new Error('refused file not listed: ' + context);
   }
@@ -324,10 +223,13 @@ async function waitFor(what, fn, timeout = 10_000) {
     (await cardText(cdp, 'diff-card', 3)).includes('modified')
   );
   write('src/greet.ts', 'export const greet = () => "edited locally";\n');
-  await clickInCard(chat, cdp, 'diff-card', 3, 'Apply');
-  await waitFor('conflict', async () => (await cardText(cdp, 'diff-card', 3)).includes('conflict'));
+  // The app's watcher reports the change; the card re-reads and flags it before any click.
+  await waitFor('conflict flagged', async () =>
+    (await cardText(cdp, 'diff-card', 3)).includes('conflict')
+  );
   step(
-    'conflict: ' + (await cardText(cdp, 'diff-card', 3)).match(/The file was updated[^.]*\./)?.[0]
+    'conflict flagged from the watcher: ' +
+      (await cardText(cdp, 'diff-card', 3)).match(/The file changed on disk[^.]*\./)?.[0]
   );
   if (shots) {
     const [host] = (await hosts(cdp, 'diff-card')).slice(3);
@@ -338,7 +240,7 @@ async function waitFor(what, fn, timeout = 10_000) {
   await waitFor('applied over the new base', () =>
     fs.readFileSync(file('src/greet.ts'), 'utf8').includes('Hello, ${name}')
   );
-  step('second Apply wrote over the updated file');
+  step('Apply wrote over the updated file, with the hash it re-read');
 
   // 4. Reload: the same messages come back with their saved states.
   await chat.reload();
@@ -415,6 +317,7 @@ async function waitFor(what, fn, timeout = 10_000) {
   step('Undo all removed both auto-applied files');
 
   // 7. Full auto: turned on in the app (confirmed), then a 2-step run to @@DONE@@.
+  await nav('Session').click();
   await win.getByRole('radio', { name: 'Full auto' }).click();
   await win.getByRole('radio', { name: 'Full auto', checked: true }).waitFor();
   step('Full auto on after the confirmation');
@@ -486,6 +389,7 @@ async function waitFor(what, fn, timeout = 10_000) {
       { text: '@@DONE@@' }
     ])
   );
+  await nav('Activity').click();
   await win.getByText('The chat said it’s done.').first().waitFor({ timeout: 10_000 });
   if ((await sends()).length !== sentBefore + 2) throw new Error('sent after @@DONE@@');
   const loopRows = await win.locator('.activity-group').first().innerText();
@@ -498,7 +402,9 @@ async function waitFor(what, fn, timeout = 10_000) {
     await chat.screenshot({ path: path.join(shots, 'full-auto.png'), fullPage: true });
     await panel.setViewportSize({ width: 360, height: 1100 });
     await panel.screenshot({ path: path.join(shots, 'panel-full-auto.png'), fullPage: true });
+    await nav('Activity').click();
     await win.screenshot({ path: path.join(shots, 'app.png'), fullPage: true });
+    await nav('Session').click();
   }
 
   // 8. End session: cards stay but are disabled, and the worker refuses chat writes.
@@ -507,6 +413,7 @@ async function waitFor(what, fn, timeout = 10_000) {
     (await cardText(cdp, 'diff-card', 0)).includes('Session ended')
   );
   step('End session disabled the cards');
+  await nav('Session').click();
   await win.getByRole('radio', { name: 'Manual', checked: true }).waitFor();
   step('End session turned Full auto back to Manual in the app');
 

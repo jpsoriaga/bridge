@@ -1,10 +1,15 @@
 import type { DiffCard } from './diff-card';
-import { h } from './dom';
+import { h, renderCard } from './dom';
 import { createHost } from './host';
 
-/** Cards Apply all takes: pending, readable, changed, and not suspected partial. */
+/**
+ * Cards Apply all takes: pending, readable, changed, and not suspected partial. When the
+ * reply edits a path more than once, only the last version counts.
+ */
 export function applyAllTargets(cards: readonly DiffCard[]): DiffCard[] {
-  return cards.filter((card) => card.applicable && !card.suspectedPartial);
+  return cards.filter(
+    (card) => card.applicable && !card.suspectedPartial && card.duplicate !== 'earlier'
+  );
 }
 
 /** Cards Undo all takes: applied ones, newest write first. */
@@ -84,7 +89,11 @@ export class MessageBar {
     if (undoCount >= 2 || this.running === 'undo') {
       const undo = h(
         'button',
-        { class: 'btn', attrs: { type: 'button' }, onClick: () => void this.undoAll() },
+        {
+          class: 'btn',
+          attrs: { type: 'button', 'data-focus': 'undo-all' },
+          onClick: () => void this.undoAll()
+        },
         this.running === 'undo' ? 'Undoing…' : `Undo all (${undoCount})`
       );
       undo.disabled = this.running !== null || undoCount < 1;
@@ -95,7 +104,7 @@ export class MessageBar {
         'button',
         {
           class: 'btn btn-primary',
-          attrs: { type: 'button' },
+          attrs: { type: 'button', 'data-focus': 'apply-all' },
           onClick: () => void this.applyAll()
         },
         this.running === 'apply' ? 'Applying…' : `Apply all (${applyCount})`
@@ -123,6 +132,6 @@ export class MessageBar {
         ...buttons
       )
     );
-    this.root.replaceChildren(...(style ? [style] : []), card);
+    renderCard(this.root, card);
   }
 }

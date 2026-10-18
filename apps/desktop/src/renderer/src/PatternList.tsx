@@ -40,11 +40,13 @@ export function PatternList({
 
   return (
     <div className="pattern-list">
-      <p className="label">{label}</p>
+      <h3 className="subsection-title">{label}</h3>
       <p className="hint">
         {hint} <span className="mono">{defaults.join('  ')}</span>
       </p>
-      {patterns.length > 0 && (
+      {patterns.length === 0 ? (
+        <p className="empty">None added.</p>
+      ) : (
         <ul className="patterns">
           {patterns.map((pattern) => (
             <li key={pattern}>
@@ -52,6 +54,7 @@ export function PatternList({
               <button
                 type="button"
                 className="btn"
+                aria-label={`Remove ${pattern}`}
                 onClick={() => void apply(patterns.filter((p) => p !== pattern))}
               >
                 Remove
