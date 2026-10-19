@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "@fastify/websocket": "^11.3.4",
-    "chokidar": "^4.0.3",
+    "chokidar": "^5.0.0",
     "cross-spawn": "^7.0.6",
     "electron-updater": "^6.8.10",
     "fastify": "^5.12.7",
