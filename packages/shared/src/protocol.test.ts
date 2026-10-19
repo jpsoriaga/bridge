@@ -5,12 +5,17 @@ import {
   ClientMessage,
   clientMessage,
   DEFAULT_PORT,
+  E2E_PORT,
   HealthResponse,
+  helloProtocol,
+  mismatchReason,
   PairFailure,
   PairRequest,
   PairSuccess,
   parseMessage,
+  parseMismatchReason,
   PORT_RANGE,
+  protocolAdvice,
   proofInput,
   PROTOCOL_VERSION,
   ServerMessage,
@@ -328,5 +333,47 @@ describe('candidatePorts', () => {
     expect(ports[0]).toBe(DEFAULT_PORT);
     expect(ports).toHaveLength(PORT_RANGE);
     expect(ports.at(-1)).toBe(DEFAULT_PORT + PORT_RANGE - 1);
+  });
+});
+
+describe('candidatePorts for the e2e scripts', () => {
+  it('is a separate range of the same size', () => {
+    const e2e = candidatePorts(E2E_PORT);
+    expect(e2e).toHaveLength(PORT_RANGE);
+    expect(e2e.some((port) => candidatePorts().includes(port))).toBe(false);
+  });
+});
+
+describe('protocol version handshake', () => {
+  it('names the older side', () => {
+    expect(protocolAdvice(5, 5)).toBeNull();
+    expect(protocolAdvice(4, 5)).toBe('update-app');
+    expect(protocolAdvice(6, 5)).toBe('update-extension');
+  });
+
+  it('reads the version of any hello, and nothing else', () => {
+    const hello = (v: unknown, extra = {}) =>
+      JSON.stringify({ v, id: 'h', type: 'hello', payload: { nonce }, ...extra });
+    expect(helloProtocol(hello(PROTOCOL_VERSION))).toBe(PROTOCOL_VERSION);
+    expect(helloProtocol(hello(PROTOCOL_VERSION + 3, { more: true }))).toBe(PROTOCOL_VERSION + 3);
+    for (const raw of [hello('5'), hello(0), hello(1.5), '{', 'null', '[]']) {
+      expect(helloProtocol(raw)).toBeNull();
+    }
+    expect(helloProtocol(JSON.stringify({ v: 6, id: 'p', type: 'ping', payload: {} }))).toBeNull();
+  });
+
+  it('round-trips the close reason', () => {
+    expect(parseMismatchReason(mismatchReason(7))).toBe(7);
+    for (const bad of ['', 'protocol', 'protocol x', 'protocol 1234567', ' protocol 5']) {
+      expect(parseMismatchReason(bad)).toBeNull();
+    }
+  });
+
+  it('reads any build’s /health: protocol optional, newer fields ignored', () => {
+    expect(HealthResponse.safeParse({ name: 'bridge', version: '0.1.0' }).success).toBe(true);
+    expect(
+      HealthResponse.parse({ name: 'bridge', version: '2.0.0', protocol: 9, features: [] }).protocol
+    ).toBe(9);
+    expect(HealthResponse.safeParse({ name: 'other', version: '1' }).success).toBe(false);
   });
 });

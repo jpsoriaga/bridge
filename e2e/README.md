@@ -12,6 +12,8 @@ npx --prefix e2e playwright-core install chromium
 
 Set `CHROMIUM_PATH` to use a different Chromium binary. Each run uses fresh temp directories for the app's userData and the Chrome profile, so it never touches your real pairing.
 
+The scripts run alongside `pnpm dev` without meeting it: they launch the app with `BRIDGE_E2E=1`, which makes a dev (unpackaged) build listen on 47921–47930 (`E2E_PORT` in `packages/shared/src/ports.ts`), and build their own copy of the extension for that range into a temp folder (`buildExtension` in `lib.cjs`). The extension in `apps/extension/dist` and packaged apps always use 47821–47830.
+
 If your shell sets `ELECTRON_RUN_AS_NODE=1`, the scripts unset it for the app they launch.
 
 ## Scripts
@@ -32,7 +34,7 @@ If your shell sets `ELECTRON_RUN_AS_NODE=1`, the scripts unset it for the app th
 
 The argument is the repo root. Each script prints one line per step and ends with `E2E OK` or exits non-zero.
 
-Ports 47821–47830 must be free of other Bridge instances while a script runs.
+Ports 47921–47930 must be free while a script runs (only another e2e run uses them).
 
 ## Manual check on the real chatgpt.com
 

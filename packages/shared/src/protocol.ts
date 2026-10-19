@@ -21,13 +21,7 @@ import { MODES } from './types';
 /** Bumped when a message shape changes incompatibly. Both sides reject other versions. */
 export const PROTOCOL_VERSION = 5;
 
-/** The desktop listens on the first free port in `DEFAULT_PORT .. DEFAULT_PORT + PORT_RANGE - 1`. */
-export const DEFAULT_PORT = 47821;
-export const PORT_RANGE = 10;
-
-export function candidatePorts(): number[] {
-  return Array.from({ length: PORT_RANGE }, (_, i) => DEFAULT_PORT + i);
-}
+export { candidatePorts, DEFAULT_PORT, E2E_PORT, PORT_RANGE } from './ports';
 
 /**
  * The extension's ID, fixed by the `key` in apps/extension/manifest.config.ts.
@@ -91,11 +85,55 @@ export function formatFingerprint(hashHex: string): string {
 
 // HTTP
 
-export const HealthResponse = z.strictObject({
+/**
+ * `GET /health`. The one message meant to outlive protocol changes: any build of either side
+ * must be able to read any other's, so it's a loose object (newer fields are ignored) and
+ * `protocol` is optional (apps from before 1.0 don't send it). See `protocolAdvice`.
+ */
+export const HealthResponse = z.looseObject({
   name: z.literal('bridge'),
-  version: z.string().max(32)
+  version: z.string().max(32),
+  protocol: z.number().int().positive().max(10_000).optional()
 });
 export type HealthResponse = z.infer<typeof HealthResponse>;
+
+/** What a protocol mismatch asks the user to do, or null when both sides speak the same one. */
+export type ProtocolAdvice = 'update-app' | 'update-extension';
+
+/** Whichever side speaks the older protocol is the one to update. */
+export function protocolAdvice(app: number, extension: number): ProtocolAdvice | null {
+  if (app === extension) return null;
+  return app < extension ? 'update-app' : 'update-extension';
+}
+
+/**
+ * The protocol version of a raw `hello`, whatever version it is, or null if `raw` isn't one.
+ * The app reads it before the strict schema (which accepts only its own version), so it can
+ * tell an extension that speaks another protocol from a broken one.
+ */
+export function helloProtocol(raw: string): number | null {
+  let data: unknown;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  const hello = z
+    .looseObject({ v: z.number().int().positive().max(10_000), type: z.literal('hello') })
+    .safeParse(data);
+  return hello.success ? hello.data.v : null;
+}
+
+/** Close reason sent with `CloseCode.protocolMismatch`: the app's protocol, e.g. `protocol 5`. */
+export function mismatchReason(protocol: number): string {
+  return `protocol ${protocol}`;
+}
+
+/** The app's protocol from a `protocolMismatch` close reason, or null. */
+export function parseMismatchReason(reason: string): number | null {
+  const match = /^protocol (\d{1,5})$/.exec(reason);
+  return match ? Number(match[1]) : null;
+}
 
 /** Step 1 of pairing: the code, and the extension's one-time ECDH public key. */
 export const PairRequest = z.strictObject({ code: PairingCode, publicKey: PublicKey });
@@ -374,5 +412,11 @@ export const CloseCode = {
   unauthorized: 4001,
   protocolError: 4002,
   idle: 4003,
-  rateLimited: 4008
+  rateLimited: 4008,
+  /**
+   * The extension's `hello` spoke another protocol version. The reason carries the app's
+   * (`mismatchReason`), so either side can say which one to update. Never changes: builds
+   * of any version must understand it.
+   */
+  protocolMismatch: 4009
 } as const;

@@ -57,6 +57,10 @@ export default defineConfig({
         }
       },
       {
+        // Release tooling (one version everywhere).
+        test: { name: 'scripts', root: 'scripts', include: ['**/*.test.mjs'], environment: 'node' }
+      },
+      {
         test: {
           name: 'extension',
           root: 'apps/extension',

@@ -206,10 +206,10 @@ describe('host check', () => {
 });
 
 describe('GET /health', () => {
-  it('returns only the name and version, with no CORS headers', async () => {
+  it('returns only the name, version and protocol, with no CORS headers', async () => {
     const res = await server.app.inject({ method: 'GET', url: '/health', headers: { host } });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ name: 'bridge', version: '9.9.9' });
+    expect(res.json()).toEqual({ name: 'bridge', version: '9.9.9', protocol: PROTOCOL_VERSION });
     expect(Object.keys(res.headers).filter((h) => h.startsWith('access-control-'))).toEqual([]);
   });
 
@@ -485,6 +485,48 @@ describe('POST /unpair', () => {
     expect(await unpairWith(key)).toBe(204);
     expect((await client.closed).code).toBe(CloseCode.unauthorized);
     expect(pairing.isPaired).toBe(false);
+  });
+});
+
+describe('protocol version handshake', () => {
+  it.each([
+    [PROTOCOL_VERSION - 1, 'update-extension'],
+    [PROTOCOL_VERSION + 1, 'update-app']
+  ] as const)(
+    'closes a hello in protocol %i with protocolMismatch and says %s',
+    async (v, advice) => {
+      const changes = vi.fn();
+      await server.close();
+      server = createBridgeServer({ pairing, version: '9.9.9', onChange: changes });
+      port = await server.listen([0]);
+      host = `127.0.0.1:${port}`;
+
+      const client = await connect();
+      // An older or newer hello may carry fields this version doesn't know.
+      client.sendJson({ v, id: 'h1', type: 'hello', payload: { nonce: nonce(), extra: 1 } });
+      expect(await client.closed).toEqual({
+        code: CloseCode.protocolMismatch,
+        reason: `protocol ${PROTOCOL_VERSION}`
+      });
+      // Nothing was sent first: a message in this version's shape wouldn't parse there.
+      expect(client.messages).toEqual([]);
+      expect(server.protocolAdvice).toBe(advice);
+      expect(changes).toHaveBeenCalled();
+
+      // A hello in this protocol clears it, paired or not.
+      const next = await connect();
+      next.sendJson(hello(nonce()));
+      expect(await next.next()).toMatchObject({ payload: { reason: 'not_paired' } });
+      expect(server.protocolAdvice).toBeNull();
+    }
+  );
+
+  it('treats anything that is not a hello as before', async () => {
+    const client = await connect();
+    client.sendJson({ v: PROTOCOL_VERSION + 1, id: 'p1', type: 'ping', payload: {} });
+    expect(await client.next()).toMatchObject({ payload: { reason: 'expected_hello' } });
+    expect((await client.closed).code).toBe(CloseCode.protocolError);
+    expect(server.protocolAdvice).toBeNull();
   });
 });
 

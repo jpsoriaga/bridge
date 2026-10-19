@@ -1,6 +1,7 @@
 import {
   buildContextMessage,
   buildSessionPrompt,
+  candidatePorts,
   FILE_ERROR_LABELS,
   formatContextBlock,
   summarizeTree,
@@ -78,7 +79,8 @@ const connection = new Connection({
   fetch: (input, init) => fetch(input, init),
   createSocket: (url) => new WebSocket(url),
   randomId: () => crypto.randomUUID(),
-  alarm
+  alarm,
+  ports: candidatePorts(__BRIDGE_PORT_BASE__)
 });
 
 const cards = new CardStore(chromeArea(chrome.storage.local));

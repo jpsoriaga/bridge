@@ -5,6 +5,8 @@ import {
   FILE_RESULTS,
   HealthResponse,
   PairFailure,
+  parseMismatchReason,
+  protocolAdvice,
   PairSuccess,
   pairTranscript,
   parseMessage,
@@ -17,6 +19,7 @@ import {
   type FileRequestType,
   type FileResult,
   type ProjectInfo,
+  type ProtocolAdvice,
   type RunResult
 } from '@bridge/shared';
 import type { PairConfirmResult, PairResult, RequestOutcome } from '../messages';
@@ -58,6 +61,8 @@ export interface ConnectionDeps {
   randomId: () => string;
   alarm: ReconnectAlarm;
   now?: () => number;
+  /** Ports the app may listen on, in order. `candidatePorts()` unless built for the e2e scripts. */
+  ports?: readonly number[];
 }
 
 /** Events the desktop pushes about the running command, and its Stop for the loop. */
@@ -77,8 +82,15 @@ type Handshake =
   | { kind: 'impostor' }
   /** The server proved itself, then refused our proof: our key is no longer valid. */
   | { kind: 'revoked' }
+  /** The app speaks another protocol version (close 4009): one side needs updating. */
+  | { kind: 'mismatch'; advice: ProtocolAdvice }
   /** Closed, timed out or unpaired before proving anything. */
   | { kind: 'refused' };
+
+/** Which side to update, from an app's /health, or null if it speaks our protocol (or doesn't say). */
+function healthAdvice(health: HealthResponse): ProtocolAdvice | null {
+  return health.protocol === undefined ? null : protocolAdvice(health.protocol, PROTOCOL_VERSION);
+}
 
 const base = (port: number) => `127.0.0.1:${port}`;
 
@@ -92,6 +104,7 @@ export class Connection {
   private readonly listeners = new Set<(status: ConnectionStatus) => void>();
   private readonly reconnector = new Reconnector(() => void this.connect());
   private readonly now: () => number;
+  private readonly ports: readonly number[];
   /** Ports whose server failed the challenge. Cleared by an explicit retry or pairing. */
   private readonly impostors = new Set<number>();
   private socket: WebSocket | null = null;
@@ -121,6 +134,7 @@ export class Connection {
 
   constructor(private readonly deps: ConnectionDeps) {
     this.now = deps.now ?? Date.now;
+    this.ports = deps.ports ?? candidatePorts();
   }
 
   get current(): ConnectionStatus {
@@ -267,10 +281,17 @@ export class Connection {
     this.pendingPair = null;
     // Nothing can prove itself before pairing, so this takes the first Bridge that answers.
     // The fingerprint is what catches anything else listening there.
-    const port = await this.findApp();
-    if (port === null) {
+    const found = await this.findApp();
+    if (found === null) {
       this.setStatus('app-not-running');
       return { ok: false, error: 'app-not-running' };
+    }
+    const { port } = found;
+    const advice = healthAdvice(found.health);
+    if (advice) {
+      this.announce(port);
+      this.setStatus(advice);
+      return { ok: false, error: advice };
     }
 
     const own = await pairingKeyPair();
@@ -413,9 +434,15 @@ export class Connection {
 
     if (!key) {
       // Still look for the app, so the panel can say whether to open it before pairing.
-      const port = await this.findApp();
-      if (port === null) {
+      const found = await this.findApp();
+      const advice = found && healthAdvice(found.health);
+      if (found === null) {
         this.setStatus('app-not-running');
+        this.reconnector.schedule();
+      } else if (advice) {
+        // Tell the app too, so it can say which side to update. Then wait for an update.
+        this.announce(found.port);
+        this.setStatus(advice);
         this.reconnector.schedule();
       } else {
         // Nothing to connect with. Pairing calls retry() once it has a key.
@@ -425,6 +452,7 @@ export class Connection {
     }
 
     let sawApp = false;
+    let mismatch: ProtocolAdvice | null = null;
     const tryPort = async (port: number): Promise<boolean> => {
       if (this.impostors.has(port)) return false;
       if (!(await this.probe(port))) return false;
@@ -445,6 +473,9 @@ export class Connection {
         case 'impostor':
           this.impostors.add(port);
           return false;
+        case 'mismatch':
+          mismatch = result.advice;
+          return false;
         case 'refused':
           return false;
       }
@@ -453,33 +484,49 @@ export class Connection {
     // The pinned port first. Only if it fails, the rest of the range, in order.
     const pinned = await this.deps.storage.getPort();
     if (pinned !== null && (await tryPort(pinned))) return;
-    for (const port of candidatePorts()) {
+    for (const port of this.ports) {
       if (port !== pinned && (await tryPort(port))) return;
     }
 
     if (generation !== this.generation) return;
-    // A Bridge answered /health but none passed the challenge (or it isn't paired).
-    this.setStatus(sawApp ? 'error' : 'app-not-running');
+    // A Bridge answered /health but none passed the challenge (or it isn't paired). Keeps
+    // trying, so it connects once the out-of-date side is updated.
+    this.setStatus(mismatch ?? (sawApp ? 'error' : 'app-not-running'));
     this.reconnector.schedule();
   }
 
   /** First port in the range whose /health answers as Bridge, pinned port first. */
-  private async findApp(): Promise<number | null> {
+  private async findApp(): Promise<{ port: number; health: HealthResponse } | null> {
     const saved = await this.deps.storage.getPort();
-    const ports = [...new Set([...(saved === null ? [] : [saved]), ...candidatePorts()])];
+    const ports = [...new Set([...(saved === null ? [] : [saved]), ...this.ports])];
     const results = await Promise.all(ports.map((port) => this.probe(port)));
-    return ports.find((_, i) => results[i]) ?? null;
+    const index = results.findIndex((health) => health !== null);
+    return index === -1 ? null : { port: ports[index]!, health: results[index]! };
   }
 
-  private async probe(port: number): Promise<boolean> {
+  private async probe(port: number): Promise<HealthResponse | null> {
     try {
       const response = await this.deps.fetch(`http://${base(port)}/health`, {
         signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS)
       });
-      return response.ok && HealthResponse.safeParse(await response.json()).success;
+      if (!response.ok) return null;
+      const health = HealthResponse.safeParse(await response.json());
+      return health.success ? health.data : null;
     } catch {
-      return false;
+      return null;
     }
+  }
+
+  /**
+   * Says hello to an app that speaks another protocol, only so that it closes with
+   * `protocolMismatch` and shows which side to update. Nothing else is sent.
+   */
+  private announce(port: number): void {
+    const socket = this.deps.createSocket(`ws://${base(port)}/ws`);
+    const timer = setTimeout(() => socket.close(1000, 'done'), HANDSHAKE_TIMEOUT_MS);
+    socket.onopen = () =>
+      this.send(socket, clientMessage(this.deps.randomId(), 'hello', { nonce: randomNonce() }));
+    socket.onclose = () => clearTimeout(timer);
   }
 
   /**
@@ -531,6 +578,14 @@ export class Connection {
       };
 
       socket.onclose = (event: CloseEvent) => {
+        if (event.code === CloseCode.protocolMismatch) {
+          const app = parseMismatchReason(event.reason);
+          const advice = app === null ? null : protocolAdvice(app, PROTOCOL_VERSION);
+          if (advice) {
+            finish({ kind: 'mismatch', advice });
+            return;
+          }
+        }
         // Only a server that proved it holds our key can tell us the key is dead.
         const revoked = serverVerified && event.code === CloseCode.unauthorized;
         finish({ kind: revoked ? 'revoked' : 'refused' });

@@ -310,6 +310,14 @@ Open points:
 - Fuses are verified on a synthetic binary and read from the dev Electron; they get applied for real in Phase 8's packaging, where `verify:fuses` should run on the built app.
 - Redaction patterns are a list of known shapes plus an entropy rule; new credential formats need adding to `redact.ts`.
 
+## Phase 8 decisions
+
+### Step 0: prep
+
+- **One version.** The root, `apps/desktop`, `apps/extension` (whose manifest reads its `package.json`) and `@bridge/shared` carry the same `MAJOR.MINOR.PATCH`. `pnpm version:set 1.2.0` writes it into all four (`scripts/version.mjs`); `pnpm version:check v1.2.0` fails if they differ or don't match the tag. No pre-release suffixes: Chrome refuses them in a manifest.
+- **Version handshake.** `GET /health` returns `{ name, version, protocol }`, and its schema is the one loose object in the protocol (`protocol` optional, unknown fields ignored), so any build can read any other's. Before the strict schema, the server reads the `v` of a `hello` (`helloProtocol`); if it isn't its own, it closes with **4009** and the reason `protocol <N>` instead of answering in a shape the other side can't parse, and remembers the extension's version until a hello in its own protocol arrives. The extension checks `/health` before pairing and maps a 4009 close; when the app speaks another protocol it still says hello once so the app learns too. Whichever side is older is the one to update (`protocolAdvice`): the status becomes `update-app` or `update-extension` ("Update the Bridge app" / "Update the extension") in both UIs, and the extension keeps retrying with backoff so it connects as soon as the update lands. 4009, the reason format and `/health` must never change.
+- **e2e isolation.** A dev (unpackaged) app launched with `BRIDGE_E2E=1` listens on `E2E_PORT` (47921–47930) instead of 47821–47830, and `e2e/lib.cjs` builds the extension with `BRIDGE_E2E=1` (`__BRIDGE_PORT_BASE__`) into a temp folder, so the scripts never meet a running `pnpm dev`. Packaged apps ignore the variable. Each run already had its own userData (and so its own single-instance lock).
+
 ## Modes
 
 | Mode           | Edits                                                                                                  | Commands                                                                       | Sending                                 |

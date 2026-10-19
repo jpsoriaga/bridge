@@ -1,9 +1,8 @@
 // Phase 3: project folder, sandboxed tree/read/write, backups and undo, over the real socket.
 // Uses a dev build of the extension, since the side panel's file test path exists only there.
-const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
-const { ROOT, tempDir, launchApp, launchChrome, enterCode } = require('./lib.cjs');
+const { tempDir, buildExtension, launchApp, launchChrome, enterCode } = require('./lib.cjs');
 
 const step = (m) => console.log('•', m);
 const SHOTS = process.env.E2E_SCREENSHOTS;
@@ -27,23 +26,7 @@ const SHOTS = process.env.E2E_SCREENSHOTS;
     JSON.stringify({ project, recentProjects: [project], denyPatterns: [] })
   );
 
-  const extDir = tempDir('ext-dev');
-  execFileSync(
-    'pnpm',
-    [
-      '--filter',
-      '@bridge/extension',
-      'exec',
-      'vite',
-      'build',
-      '--mode',
-      'development',
-      '--outDir',
-      extDir,
-      '--emptyOutDir'
-    ],
-    { cwd: ROOT, stdio: 'ignore' }
-  );
+  const extDir = buildExtension({ dev: true });
 
   const { app, win } = await launchApp(appData);
   await win.locator('.switcher-name').filter({ hasText: 'demo-app' }).waitFor();

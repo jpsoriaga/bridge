@@ -18,6 +18,8 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
   candidatePorts,
+  DEFAULT_PORT,
+  E2E_PORT,
   formatArgv,
   MAX_RUN_TIMEOUT_MS,
   MAX_STEP_LIMIT,
@@ -138,11 +140,8 @@ function desktopState(): DesktopState {
   return {
     status: serverFailed
       ? 'error'
-      : !pairing.isPaired
-        ? 'not-paired'
-        : server.connected
-          ? 'connected'
-          : 'connecting',
+      : (server.protocolAdvice ??
+        (!pairing.isPaired ? 'not-paired' : server.connected ? 'connected' : 'connecting')),
     paired: pairing.isPaired,
     port: server.port,
     pairing: pairing.state,
@@ -697,7 +696,9 @@ async function startServer(): Promise<void> {
     }
   });
   try {
-    const port = await server.listen(candidatePorts());
+    // The e2e scripts run a dev build on their own range, clear of a `pnpm dev` app.
+    const e2e = !app.isPackaged && process.env.BRIDGE_E2E === '1';
+    const port = await server.listen(candidatePorts(e2e ? E2E_PORT : DEFAULT_PORT));
     settings.update({ port });
   } catch {
     serverFailed = true;

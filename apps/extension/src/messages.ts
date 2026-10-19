@@ -20,6 +20,7 @@ import {
   CONNECTION_STATUSES,
   ProjectInfo,
   type ConnectionStatus,
+  type ProtocolAdvice,
   type FileErrorCode,
   type FileOutcome
 } from '@bridge/shared';
@@ -336,7 +337,7 @@ export interface ChatSyncReply {
 
 export type PairResult =
   | { ok: true; fingerprint: string }
-  | { ok: false; error: 'app-not-running' | 'invalid_code' | 'failed' }
+  | { ok: false; error: 'app-not-running' | 'invalid_code' | 'failed' | ProtocolAdvice }
   | { ok: false; error: 'locked'; retryAfterMs: number };
 
 /** After the user confirmed the fingerprint in the side panel. */

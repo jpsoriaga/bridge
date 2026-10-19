@@ -4,6 +4,7 @@ import type { ActivityEntry, DesktopState, OpenFolderResult } from '../../preloa
 import { RunningCommand } from './Commands';
 import { EntryMark, EntryMeta, resultOf } from './EntryMark';
 import { describeEntry, OPEN_ERRORS } from './errors';
+import { UpdateNotice } from './Header';
 import { formatCountdown, formatTime, useNow } from './hooks';
 import { LoopStatus } from './Loop';
 import { Onboarding, type Step } from './Onboarding';
@@ -193,6 +194,7 @@ export function ExtensionSection({ state }: { state: DesktopState }) {
           </div>
         </>
       )}
+      <UpdateNotice status={state.status} />
       {state.status === 'error' && (
         <p className="error-text" role="alert">
           Bridge couldn’t start its local server. Quit whatever is using ports 47821–47830, then

@@ -1,7 +1,7 @@
 import { useState, type KeyboardEvent, type ReactNode } from 'react';
 import type { DesktopState, Theme } from '../../preload/api';
 import { AllowlistEditor, FullAutoFields, PathOverride, TimeoutField } from './Commands';
-import { STATUS_LABELS } from './Header';
+import { STATUS_LABELS, UpdateNotice } from './Header';
 import { PatternList } from './PatternList';
 
 export const SETTINGS_SECTIONS = [
@@ -40,8 +40,13 @@ function ConnectionSettings({ state }: { state: DesktopState }) {
         <dt>Local server</dt>
         <dd className="mono">{state.port ? `127.0.0.1:${state.port}` : 'Not running'}</dd>
         <dt>Extension</dt>
-        <dd>{state.paired ? STATUS_LABELS[state.status] : 'Not paired'}</dd>
+        <dd>
+          {state.paired || state.status.startsWith('update-')
+            ? STATUS_LABELS[state.status]
+            : 'Not paired'}
+        </dd>
       </dl>
+      <UpdateNotice status={state.status} />
       <p className="hint">
         Bridge listens only on this computer, for the paired Bridge extension. Nothing is sent
         anywhere else.

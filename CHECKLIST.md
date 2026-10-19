@@ -286,6 +286,13 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 
 ## Phase 8: Packaging and release
 
+### Step 0: prep
+
+- [x] electron-builder upgraded to 26.17.0 (newest stable 26.x)
+- [x] One version everywhere: `pnpm version:set X.Y.Z` / `pnpm version:check [tag]` (`scripts/version.mjs`, tested)
+- [x] Version handshake: `/health` reports `protocol`; a hello in another protocol is closed with 4009 `protocol N`; both sides show "Update the Bridge app" or "Update the extension" (tests in shared, server, connection, renderer)
+- [x] e2e scripts on their own port range (47921–47930, `BRIDGE_E2E=1`) and temp userData, with their own extension build
+
 - [ ] electron-builder packages for macOS (dmg, zip) and Windows (nsis)
 - [ ] Extension zip for "Load unpacked" or store upload
 - [ ] README and docs pass. Remove placeholder copy

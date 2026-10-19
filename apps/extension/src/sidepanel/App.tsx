@@ -39,8 +39,18 @@ const STATUS_LABELS: Record<ConnectionStatus, string> = {
   'not-paired': 'Not paired',
   connecting: 'Connecting…',
   connected: 'Connected',
-  error: "Can't reach Bridge"
+  error: "Can't reach Bridge",
+  'update-app': 'Update the Bridge app',
+  'update-extension': 'Update the extension'
 };
+
+/** What to do when the app and the extension speak different protocol versions. */
+const UPDATE_HINTS = {
+  'update-app':
+    'The Bridge app on this computer is older than this extension, so they can’t connect. Install the latest Bridge app, then try again.',
+  'update-extension':
+    'This extension is older than the Bridge app, so they can’t connect. Update the extension (or reload it on chrome://extensions), then try again.'
+} as const;
 
 function useWorker(): { update: StatusUpdate | null; live: LiveRun | null } {
   const [update, setUpdate] = useState<StatusUpdate | null>(null);
@@ -90,6 +100,9 @@ function pairError(result: Exclude<PairResult, { ok: true }>): string {
       return 'The Bridge app isn’t running. Open it and try again.';
     case 'failed':
       return 'Pairing failed. Try again.';
+    case 'update-app':
+    case 'update-extension':
+      return UPDATE_HINTS[result.error];
   }
 }
 
@@ -324,6 +337,25 @@ function Body({
           <p className="label">Connection</p>
           <p className="value">Connecting to the Bridge app…</p>
           <p className="hint">This takes a second or two. Keep the Bridge app open.</p>
+        </section>
+      );
+    case 'update-app':
+    case 'update-extension':
+      return (
+        <section>
+          <p className="label">Connection</p>
+          <p className="value">{STATUS_LABELS[status]}</p>
+          <p className="hint">{UPDATE_HINTS[status]}</p>
+          <div className="actions">
+            <button
+              type="button"
+              className="btn"
+              disabled={busy}
+              onClick={() => act({ type: 'retry' })}
+            >
+              Try again
+            </button>
+          </div>
         </section>
       );
     case 'app-not-running':

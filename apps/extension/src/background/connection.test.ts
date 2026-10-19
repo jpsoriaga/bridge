@@ -8,6 +8,7 @@ import {
   PAIR_KEY_LABEL,
   pairTranscript,
   proofInput,
+  PROTOCOL_VERSION,
   serverMessage,
   type BridgeConfig,
   type ConnectionStatus
@@ -47,6 +48,8 @@ interface FakeServer {
   lastChallenge?: { proof: string; serverNonce: string };
   /** Sent in the same tick as auth_ok, before the client can adopt the socket. */
   afterAuth?: unknown[];
+  /** The protocol its /health reports and its hello expects. Unset: ours, not in /health. */
+  protocol?: number;
   /** Answers file requests. Return undefined to never answer. */
   respond?: (message: { id: string; type: string; payload: Record<string, string> }) => unknown;
 }
@@ -61,11 +64,11 @@ const portOf = (url: string) => Number(new URL(url).port);
 /** A browser WebSocket whose far end plays `servers.get(port)`. */
 class FakeSocket {
   readyState = 0;
-  sent: { id: string; type: string; payload: Record<string, string> }[] = [];
+  sent: { v: number; id: string; type: string; payload: Record<string, string> }[] = [];
   raw: string[] = [];
   onopen: (() => void) | null = null;
   onmessage: ((event: { data: unknown }) => void) | null = null;
-  onclose: ((event: { code: number }) => void) | null = null;
+  onclose: ((event: { code: number; reason: string }) => void) | null = null;
   readonly port: number;
   private serverNonce = '';
 
@@ -83,7 +86,10 @@ class FakeSocket {
     const message = JSON.parse(data) as FakeSocket['sent'][number];
     this.sent.push(message);
     if (message.type === 'hello') {
-      const { key } = this.server;
+      const { key, protocol = PROTOCOL_VERSION } = this.server;
+      if (message.v !== protocol) {
+        return this.later(() => this.close(CloseCode.protocolMismatch, `protocol ${protocol}`));
+      }
       if (key === null) return this.later(() => this.close(CloseCode.unauthorized));
       this.serverNonce = randomBytes(32).toString('hex');
       const challenge = this.server.replay ?? {
@@ -108,10 +114,10 @@ class FakeSocket {
     }
   }
 
-  close(code = 1005) {
+  close(code = 1005, reason = '') {
     if (this.readyState === 3) return;
     this.readyState = 3;
-    this.onclose?.({ code });
+    this.onclose?.({ code, reason });
   }
 
   receive(message: unknown) {
@@ -203,7 +209,11 @@ const fakeFetch = vi.fn(async (input: string | URL | Request, init?: RequestInit
   const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, string>) : {};
   switch (url.pathname) {
     case '/health':
-      return Response.json({ name: 'bridge', version: '0.1.0' });
+      return Response.json({
+        name: 'bridge',
+        version: '0.1.0',
+        ...(server.protocol === undefined ? {} : { protocol: server.protocol })
+      });
     case '/pair':
       return fakePair(Number(url.port), body);
     case '/pair/confirm':
@@ -268,6 +278,66 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+});
+
+describe('protocol version handshake', () => {
+  it.each([
+    [PROTOCOL_VERSION + 1, 'update-extension'],
+    [PROTOCOL_VERSION - 1, 'update-app']
+  ] as const)('an app on protocol %i: %s, and it keeps trying', async (protocol, advice) => {
+    servers.set(DEFAULT_PORT, { key: KEY, protocol });
+    const { connection, storage } = makeConnection();
+    await connection.connect();
+    await settle();
+    expect(connection.current).toBe(advice);
+    // The key is kept: nothing proved it wrong.
+    expect(storage.key).toBe(KEY);
+    // The app was told too: one hello, closed with protocolMismatch.
+    expect(sockets[0]!.sent.map((m) => m.type)).toEqual(['hello']);
+
+    // The app is updated: the next attempt connects.
+    servers.get(DEFAULT_PORT)!.protocol = PROTOCOL_VERSION;
+    await advance(1_000);
+    expect(connection.current).toBe('connected');
+  });
+
+  it('says which side to update when the app closes with protocolMismatch', async () => {
+    // An app that doesn't put its protocol in /health still closes with it.
+    servers.set(DEFAULT_PORT, { key: KEY });
+    const { connection } = makeConnection();
+    const real = FakeSocket.prototype.send;
+    vi.spyOn(FakeSocket.prototype, 'send').mockImplementation(function (this: FakeSocket, data) {
+      const message = JSON.parse(data) as { type: string };
+      if (message.type !== 'hello') return real.call(this, data);
+      queueMicrotask(() =>
+        this.close(CloseCode.protocolMismatch, `protocol ${PROTOCOL_VERSION + 2}`)
+      );
+    });
+    await connection.connect();
+    await settle();
+    expect(connection.current).toBe('update-extension');
+    vi.restoreAllMocks();
+  });
+
+  it('refuses to pair with an app on another protocol, and tells it', async () => {
+    servers.set(DEFAULT_PORT, { key: null, protocol: PROTOCOL_VERSION + 1 });
+    const { connection } = makeConnection(memoryStorage(null));
+    await connection.connect();
+    await settle();
+    expect(connection.current).toBe('update-extension');
+    expect(sockets.at(-1)!.sent.map((m) => m.type)).toEqual(['hello']);
+
+    expect(await connection.pair('123456')).toEqual({ ok: false, error: 'update-extension' });
+    expect(fakeFetch.mock.calls.some(([u]) => String(u).endsWith('/pair'))).toBe(false);
+    expect(exchange).toBeNull();
+  });
+
+  it('ignores an app that reports no protocol (before 1.0)', async () => {
+    servers.set(DEFAULT_PORT, { key: KEY });
+    const { connection } = makeConnection();
+    await connection.connect();
+    expect(connection.current).toBe('connected');
+  });
 });
 
 describe('handshake', () => {

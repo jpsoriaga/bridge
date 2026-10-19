@@ -225,13 +225,17 @@ An 8px dot followed by 12px `--fg-muted` text, with no background or border. The
 
 States come from `ConnectionStatus` in `@bridge/shared`, and tones from `CONNECTION_STATUS_TONES`. Each app sets its own labels:
 
-| `ConnectionStatus` | Dot         | Side panel text      | Desktop text            |
-| ------------------ | ----------- | -------------------- | ----------------------- |
-| `connected`        | `success`   | "Connected"          | "Connected"             |
-| `connecting`       | `warning`   | "Connecting…"        | "Waiting for extension" |
-| `not-paired`       | none (idle) | "Not paired"         | "Not paired"            |
-| `app-not-running`  | none (idle) | "App not running"    | (not used)              |
-| `error`            | `danger`    | "Can't reach Bridge" | "Server error"          |
+| `ConnectionStatus` | Dot         | Side panel text         | Desktop text            |
+| ------------------ | ----------- | ----------------------- | ----------------------- |
+| `connected`        | `success`   | "Connected"             | "Connected"             |
+| `connecting`       | `warning`   | "Connecting…"           | "Waiting for extension" |
+| `not-paired`       | none (idle) | "Not paired"            | "Not paired"            |
+| `app-not-running`  | none (idle) | "App not running"       | (not used)              |
+| `error`            | `danger`    | "Can't reach Bridge"    | "Server error"          |
+| `update-app`       | `warning`   | "Update the Bridge app" | "Update the Bridge app" |
+| `update-extension` | `warning`   | "Update the extension"  | "Update the extension"  |
+
+In the two `update-*` states (the app and the extension speak different protocol versions), the side panel's Connection section says which side to update with **Try again**, and the app shows a `.notice` on the Session and Settings pages.
 
 ### Text input (`.input`)
 

@@ -8,11 +8,15 @@ import {
   ClientMessage,
   CloseCode,
   FILE_ERROR_MESSAGES,
+  helloProtocol,
+  mismatchReason,
   PairConfirmRequest,
   PairRequest,
   UnpairChallengeRequest,
   UnpairRequest,
   parseMessage,
+  protocolAdvice,
+  PROTOCOL_VERSION,
   serverMessage,
   type BridgeConfig,
   type CommandRequest,
@@ -23,6 +27,7 @@ import {
   type PairFailure,
   type PairSuccess,
   type ProjectInfo,
+  type ProtocolAdvice,
   type ServerMessage
 } from '@bridge/shared';
 import {
@@ -190,6 +195,15 @@ export function createBridgeServer(options: BridgeServerOptions) {
     sessions.clear();
   }
 
+  /** The protocol of the last extension that said hello, if it wasn't ours. */
+  let extensionProtocol: number | null = null;
+  function setExtensionProtocol(protocol: number): void {
+    const next = protocol === PROTOCOL_VERSION ? null : protocol;
+    if (next === extensionProtocol) return;
+    extensionProtocol = next;
+    onChange();
+  }
+
   const statusMessage = () =>
     serverMessage(randomUUID(), 'status', { version, project: project(), config: config() });
 
@@ -200,7 +214,11 @@ export function createBridgeServer(options: BridgeServerOptions) {
     onChange();
   }
 
-  app.get('/health', async (): Promise<HealthResponse> => ({ name: 'bridge', version }));
+  app.get('/health', async (): Promise<HealthResponse> => ({
+    name: 'bridge',
+    version,
+    protocol: PROTOCOL_VERSION
+  }));
 
   // Step 1: the code and the extension's public key. Nothing is kept until both sides
   // have confirmed the fingerprint (step 2).
@@ -349,7 +367,17 @@ export function createBridgeServer(options: BridgeServerOptions) {
           };
 
           if (stage === 'hello') {
+            // Another protocol's hello can't be answered in a shape it reads, so the close
+            // code and reason (which never change) say which side to update.
+            const peer = isBinary ? null : helloProtocol(toText(data));
+            if (peer !== null && peer !== PROTOCOL_VERSION) {
+              clearTimeout(authTimer);
+              setExtensionProtocol(peer);
+              socket.close(CloseCode.protocolMismatch, mismatchReason(PROTOCOL_VERSION));
+              return;
+            }
             if (message?.type !== 'hello') return fail('expected_hello', CloseCode.protocolError);
+            setExtensionProtocol(PROTOCOL_VERSION);
             if (!clientNonces.claim(message.payload.nonce)) {
               return fail('replayed_nonce', CloseCode.protocolError);
             }
@@ -455,6 +483,16 @@ export function createBridgeServer(options: BridgeServerOptions) {
 
     get connected(): boolean {
       return sessions.size > 0;
+    },
+
+    /**
+     * Which side to update, when the last extension to say hello spoke another protocol.
+     * Cleared by the next hello in this app's protocol.
+     */
+    get protocolAdvice(): ProtocolAdvice | null {
+      return extensionProtocol === null
+        ? null
+        : protocolAdvice(PROTOCOL_VERSION, extensionProtocol);
     },
 
     /** Binds 127.0.0.1 on the first free candidate port and returns it. */

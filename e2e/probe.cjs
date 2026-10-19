@@ -2,7 +2,7 @@
 // `host_permissions: ["http://127.0.0.1/*"]`. Background for PLAN.md, "Phase 2 decisions".
 const fs = require('node:fs');
 const path = require('node:path');
-const { EXT, tempDir, launchApp, launchChrome } = require('./lib.cjs');
+const { EXT, E2E_PORT, tempDir, launchApp, launchChrome } = require('./lib.cjs');
 
 (async () => {
   const { app } = await launchApp(tempDir('app-data'));
@@ -20,9 +20,9 @@ const { EXT, tempDir, launchApp, launchChrome } = require('./lib.cjs');
     ['WITH host_permissions', EXT]
   ]) {
     const { ctx, sw } = await launchChrome(dir);
-    const result = await sw.evaluate(async () => {
+    const result = await sw.evaluate(async (port) => {
       const out = {};
-      const base = 'http://127.0.0.1:47821';
+      const base = `http://127.0.0.1:${port}`;
       try {
         const res = await fetch(`${base}/health`);
         out.health = `${res.status} ${await res.text()}`;
@@ -40,7 +40,7 @@ const { EXT, tempDir, launchApp, launchChrome } = require('./lib.cjs');
         out.pair = 'ERR ' + e.message;
       }
       out.ws = await new Promise((resolve) => {
-        const ws = new WebSocket('ws://127.0.0.1:47821/ws');
+        const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
         ws.onopen = () => {
           resolve('open');
           ws.close();
@@ -48,7 +48,7 @@ const { EXT, tempDir, launchApp, launchChrome } = require('./lib.cjs');
         ws.onerror = () => resolve('error');
       });
       return out;
-    });
+    }, E2E_PORT);
     console.log(label, JSON.stringify(result));
     await ctx.close();
   }

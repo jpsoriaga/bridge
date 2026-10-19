@@ -12,8 +12,28 @@ export const STATUS_LABELS: Record<ConnectionStatus, string> = {
   'not-paired': 'Not paired',
   connecting: 'Waiting for extension',
   connected: 'Connected',
-  error: 'Server error'
+  error: 'Server error',
+  'update-app': 'Update the Bridge app',
+  'update-extension': 'Update the extension'
 };
+
+/** Shown when the extension that tried to connect speaks another protocol version. */
+export const UPDATE_HINTS = {
+  'update-app':
+    'The Bridge extension in Chrome is newer than this app, so they can’t connect. Install the latest Bridge app.',
+  'update-extension':
+    'The Bridge extension in Chrome is older than this app, so they can’t connect. Update the extension, or reload it on chrome://extensions.'
+} as const;
+
+/** The update notice for `status`, or null when there's nothing to update. */
+export function UpdateNotice({ status }: { status: ConnectionStatus }) {
+  if (status !== 'update-app' && status !== 'update-extension') return null;
+  return (
+    <div className="notice" role="status">
+      <strong>{STATUS_LABELS[status]}.</strong> {UPDATE_HINTS[status]}
+    </div>
+  );
+}
 
 /**
  * The open project and a menu to switch: recent projects, then Open folder…. Arrow keys

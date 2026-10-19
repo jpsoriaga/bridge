@@ -34,5 +34,10 @@ export default tseslint.config(
       globals: { ...globals.node, ...globals.browser, ...globals.webextensions }
     },
     rules: { '@typescript-eslint/no-require-imports': 'off' }
+  },
+  {
+    // Release tooling run by Node (version, packaging checks).
+    files: ['scripts/**/*.mjs', 'apps/*/scripts/**/*.mjs'],
+    languageOptions: { globals: { ...globals.node } }
   }
 );

@@ -14,7 +14,9 @@
     "test": "vitest run",
     "package:mac": "pnpm --filter @bridge/desktop package:mac",
     "package:win": "pnpm --filter @bridge/desktop package:win",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "version:set": "node scripts/version.mjs set",
+    "version:check": "node scripts/version.mjs check"
   },
   "packageManager": "pnpm@9.15.4",
   "engines": {

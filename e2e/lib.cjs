@@ -1,11 +1,17 @@
 // Shared launch helpers for the e2e scripts.
+//
+// The scripts keep clear of a `pnpm dev` app running at the same time: the app gets a temp
+// userData and BRIDGE_E2E=1 (a dev build then listens on E2E_PORT.., not 47821..), and the
+// extension is built for that range into a temp folder.
+const { execFileSync } = require('node:child_process');
 const { _electron, chromium } = require('playwright-core');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
 const ROOT = path.resolve(process.argv[2] ?? path.join(__dirname, '..'));
-const EXT = path.join(ROOT, 'apps/extension/dist');
+/** First port of the e2e range (E2E_PORT in packages/shared/src/protocol.ts). */
+const E2E_PORT = 47921;
 
 /** Electron's binary, as the desktop app's own `electron` package reports it. */
 const ELECTRON = require(path.join(ROOT, 'apps/desktop/node_modules/electron'));
@@ -15,8 +21,44 @@ const CHROMIUM = process.env.CHROMIUM_PATH || chromium.executablePath();
 
 const tempDir = (prefix) => fs.mkdtempSync(path.join(os.tmpdir(), `bridge-e2e-${prefix}-`));
 
+/**
+ * Builds the extension for the e2e port range into a temp folder and returns it. `dev`:
+ * a development build (the side panel's file tester). Production otherwise, like the release.
+ */
+function buildExtension({ dev = false } = {}) {
+  const outDir = tempDir(dev ? 'ext-dev' : 'ext');
+  execFileSync(
+    'pnpm',
+    [
+      '--filter',
+      '@bridge/extension',
+      'exec',
+      'vite',
+      'build',
+      ...(dev ? ['--mode', 'development'] : []),
+      '--outDir',
+      outDir,
+      '--emptyOutDir'
+    ],
+    {
+      cwd: ROOT,
+      stdio: 'ignore',
+      env: { ...process.env, BRIDGE_E2E: '1' },
+      shell: process.platform === 'win32'
+    }
+  );
+  return outDir;
+}
+
+let builtExtension = null;
+/** The production extension for the e2e range, built once per script. */
+function extension() {
+  builtExtension ??= buildExtension();
+  return builtExtension;
+}
+
 async function launchApp(userData) {
-  const env = { ...process.env };
+  const env = { ...process.env, BRIDGE_E2E: '1' };
   // Some editor terminals set this, which starts Electron as plain Node.
   delete env.ELECTRON_RUN_AS_NODE;
   const app = await _electron.launch({
@@ -29,7 +71,7 @@ async function launchApp(userData) {
   return { app, win };
 }
 
-async function launchChrome(extensionDir = EXT) {
+async function launchChrome(extensionDir = extension()) {
   const ctx = await chromium.launchPersistentContext(tempDir('chrome'), {
     executablePath: CHROMIUM,
     headless: true,
@@ -55,4 +97,14 @@ async function enterCode(win, panel, code) {
   return fingerprint;
 }
 
-module.exports = { ROOT, EXT, tempDir, launchApp, launchChrome, enterCode };
+module.exports = {
+  ROOT,
+  E2E_PORT,
+  tempDir,
+  buildExtension,
+  launchApp,
+  launchChrome,
+  enterCode
+};
+// `EXT` builds on first use, so a script that doesn't need it doesn't wait for a build.
+Object.defineProperty(module.exports, 'EXT', { enumerable: true, get: extension });

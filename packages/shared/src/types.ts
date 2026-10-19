@@ -23,14 +23,23 @@ export const MODE_DESCRIPTIONS: Record<Mode, string> = {
 
 /** Connection between the extension and the desktop app, as either side reports it. */
 export type ConnectionStatus =
-  'app-not-running' | 'not-paired' | 'connecting' | 'connected' | 'error';
+  | 'app-not-running'
+  | 'not-paired'
+  | 'connecting'
+  | 'connected'
+  | 'error'
+  /** The two sides speak different protocol versions; the named one is older. */
+  | 'update-app'
+  | 'update-extension';
 
 export const CONNECTION_STATUSES: readonly ConnectionStatus[] = [
   'app-not-running',
   'not-paired',
   'connecting',
   'connected',
-  'error'
+  'error',
+  'update-app',
+  'update-extension'
 ];
 
 /** `data-tone` for the status pill dot. `undefined` is the idle grey. */
@@ -42,5 +51,7 @@ export const CONNECTION_STATUS_TONES: Record<
   'not-paired': undefined,
   connecting: 'warning',
   connected: 'success',
-  error: 'danger'
+  error: 'danger',
+  'update-app': 'warning',
+  'update-extension': 'warning'
 };

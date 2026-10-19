@@ -430,3 +430,22 @@ describe('App shell', () => {
     expect(t.bridge.cancelPairing).toHaveBeenCalled();
   });
 });
+
+describe('Protocol mismatch', () => {
+  it.each([
+    ['update-app', 'Update the Bridge app', /newer than this app/],
+    ['update-extension', 'Update the extension', /older than this app/]
+  ] as const)(
+    '%s: says which side to update, in the header and on both pages',
+    async (status, label, hint) => {
+      installBridge(makeState({ status, paired: false }));
+      render(<App />);
+      expect((await screen.findAllByText(label)).length).toBeGreaterThan(0);
+      expect(screen.getByText(hint)).toBeTruthy();
+      cleanup();
+      render(<SettingsView state={makeState({ status, paired: false })} />);
+      expect(screen.getByText(label)).toBeTruthy();
+      expect(screen.getByText(hint)).toBeTruthy();
+    }
+  );
+});
