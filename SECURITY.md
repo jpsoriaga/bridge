@@ -29,7 +29,7 @@ Bridge lets a chat running in your browser change files in a folder on your comp
 - No CORS headers, ever. JSON bodies only: a `text/plain` or form POST (a "simple" cross-origin request) gets 415. Bodies are capped at 1 KiB.
 - **Socket auth** is a mutual HMAC challenge over the pairing key, bound to role, purpose and port. The app proves itself first, so an impostor learns nothing it can replay. Client nonces are single use (10-minute ledger); server nonces die with their socket. 5 seconds to finish, or the socket closes.
 - **Limits:** frames up to 6 MiB + 64 KiB (the largest allowed message: a 1 MB write with JSON's worst-case escaping); at most 2 sockets at once (a third is refused before the upgrade); HTTP requests must arrive within 10 seconds (slowloris); per-operation rates (`read` 50/s, `stat` 100/s, `list` 20/s, `tree` 5/s, `write`/`delete`/`rename`/`undo` 10/s, `run` 5/s and one at a time) answered `rate-limited`, and a flood guard that closes a socket past 1,000 messages in 10 seconds; 60 seconds idle closes it.
-- Every message is a strict zod schema; unknown keys are refused. Fuzzed with fast-check: random and malformed frames before auth get only `auth_error`, after auth only `error` or a response, and random HTTP bodies only 4xx.
+- Every message is a strict zod schema; unknown keys are refused. The one exception is `/health` (`{ name, version, protocol }`), which stays readable across versions; a `hello` in another protocol version is closed with 4009 before anything else is parsed, and both sides say which one to update. Fuzzed with fast-check: random and malformed frames before auth get only `auth_error`, after auth only `error` or a response, and random HTTP bodies only 4xx.
 
 ### Pairing
 
@@ -67,7 +67,8 @@ Before command output or file contents go into the chat: `sk-…`, GitHub (`ghp_
 - Every permission request and check is refused. Every web contents has `will-navigate`, `will-redirect` and `will-attach-webview` blocked and new windows denied (https links open in your browser).
 - CSP `default-src 'none'; script-src 'self'; style-src 'self'; …` with no `unsafe-*`, tested on the built `index.html`.
 - Preload exposes one typed object. Every IPC handler checks the call comes from the app window's top frame and validates its arguments with a zod schema per channel. No handler takes a filesystem path.
-- Fuses (applied at packaging, `apps/desktop/scripts/fuses.cjs`; check a build with `pnpm --filter @bridge/desktop verify:fuses <app>`): RunAsNode off, NODE_OPTIONS off, `--inspect` off, embedded asar integrity on, only load from asar on, cookie encryption on.
+- Fuses (applied at packaging, `apps/desktop/scripts/fuses.cjs`; check a build with `pnpm --filter @bridge/desktop verify:fuses <app>`): RunAsNode off, NODE_OPTIONS off, `--inspect` off, embedded asar integrity on, only load from asar on, cookie encryption on. The release workflow verifies them on every packaged app and fails the release if any is wrong.
+- **Packaging.** `app.asar` holds only the built app and its production dependencies; `check:package` lists it and fails on source, tests, source maps, TypeScript, e2e, fixtures, `archive/`, dev dependencies or secret-looking files. Its hash is embedded in the app and checked at launch (the asar integrity fuse). Signed macOS builds use hardened runtime with one entitlement, `allow-jit` (V8); unsigned macOS builds are ad-hoc signed. Each packaged app is launched in CI and must open its window and answer `/health` on `127.0.0.1`.
 
 ### Extension
 
@@ -79,7 +80,14 @@ Before command output or file contents go into the chat: `sk-…`, GitHub (`ghp_
 
 ### Privacy
 
-No telemetry, no analytics, no network calls except loopback between the extension and the app.
+No telemetry, no analytics, no network calls except loopback between the extension and the app, with one exception the user controls: **Check for updates** (Settings → About) asks GitHub Releases for the latest version number, on a click or, if the user turns it on, once at launch (off by default). It sends nothing about the user, downloads and installs nothing (`autoDownload` and `autoInstallOnAppQuit` off; electron-updater is loaded only when a check runs), and is off in unsigned macOS builds. The extension never makes a non-loopback request. [PRIVACY.md](PRIVACY.md) lists what's stored where.
+
+### Releases
+
+- Built by GitHub Actions from a version tag only, after the full check suite; the result is a **draft** release the maintainer publishes by hand, with `SHA256SUMS.txt`.
+- Signing secrets are repository secrets passed as environment variables to the packaging step of their own platform, never to CI, pull requests or the release job, and never printed. A partial set of a platform's secrets fails the build instead of shipping unsigned by mistake.
+- Every job has a read-only token except the last, which may only create the release. Actions are pinned to commit SHAs.
+- The store build of the extension has no manifest `key` (the store assigns the ID); the app accepts the development ID and, once set, `STORE_EXTENSION_ID`, both checked to be well-formed IDs.
 
 ## Known limits
 
@@ -92,6 +100,7 @@ These are real, and Bridge can't close them:
 - **Prompt injection can still steer edits inside the project.** The sandbox stops it reaching outside the folder and protected files; it can't tell a malicious edit to your own code from a good one. That's what the diff cards and Undo are for.
 - **The chat provider sees what you send.** File contents and command output go to the chat service you use, under its terms.
 - **The fingerprint only helps if you compare it.** Confirming without looking brings back the trust-on-first-use gap.
+- **Unsigned builds prove nothing about who made them.** Until releases are signed, `SHA256SUMS.txt` only shows a download matches what the release page lists; it comes from the same place. The AppImage is never signed. Get Bridge only from the repository's releases page.
 - **Platform gaps:** `O_NOFOLLOW` and file modes don't exist on Windows (ACLs on the profile folder apply instead). Without a keyring on Linux, keys are stored as plain hex in `0600` files.
 
 ## Reporting a problem

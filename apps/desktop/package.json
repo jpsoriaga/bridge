@@ -1,29 +1,36 @@
 {
   "name": "@bridge/desktop",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
+  "description": "Bridge desktop app: applies file edits from the chat to a local project.",
+  "author": "Jaypee Soriaga",
+  "license": "MIT",
+  "homepage": "https://github.com/jpsoriaga/bridge",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "package:mac": "electron-vite build && electron-builder --mac",
-    "package:win": "electron-vite build && electron-builder --win",
+    "package:mac": "electron-vite build && node scripts/package.mjs mac",
+    "package:win": "electron-vite build && node scripts/package.mjs win",
     "preview": "electron-vite preview",
-    "verify:fuses": "node scripts/verify-fuses.cjs"
+    "verify:fuses": "node scripts/verify-fuses.cjs",
+    "package:linux": "electron-vite build && node scripts/package.mjs linux",
+    "check:package": "node scripts/check-package.mjs",
+    "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {
-    "@bridge/shared": "workspace:*",
     "@fastify/websocket": "^11.3.4",
     "chokidar": "^4.0.3",
     "cross-spawn": "^7.0.6",
+    "electron-updater": "^6.8.10",
     "fastify": "^5.12.7",
     "ignore": "^7.0.12",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@bridge/shared": "workspace:*",
+    "@electron/asar": "4.3.1",
     "@electron/fuses": "^1.8.0",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/react": "^16.3.0",
@@ -38,6 +45,8 @@
     "electron-builder": "26.17.0",
     "electron-vite": "^6.0.0",
     "jsdom": "^26.1.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "typescript": "^5.7.3",
     "vite": "^7.3.7",
     "ws": "^8.22.0"

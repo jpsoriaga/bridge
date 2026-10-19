@@ -1,10 +1,29 @@
-import { BRIDGE_EXTENSION_ID, MAX_FILE_BYTES, type ClientMessage } from '@bridge/shared';
+import {
+  BRIDGE_EXTENSION_ID,
+  MAX_FILE_BYTES,
+  STORE_EXTENSION_ID,
+  type ClientMessage
+} from '@bridge/shared';
+
+/** A Chrome extension ID: 32 letters a–p. */
+export const EXTENSION_ID = /^[a-p]{32}$/;
 
 /**
- * Extension IDs allowed to pair and connect. The only place this list lives.
- * Add the Web Store ID here if the extension is ever published under a different key.
+ * Extension IDs allowed to pair and connect: the dev (unpacked) build's, and the store's
+ * once it's set (`STORE_EXTENSION_ID` in shared; empty until the first upload). The only
+ * place this list is built.
  */
-export const ALLOWED_EXTENSION_IDS: readonly string[] = [BRIDGE_EXTENSION_ID];
+export function allowedExtensionIds(
+  dev: string = BRIDGE_EXTENSION_ID,
+  store: string = STORE_EXTENSION_ID
+): readonly string[] {
+  for (const id of [dev, store]) {
+    if (id !== '' && !EXTENSION_ID.test(id)) throw new Error(`Not an extension ID: ${id}`);
+  }
+  return [...new Set([dev, store].filter((id) => id !== ''))];
+}
+
+export const ALLOWED_EXTENSION_IDS: readonly string[] = allowedExtensionIds();
 
 export const ALLOWED_ORIGINS: ReadonlySet<string> = new Set(
   ALLOWED_EXTENSION_IDS.map((id) => `chrome-extension://${id}`)

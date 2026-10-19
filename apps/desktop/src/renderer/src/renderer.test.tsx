@@ -2,7 +2,9 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, describe, expect, it } from 'vitest';
 import { ActivityView, filterActivity, groupActivity } from './ActivityView';
 import { App, applyTheme } from './App';
+import type { DesktopState } from '../../preload/api';
 import { ACTIVITY_KINDS, kindsOf } from './errors';
+import { toastsFor } from './Loop';
 import { Onboarding, onboardingSteps } from './Onboarding';
 import { ModeSection } from './SessionView';
 import { SettingsView } from './SettingsView';
@@ -448,4 +450,65 @@ describe('Protocol mismatch', () => {
       expect(screen.getByText(hint)).toBeTruthy();
     }
   );
+});
+
+describe('Settings → About', () => {
+  it('shows the version, checks on a click, and links a newer release', async () => {
+    const { bridge } = installBridge();
+    const { rerender } = render(<SettingsView state={makeState()} />);
+    expect(screen.getByText('Bridge 1.0.0')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Check for updates' }));
+    expect(bridge.checkForUpdates).toHaveBeenCalledTimes(1);
+
+    const about = (update: DesktopState['about']['update']) =>
+      makeState({ about: { version: '1.0.0', update, checkOnStart: false } });
+    rerender(<SettingsView state={about({ state: 'checking' })} />);
+    expect(
+      (screen.getByRole('button', { name: 'Check for updates' }) as HTMLButtonElement).disabled
+    ).toBe(true);
+    rerender(<SettingsView state={about({ state: 'current', version: '1.0.0', checkedAt: 1 })} />);
+    expect(screen.getByText('You have the latest version.')).toBeTruthy();
+    const url = 'https://github.com/jpsoriaga/bridge/releases/tag/v1.1.0';
+    rerender(
+      <SettingsView state={about({ state: 'available', version: '1.1.0', url, checkedAt: 2 })} />
+    );
+    expect(screen.getByText(/Bridge 1\.1\.0 is available/)).toBeTruthy();
+    const link = screen.getByRole('link', { name: 'View the release' }) as HTMLAnchorElement;
+    expect([link.href, link.target]).toEqual([url, '_blank']);
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Check for updates when Bridge starts' }));
+    expect(bridge.setCheckUpdatesOnStart).toHaveBeenCalledWith(true);
+  });
+
+  it('has no check in builds that never look, only the Releases page', () => {
+    installBridge();
+    render(
+      <SettingsView
+        state={makeState({
+          about: {
+            version: '1.0.0',
+            update: { state: 'off', reason: 'unsigned-mac' },
+            checkOnStart: false
+          }
+        })}
+      />
+    );
+    expect(screen.getByText(/off in unsigned macOS builds/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Check for updates' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Releases page' })).toBeTruthy();
+  });
+
+  it('toasts a newer version once', () => {
+    const before = makeState();
+    const after = makeState({
+      about: {
+        version: '1.0.0',
+        update: { state: 'available', version: '1.1.0', url: 'https://x', checkedAt: 1 },
+        checkOnStart: true
+      }
+    });
+    const toasts = toastsFor({ state: before, entries: [] }, { state: after, entries: [] });
+    expect(toasts.map((t) => t.text)).toEqual(['Bridge 1.1.0 is available']);
+    expect(toastsFor({ state: after, entries: [] }, { state: after, entries: [] })).toEqual([]);
+  });
 });

@@ -39,5 +39,7 @@ export default defineConfig(({ mode }) => ({
     // The e2e scripts build with BRIDGE_E2E=1 so the worker scans their own port range.
     __BRIDGE_PORT_BASE__: JSON.stringify(process.env.BRIDGE_E2E === '1' ? E2E_PORT : DEFAULT_PORT)
   },
-  plugins: [react(), crx({ manifest }), cardFonts()]
+  plugins: [react(), crx({ manifest }), cardFonts()],
+  // Spelled out because the store build relies on them: minified, and no source maps.
+  build: { minify: 'esbuild', sourcemap: false }
 }));

@@ -1,0 +1,115 @@
+<!doctype html>
+<!--
+  The 440×280 small promo tile for the Chrome Web Store, in the DESIGN.md style: ink on
+  white, hairlines, colour only for the diff lines. e2e/screenshots.cjs renders it to
+  promo-tile-440x280.png, filling in the design tokens and the Geist fonts.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      /*FONTS*/
+      /*TOKENS*/
+      :root {
+        color-scheme: light;
+      }
+      html,
+      body {
+        margin: 0;
+        width: 440px;
+        height: 280px;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: var(--font-sans);
+        -webkit-font-smoothing: antialiased;
+      }
+      .tile {
+        box-sizing: border-box;
+        width: 440px;
+        height: 280px;
+        padding: 32px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 28px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+      }
+      .brand svg {
+        width: 40px;
+        height: 40px;
+      }
+      .tagline {
+        margin: 12px 0 0;
+        font-size: 16px;
+        line-height: 1.4;
+        color: var(--fg-muted);
+        max-width: 340px;
+      }
+      .card {
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+        font-family: var(--font-mono);
+        font-size: 13px;
+        line-height: 22px;
+      }
+      .card .head {
+        padding: 6px 12px;
+        border-bottom: 1px solid var(--border);
+        color: var(--fg-muted);
+        display: flex;
+        justify-content: space-between;
+      }
+      .card .head b {
+        color: var(--fg);
+        font-weight: 600;
+      }
+      .row {
+        padding: 0 12px;
+        white-space: pre;
+      }
+      .del {
+        background: var(--danger-bg);
+        color: var(--danger);
+      }
+      .add {
+        background: var(--success-bg);
+        color: var(--success);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="tile">
+      <div>
+        <div class="brand">
+          <svg viewBox="0 0 32 32" aria-hidden="true">
+            <rect width="32" height="32" rx="7.5" fill="var(--inverse-bg)" />
+            <g
+              fill="none"
+              stroke="var(--inverse-fg)"
+              stroke-width="3.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M7.5 13h9M12 8.5v9" />
+              <path d="M16 23h8.5" />
+            </g>
+          </svg>
+          Bridge
+        </div>
+        <p class="tagline">Review the chat’s file edits, then apply them to your project.</p>
+      </div>
+      <div class="card">
+        <div class="head"><b>src/greet.ts</b><span>+1 −1</span></div>
+        <div class="row del">− return "Hi " + name;</div>
+        <div class="row add">+ return `Hello, ${name}!`;</div>
+      </div>
+    </div>
+  </body>
+</html>

@@ -39,6 +39,7 @@ export function makeState(overrides: Partial<DesktopState> = {}): DesktopState {
     theme: 'system',
     backupRetentionDays: 7,
     onboarding: { dismissed: true, sessionStarted: true },
+    about: { version: '1.0.0', update: null, checkOnStart: false },
     ...overrides
   };
 }
@@ -104,6 +105,12 @@ export function installBridge(initial: DesktopState = makeState(), activity: Act
     confirmPairing: vi.fn(async () => true),
     cancelPairing: vi.fn(async () => undefined),
     dismissAllowlistNote: vi.fn(async () => undefined),
+    checkForUpdates: vi.fn(async () => ({
+      state: 'current' as const,
+      version: '1.0.0',
+      checkedAt: 0
+    })),
+    setCheckUpdatesOnStart: vi.fn(async () => undefined),
     onMenu: vi.fn((listener: (action: MenuAction) => void) => {
       menuListener = listener;
       return () => (menuListener = null);

@@ -25,7 +25,7 @@ const tempDir = (prefix) => fs.mkdtempSync(path.join(os.tmpdir(), `bridge-e2e-${
  * Builds the extension for the e2e port range into a temp folder and returns it. `dev`:
  * a development build (the side panel's file tester). Production otherwise, like the release.
  */
-function buildExtension({ dev = false } = {}) {
+function buildExtension({ dev = false, e2ePorts = true } = {}) {
   const outDir = tempDir(dev ? 'ext-dev' : 'ext');
   execFileSync(
     'pnpm',
@@ -43,7 +43,7 @@ function buildExtension({ dev = false } = {}) {
     {
       cwd: ROOT,
       stdio: 'ignore',
-      env: { ...process.env, BRIDGE_E2E: '1' },
+      env: { ...process.env, BRIDGE_E2E: e2ePorts ? '1' : '' },
       shell: process.platform === 'win32'
     }
   );
@@ -57,8 +57,9 @@ function extension() {
   return builtExtension;
 }
 
-async function launchApp(userData) {
-  const env = { ...process.env, BRIDGE_E2E: '1' };
+/** `e2ePorts: false` uses the real range (47821…), e.g. for screenshots that show the port. */
+async function launchApp(userData, { e2ePorts = true } = {}) {
+  const env = { ...process.env, BRIDGE_E2E: e2ePorts ? '1' : '' };
   // Some editor terminals set this, which starts Electron as plain Node.
   delete env.ELECTRON_RUN_AS_NODE;
   const app = await _electron.launch({

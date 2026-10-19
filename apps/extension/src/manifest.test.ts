@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { BRIDGE_EXTENSION_ID } from '@bridge/shared';
 import manifestExport, { EXTENSION_PUBLIC_KEY } from '../manifest.config';
 
@@ -40,6 +40,22 @@ describe('manifest', () => {
     const manifest = await loadManifest();
     expect(manifest.key).toBe(EXTENSION_PUBLIC_KEY);
     expect(extensionIdFromKey(EXTENSION_PUBLIC_KEY)).toBe(BRIDGE_EXTENSION_ID);
+  });
+
+  it('has no key in the store build (the store assigns the ID)', async () => {
+    vi.stubEnv('BRIDGE_RELEASE', '1');
+    vi.resetModules();
+    try {
+      const release = (await import('../manifest.config')).default;
+      const manifest = await (typeof release === 'function'
+        ? release({ command: 'build', mode: 'production' })
+        : release);
+      expect('key' in manifest).toBe(false);
+      expect(manifest.permissions).toEqual(['storage', 'sidePanel', 'alarms']);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
   });
 
   it('runs extension pages under a strict CSP', async () => {

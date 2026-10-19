@@ -293,6 +293,38 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [x] Version handshake: `/health` reports `protocol`; a hello in another protocol is closed with 4009 `protocol N`; both sides show "Update the Bridge app" or "Update the extension" (tests in shared, server, connection, renderer)
 - [x] e2e scripts on their own port range (47921–47930, `BRIDGE_E2E=1`) and temp userData, with their own extension build
 
-- [ ] electron-builder packages for macOS (dmg, zip) and Windows (nsis)
-- [ ] Extension zip for "Load unpacked" or store upload
-- [ ] README and docs pass. Remove placeholder copy
+### Desktop packaging
+
+- [x] macOS dmg + zip, arm64 and x64 (separate builds), icon from `packages/shared/assets/icon.png`
+- [x] Hardened runtime with `allow-jit` only; Developer ID signing, `notarytool` notarization and stapling when the five Apple secrets are set; otherwise ad-hoc, no hardened runtime, a printed warning (`scripts/package.mjs`, tested); a partial set fails
+- [x] Windows NSIS x64, per-user, no elevation; signed when `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD` are set
+- [x] Linux AppImage x64
+- [x] Fuses in `afterPack`; `verify:fuses` on every packaged app in the release workflow
+- [x] asar on with integrity; no archive, e2e, fixtures, tests, source maps, TypeScript or dev dependencies; `check:package` lists the asar and fails on anything unexpected (tested)
+- [x] Packaged builds named `Bridge` (userData `…/Bridge`), apart from `pnpm dev`'s `@bridge/desktop`
+- [x] electron-updater, notify only (no download or install), on a click or an opt-in check at launch; off in dev and unsigned macOS builds; Settings → About with the version, **Check for updates** and the toggle; a toast when a newer version is found (tests)
+- [x] Smoke test (`scripts/smoke.mjs`): launch, window loads, `/health` on 127.0.0.1, name `Bridge`, quit; in CI for every packaged app
+
+### Extension packaging
+
+- [x] `pnpm build:extension:release` → `release/bridge-extension-<v>.zip` (minified, no source maps, no `key`, only the build) and `-unpacked.zip` (with the `key`, for Load unpacked); checked and deterministic (tests)
+- [x] `ALLOWED_EXTENSION_IDS` = dev ID + `STORE_EXTENSION_ID` (empty until the first upload), validated (tests); first-upload steps in RELEASE.md
+- [x] `store/`: short and full description, single purpose, permission justifications, data-use answers, 128 icon, 1280×800 screenshots in light and dark, 440×280 promo tile (all from `e2e/screenshots.cjs`)
+
+### Release workflow
+
+- [x] On `v*`: the CI suite (reusable `ci.yml`, no secrets), version and changelog checks, packages on macOS, Windows and Linux, fuses, package contents and smoke tests, the extension zips, then a draft release with every file, `SHA256SUMS.txt` and the CHANGELOG section as notes
+- [x] Secrets only in each platform's packaging step; read-only token except the release job; actions pinned to SHAs
+- [ ] First run of the release workflow on GitHub (the tag push)
+
+### Docs
+
+- [x] README final: what and how, screenshots, install per OS with unsigned-build steps and why, extension (store placeholder and Load unpacked), pairing, modes with the Full auto warning, allowlist, updates, troubleshooting, where data lives, uninstall, links, not-affiliated note
+- [x] PRIVACY.md (store privacy policy), CHANGELOG.md (1.0.0), RELEASE.md, LICENSE (MIT), docs/FAQ.md
+- [x] PLAN.md "Phase 8 decisions", SECURITY.md (packaging, releases, update check), CLAUDE.md release rules
+
+### Local release check (macOS, unsigned)
+
+- [x] Installed from the dmg and launched through LaunchServices (`open`, as the Dock does): Settings shows PATH from the login shell, a `pnpm` RUN card runs (exit 0), pairing with the fingerprint works with the release's unpacked extension, `verify:fuses` passes on the installed app
+- [x] Windows and Linux packages cross-built on macOS pass `check:package` (fuses, asar)
+- [ ] Gatekeeper's right-click → Open on a downloaded (quarantined) unsigned dmg, and SmartScreen on Windows, by hand

@@ -1,5 +1,5 @@
 import { useState, type KeyboardEvent, type ReactNode } from 'react';
-import type { DesktopState, Theme } from '../../preload/api';
+import type { DesktopState, Theme, UpdateCheck } from '../../preload/api';
 import { AllowlistEditor, FullAutoFields, PathOverride, TimeoutField } from './Commands';
 import { STATUS_LABELS, UpdateNotice } from './Header';
 import { PatternList } from './PatternList';
@@ -10,7 +10,8 @@ export const SETTINGS_SECTIONS = [
   { id: 'commands', title: 'Commands' },
   { id: 'full-auto', title: 'Full auto' },
   { id: 'backups', title: 'Backups' },
-  { id: 'appearance', title: 'Appearance' }
+  { id: 'appearance', title: 'Appearance' },
+  { id: 'about', title: 'About' }
 ] as const;
 
 const THEME_LABELS: Record<Theme, string> = { system: 'System', light: 'Light', dark: 'Dark' };
@@ -214,6 +215,100 @@ function AppearanceSettings({ state }: { state: DesktopState }) {
   );
 }
 
+const RELEASES_URL = 'https://github.com/jpsoriaga/bridge/releases';
+
+/** What the last update check found, in a sentence. */
+function UpdateLine({ update }: { update: UpdateCheck | null }) {
+  switch (update?.state) {
+    case undefined:
+      return null;
+    case 'off':
+      return (
+        <p className="hint">
+          {update.reason === 'unsigned-mac'
+            ? 'Update checks are off in unsigned macOS builds. New versions are on the '
+            : 'Update checks are off in development builds. Releases are on the '}
+          <a href={RELEASES_URL} target="_blank" rel="noreferrer">
+            Releases page
+          </a>
+          .
+        </p>
+      );
+    case 'checking':
+      return (
+        <p className="hint" role="status">
+          Checking…
+        </p>
+      );
+    case 'current':
+      return (
+        <p className="hint" role="status">
+          You have the latest version.
+        </p>
+      );
+    case 'available':
+      return (
+        <p className="value" role="status">
+          Bridge {update.version} is available.{' '}
+          <a href={update.url} target="_blank" rel="noreferrer">
+            View the release
+          </a>
+        </p>
+      );
+    case 'failed':
+      return (
+        <p className="hint" role="status">
+          Couldn’t reach GitHub to check. Try again later, or see the{' '}
+          <a href={RELEASES_URL} target="_blank" rel="noreferrer">
+            Releases page
+          </a>
+          .
+        </p>
+      );
+  }
+}
+
+/** The version, and a check for a newer one: notify only, nothing is downloaded. */
+function AboutSettings({ state }: { state: DesktopState }) {
+  const { version, update, checkOnStart } = state.about;
+  const off = update?.state === 'off';
+  return (
+    <Section id="about" title="About">
+      <dl className="settings">
+        <dt>Version</dt>
+        <dd className="mono">Bridge {version}</dd>
+      </dl>
+      <UpdateLine update={update} />
+      {!off && (
+        <>
+          <div className="actions">
+            <button
+              type="button"
+              className="btn"
+              disabled={update?.state === 'checking'}
+              onClick={() => void window.bridge.checkForUpdates()}
+            >
+              Check for updates
+            </button>
+          </div>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={checkOnStart}
+              onChange={(e) => void window.bridge.setCheckUpdatesOnStart(e.target.checked)}
+            />
+            <span>Check for updates when Bridge starts</span>
+          </label>
+          <p className="hint">
+            Asks GitHub Releases for the latest version number. Nothing is downloaded or installed,
+            and nothing about you or your projects is sent.
+          </p>
+        </>
+      )}
+    </Section>
+  );
+}
+
 /** Scrolls to a section and moves focus to its heading. */
 export function showSection(id: string): void {
   const heading = document.getElementById(`settings-${id}`);
@@ -284,6 +379,7 @@ export function SettingsView({ state }: { state: DesktopState }) {
       </Section>
       <BackupSettings key={state.backupRetentionDays} state={state} />
       <AppearanceSettings state={state} />
+      <AboutSettings state={state} />
     </>
   );
 }

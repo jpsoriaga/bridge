@@ -13,7 +13,7 @@ import {
   type MenuItemConstructorOptions
 } from 'electron';
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -69,6 +69,7 @@ import {
   type Theme,
   type WindowBounds
 } from './settings';
+import { Updates, updatesOff } from './updates';
 import { createWindowOptions } from './window';
 
 // One Bridge at a time: a second launch (from the Dock, say) focuses the first one's window.
@@ -85,6 +86,7 @@ let gated: GatedFiles;
 let runner: CommandRunner;
 let commands: CommandService;
 let serverFailed = false;
+let updates: Updates;
 let expiryTimer: NodeJS.Timeout | undefined;
 /** The project the last change saw, to notice a switch. */
 let lastRoot: string | null = null;
@@ -166,7 +168,12 @@ function desktopState(): DesktopState {
     watch: projects.watchMode,
     theme: saved.theme,
     backupRetentionDays: saved.backupRetentionDays,
-    onboarding: { dismissed: saved.onboardingDismissed, sessionStarted: saved.sessionStarted }
+    onboarding: { dismissed: saved.onboardingDismissed, sessionStarted: saved.sessionStarted },
+    about: {
+      version: app.getVersion(),
+      update: updates.state,
+      checkOnStart: saved.checkUpdatesOnStart
+    }
   };
 }
 
@@ -574,6 +581,27 @@ function registerIpc(): void {
     settings.update({ allowlistNote: false });
     broadcast();
   });
+  handle(IPC.checkForUpdates, () => updates.check());
+  handle(IPC.setCheckUpdatesOnStart, (on) => {
+    if (typeof on !== 'boolean') return;
+    settings.update({ checkUpdatesOnStart: on });
+    broadcast();
+  });
+}
+
+/**
+ * Build facts the packaging script writes into the packaged package.json (`bridgeBuild`).
+ * `updates: false` marks an unsigned macOS build. Missing (dev): nothing to say.
+ */
+function buildInfo(): { updates: boolean } {
+  try {
+    const pkg = JSON.parse(readFileSync(join(app.getAppPath(), 'package.json'), 'utf8')) as {
+      bridgeBuild?: { updates?: unknown };
+    };
+    return { updates: pkg.bridgeBuild?.updates !== false };
+  } catch {
+    return { updates: true };
+  }
 }
 
 async function startServer(): Promise<void> {
@@ -583,6 +611,16 @@ async function startServer(): Promise<void> {
   settings = settingsFile(join(userData, 'settings.json'));
   // Saves any one-time migration (allowlist entries to exact matching) right away.
   settings.update({});
+  updates = new Updates({
+    off: updatesOff({
+      isPackaged: app.isPackaged,
+      platform: process.platform,
+      buildAllowsUpdates: buildInfo().updates
+    }),
+    // Loaded on first check only: a build that never checks never loads it.
+    load: async () => (await import('electron-updater')).autoUpdater,
+    onChange: () => broadcast()
+  });
   void loginEnv().then((result) => {
     login = result;
     broadcast();
@@ -731,6 +769,21 @@ function createWindow(): void {
     if (bounds?.maximized) window.maximize();
     window.show();
   });
+  // The packaging smoke test (scripts/smoke.mjs) launches the app with a temp userData and
+  // waits for this file: the window loaded, and the port the server bound.
+  if (process.env.BRIDGE_SMOKE_TEST === '1') {
+    window.webContents.once('did-finish-load', () =>
+      writeFileSync(
+        join(app.getPath('userData'), 'smoke.json'),
+        JSON.stringify({
+          window: true,
+          port: server.port,
+          version: app.getVersion(),
+          name: app.getName()
+        })
+      )
+    );
+  }
   // Remember where the window is, a moment after it stops moving.
   let saveTimer: NodeJS.Timeout | undefined;
   const saveBounds = () => {
@@ -794,6 +847,8 @@ void app.whenReady().then(async () => {
   registerIpc();
   buildMenu();
   createWindow();
+  // Only if the user asked for it (Settings → About). Notify only.
+  if (settings.read().checkUpdatesOnStart) void updates.check();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

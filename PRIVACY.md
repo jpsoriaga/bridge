@@ -1,0 +1,78 @@
+# Privacy policy
+
+_Effective 19 October 2026. Applies to the Bridge desktop app and the Bridge Chrome extension, version 1.0.0 and later._
+
+Bridge is a personal open-source tool by Jaypee Soriaga. It has no servers, no accounts and no analytics. Everything it does happens on your computer.
+
+## The short version
+
+- Bridge collects **no data** about you. There is no telemetry, no analytics, no crash reporting and no account.
+- The extension talks **only to the Bridge app on your own computer** (`127.0.0.1`). It never sends anything to the developer or to any other server.
+- The desktop app makes **no network requests** except to that extension on loopback, and, only if you ask it to, one request to GitHub to see whether a newer version exists (see "Update check").
+- What you choose to send to the chat (files, command output) goes to the chat service you use, under its own privacy policy. Bridge doesn't see or keep what the chat does with it.
+
+## What the extension stores, and where
+
+All of it stays in your Chrome profile, on your computer.
+
+| What                                                                                                                                      | Where                                                                                              | Why                                                                  |
+| ----------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| The pairing key                                                                                                                           | The extension's own IndexedDB (in its service worker; web pages and content scripts can't open it) | To prove to the Bridge app that it's the paired extension            |
+| The app's port number                                                                                                                     | `chrome.storage.local`                                                                             | To reconnect to the app quickly                                      |
+| Chat sessions: the conversation ID, when it started or ended, file paths sent to the chat with their size and a hash, and counts of edits | `chrome.storage.local`                                                                             | So a reload or another tab shows the session as it was               |
+| Card states: a key per card (conversation, message, a hash), its state (applied, rejected, undone), an operation ID and counts            | `chrome.storage.local`                                                                             | So the cards under a reply look the same after a reload              |
+| Which tab a new session is waiting in, and where you put the page chip                                                                    | `chrome.storage.session` and `chrome.storage.local`                                                | To bind a session to its conversation and remember the chip's corner |
+
+The extension **never stores file contents, command output or messages**. Sessions and card states are deleted 30 days after they were last used. Removing the extension deletes all of it.
+
+The extension reads the chat page on `https://chatgpt.com` only, and only to find Bridge's markers in the assistant's replies, show cards under them, and put text into the message box when you click a button. It doesn't read or keep your conversations.
+
+## What the desktop app stores, and where
+
+In its data folder, readable only by your user account:
+
+- macOS: `~/Library/Application Support/Bridge`
+- Windows: `%APPDATA%\Bridge`
+- Linux: `~/.config/Bridge`
+
+| What                                                                                                                                                         | Why                                                                                              |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| `settings.json`: the open project's path, your last 5 projects, protected and gated patterns, allowlisted commands, mode and other settings, window position | To come back the way you left it                                                                 |
+| `pairing.json` and `server-key.json`: the pairing key and the app's own key, encrypted with your system keychain where available                             | To recognise the paired extension                                                                |
+| `backups/`: a copy of each file before Bridge changed, deleted or renamed it, and a log of those changes                                                     | So you can undo. Kept for 7 days by default (1–90, in Settings), and you can clear them any time |
+
+The app writes inside the project folder you opened, and only when you (or a mode you turned on) apply a change. Command output is kept in memory for the Activity page and is gone when the app quits.
+
+## Update check
+
+Settings → About has **Check for updates**. When you click it, or at launch if you turned on "Check for updates when Bridge starts" (off by default), the app asks GitHub (`github.com`, which hosts Bridge's releases) for the latest version number. That request carries what any web request does (your IP address and a user agent) and nothing about you, your projects or your chats. GitHub's privacy statement applies to it. Nothing is downloaded or installed; the app shows a link if a newer version exists. Unsigned macOS builds never check.
+
+## Permissions the extension asks for
+
+- **Read and change data on chatgpt.com**: to find Bridge's markers in replies, show cards, and fill the message box when you click.
+- **`http://127.0.0.1/*`**: to reach the Bridge app on your own computer. Nothing outside your computer.
+- **Storage**: for the session and card states above.
+- **Side panel**: Bridge's controls.
+- **Alarms**: to reconnect to the app within a minute after Chrome suspends the extension.
+
+## Sharing and selling
+
+Bridge doesn't share, sell or transfer any data, because it doesn't collect any. Nothing is used for advertising, credit decisions or anything other than Bridge's single purpose.
+
+## Children
+
+Bridge isn't directed at children and collects no information from anyone.
+
+## Deleting everything
+
+Remove the extension in `chrome://extensions`, uninstall the app, and delete the app's data folder above. README.md, "Uninstall", has the steps for each system.
+
+## Changes
+
+If this policy changes, the new version will be in this file, with its date, in the repository at https://github.com/jpsoriaga/bridge, and noted in the changelog.
+
+## Contact
+
+Questions: open an issue at https://github.com/jpsoriaga/bridge/issues. For a security problem, see [SECURITY.md](SECURITY.md).
+
+Bridge is not affiliated with or endorsed by OpenAI.

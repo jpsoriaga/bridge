@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # The release workflow runs this whole suite first. It passes no secrets.
+  workflow_call:
 
 # Read-only token: CI never writes to the repository.
 permissions:

@@ -1,6 +1,6 @@
 {
   "name": "bridge",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "description": "Lets a chat in the browser propose file edits that a local desktop app applies to your project.",
@@ -16,7 +16,9 @@
     "package:win": "pnpm --filter @bridge/desktop package:win",
     "test:coverage": "vitest run --coverage",
     "version:set": "node scripts/version.mjs set",
-    "version:check": "node scripts/version.mjs check"
+    "version:check": "node scripts/version.mjs check",
+    "build:extension:release": "node scripts/release-extension.mjs",
+    "package:linux": "pnpm --filter @bridge/desktop package:linux"
   },
   "packageManager": "pnpm@9.15.4",
   "engines": {

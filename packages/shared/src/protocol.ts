@@ -29,6 +29,13 @@ export { candidatePorts, DEFAULT_PORT, E2E_PORT, PORT_RANGE } from './ports';
  */
 export const BRIDGE_EXTENSION_ID = 'golkpkmancgpgkpfjggoimedcogghhip';
 
+/**
+ * The Chrome Web Store's ID for Bridge, once it has one: empty until the first upload.
+ * The store build has no `key`, so the store assigns this. After the first draft upload,
+ * set it here (RELEASE.md, "First store upload"); the desktop then accepts it too.
+ */
+export const STORE_EXTENSION_ID = '';
+
 export const PAIRING_CODE_LENGTH = 6;
 export const PairingCode = z.string().regex(/^\d{6}$/);
 const hex32 = z.string().regex(/^[0-9a-f]{64}$/);

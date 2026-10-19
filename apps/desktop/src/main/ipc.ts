@@ -44,7 +44,9 @@ export const IPC_ARGS: Readonly<Record<IpcChannel, z.ZodType<unknown[]>>> = {
   openBackupsFolder: none,
   clearBackups: none,
   setOnboardingDismissed: z.tuple([z.boolean()]),
-  dismissAllowlistNote: none
+  dismissAllowlistNote: none,
+  checkForUpdates: none,
+  setCheckUpdatesOnStart: z.tuple([z.boolean()])
 };
 
 /** Channels the renderer invokes. The rest of `IPC` are main → renderer events. */

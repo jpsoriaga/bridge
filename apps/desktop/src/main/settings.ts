@@ -72,6 +72,8 @@ export interface Settings {
   onboardingDismissed: boolean;
   /** A chat session was started at least once (the checklist's last step). */
   sessionStarted: boolean;
+  /** Check GitHub Releases for a newer version at launch. Off unless the user turns it on. */
+  checkUpdatesOnStart: boolean;
   windowBounds?: WindowBounds;
 }
 
@@ -180,7 +182,8 @@ export function settingsFile(path: string) {
         DEFAULT_RETENTION_DAYS
       ),
       onboardingDismissed: data.onboardingDismissed === true,
-      sessionStarted: data.sessionStarted === true
+      sessionStarted: data.sessionStarted === true,
+      checkUpdatesOnStart: data.checkUpdatesOnStart === true
     };
     if (isWindowBounds(data.windowBounds)) settings.windowBounds = data.windowBounds;
     if (Number.isInteger(data.port)) settings.port = data.port as number;

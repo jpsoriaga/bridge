@@ -1,40 +1,80 @@
-appId: com.bridge.app
+# Packaging. Run through scripts/package.mjs (`pnpm package:mac`, `:win`, `:linux`), which
+# turns signing on when its secrets are set and builds unsigned (with a warning) when not.
+# See RELEASE.md.
+appId: com.jpsoriaga.bridge
 productName: Bridge
+copyright: Copyright © 2026 Jaypee Soriaga
 directories:
   output: dist
   buildResources: resources
+# Only the built app. Source, tests, source maps, e2e, fixtures and archive/ never ship;
+# scripts/check-package.mjs lists the asar and fails on anything else.
 files:
   - out/**/*
+  - '!**/*.map'
   - package.json
+  # Dependencies ship their own tests, TypeScript, benchmarks and docs; none of it runs.
+  - '!**/node_modules/**/*.{ts,mts,cts,md,markdown}'
+  - '!**/node_modules/**/{test,tests,__tests__,benchmark,benchmarks,bench,example,examples,docs,doc,coverage,fixtures,.github}/**'
+  - '!**/node_modules/**/{.eslintrc*,eslint.config.*,.prettierrc*,.prettierignore,.editorconfig,.taprc,.airtap.yml,.borp.yaml,.nojekyll,tsconfig*.json,*.bench.js,*.test.js,*.spec.js}'
+# The asar's hash goes into the app (Info.plist, Windows resources) and the
+# EnableEmbeddedAsarIntegrityValidation fuse makes Electron check it at launch.
 asar: true
+# Packaged builds are named "Bridge", so their userData is …/Bridge (README, "Where data
+# lives"). `pnpm dev` keeps the package name, so a dev build never shares a pairing or
+# backups with an installed one.
+extraMetadata:
+  productName: Bridge
+# English only: the UI isn't translated, so the other Chromium locales are dropped.
+electronLanguages:
+  - en-US
+icon: ../../packages/shared/assets/icon.png
 # Flips the Electron fuses (scripts/fuses.cjs) before signing; verify a build with
 # `pnpm --filter @bridge/desktop verify:fuses <path to the app>`.
 afterPack: scripts/fuses.cjs
+# electron-updater reads latest*.yml from the GitHub Release. Notify only (src/main/updates.ts).
+# Nothing is uploaded from here: builds run with --publish never and the release workflow
+# attaches the files to a draft release.
+publish:
+  provider: github
+  owner: jpsoriaga
+  repo: bridge
+  releaseType: release
 mac:
   target:
     - target: dmg
-      arch:
-        - arm64
-        - x64
+      arch: [arm64, x64]
     - target: zip
-      arch:
-        - arm64
-        - x64
+      arch: [arm64, x64]
   category: public.app-category.developer-tools
+  # Signed builds only. scripts/package.mjs turns it off for unsigned (ad-hoc) builds,
+  # where library validation would refuse Electron's own frameworks.
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: resources/entitlements.mac.plist
   entitlementsInherit: resources/entitlements.mac.plist
+  artifactName: ${productName}-${version}-mac-${arch}.${ext}
 dmg:
-  artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+  artifactName: ${productName}-${version}-mac-${arch}.${ext}
 win:
   target:
     - target: nsis
-      arch:
-        - x64
-  artifactName: ${productName}-${version}-Setup-${arch}.${ext}
+      arch: [x64]
+  artifactName: ${productName}-${version}-win-${arch}-setup.${ext}
 nsis:
+  # Per-user install under %LOCALAPPDATA%\Programs, no admin rights.
   oneClick: false
   perMachine: false
+  allowElevation: false
   allowToChangeInstallationDirectory: true
-  deleteAppDataOnUninstall: true
+  # Backups and the pairing key stay until you remove them (README, "Uninstall").
+  deleteAppDataOnUninstall: false
+linux:
+  # Otherwise it's derived from the scoped package name; scripts/fuses.cjs and the release
+  # workflow expect `bridge`.
+  executableName: bridge
+  target:
+    - target: AppImage
+      arch: [x64]
+  category: Development
+  artifactName: ${productName}-${version}-linux-${arch}.${ext}

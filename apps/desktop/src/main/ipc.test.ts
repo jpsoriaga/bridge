@@ -43,7 +43,9 @@ const CALLS: Record<IpcChannel, { good: unknown[]; bad: unknown[][] }> = {
   openBackupsFolder: { good: [], bad: [['/']] },
   clearBackups: { good: [], bad: [[true]] },
   setOnboardingDismissed: { good: [true], bad: [['true'], []] },
-  dismissAllowlistNote: { good: [], bad: [[1]] }
+  dismissAllowlistNote: { good: [], bad: [[1]] },
+  checkForUpdates: { good: [], bad: [['https://example.com']] },
+  setCheckUpdatesOnStart: { good: [false], bad: [['yes'], []] }
 };
 
 const window = { sender: { id: 1 }, frame: { id: 'top' } };

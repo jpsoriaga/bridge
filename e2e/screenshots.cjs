@@ -1,12 +1,18 @@
 // Screenshots for the README: the app and the chat cards, in light and dark, from the real
-// app and a production build of the extension on the stand-in chat page.
-//   node e2e/screenshots.cjs .   → docs/screenshots/*.png
+// app and a production build of the extension on the stand-in chat page. Also the Chrome
+// Web Store images: 1280×800 screenshots in both themes and the 440×280 promo tile.
+//   node e2e/screenshots.cjs .   → docs/screenshots/*.png, store/screenshots/*.png,
+//                                   store/promo-tile-440x280.png
 const fs = require('node:fs');
 const path = require('node:path');
-const { ROOT, EXT, tempDir, launchApp, launchChrome, enterCode } = require('./lib.cjs');
+// The real port range (47821…), since Settings shows the port: quit `pnpm dev` first.
+const { ROOT, tempDir, buildExtension, launchApp, launchChrome, enterCode } = require('./lib.cjs');
+const EXT = buildExtension({ e2ePorts: false });
 const { step, SHELL, assistantTurn, cardText, clickInCard, waitFor } = require('./chat-lib.cjs');
 
 const OUT = path.join(ROOT, 'docs/screenshots');
+const STORE = path.join(ROOT, 'store');
+const TOKENS = fs.readFileSync(path.join(ROOT, 'packages/shared/src/tokens.css'), 'utf8');
 const CONV = 'e2e00000-0000-4000-8000-0000000000ss';
 
 // The stand-in page with a dark variant, so cards can be shown on both.
@@ -42,7 +48,7 @@ const PAGE = SHELL.replace(
     })
   );
 
-  const { app, win } = await launchApp(appData);
+  const { app, win } = await launchApp(appData, { e2ePorts: false });
   const nav = (name) => win.getByRole('navigation', { name: 'Main' }).getByRole('button', { name });
   await win.locator('.switcher-name').filter({ hasText: 'acme-web' }).waitFor();
   await nav('Settings').click();
@@ -132,6 +138,61 @@ const PAGE = SHELL.replace(
   await new Promise((r) => setTimeout(r, 800));
   await panel.screenshot({ path: path.join(OUT, 'panel-dark.png'), fullPage: true });
   step('side panel');
+
+  // Chrome Web Store: 1280×800. The chat with its cards beside the side panel, then the app.
+  fs.mkdirSync(path.join(STORE, 'screenshots'), { recursive: true });
+  await app.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()[0].setContentSize(1280, 800)
+  );
+  await chat.setViewportSize({ width: 879, height: 800 });
+  await panel.setViewportSize({ width: 400, height: 800 });
+  const frame = await ctx.newPage();
+  await frame.setViewportSize({ width: 1280, height: 800 });
+  const png = (buffer) => `data:image/png;base64,${buffer.toString('base64')}`;
+  for (const theme of ['light', 'dark']) {
+    await chat.evaluate((t) => {
+      document.documentElement.className = t;
+      document.querySelector('pre')?.scrollIntoView({ block: 'start' });
+      window.scrollBy(0, -96);
+    }, theme);
+    await panel.emulateMedia({ colorScheme: theme });
+    await panel.reload();
+    // The panel follows its window's active tab: the chat, with its session.
+    await chat.bringToFront();
+    await panel.getByRole('button', { name: 'End session' }).waitFor();
+    await new Promise((r) => setTimeout(r, 800));
+    const [left, right] = [await chat.screenshot(), await panel.screenshot()];
+    await frame.setContent(
+      `<style>${TOKENS} :root { color-scheme: ${theme}; } body { margin: 0; display: flex; background: var(--bg); }
+        i { width: 1px; background: var(--border); }</style>
+       <img src="${png(left)}"><i></i><img src="${png(right)}">`
+    );
+    await frame.screenshot({ path: path.join(STORE, 'screenshots', `1-chat-${theme}.png`) });
+
+    await win.evaluate((t) => window.bridge.setTheme(t), theme);
+    await new Promise((r) => setTimeout(r, 300));
+    await nav('Session').click();
+    const shot = (name) =>
+      win.screenshot({ path: path.join(STORE, 'screenshots', name), scale: 'css' });
+    await shot(`2-app-session-${theme}.png`);
+    await nav('Activity').click();
+    await shot(`3-app-activity-${theme}.png`);
+    step(`${theme}: store screenshots`);
+  }
+
+  // The promo tile, with the tokens and the Geist fonts from the extension build.
+  const font = (file) => fs.readFileSync(path.join(EXT, 'fonts', file)).toString('base64');
+  const fonts = `@font-face { font-family: 'Geist Variable'; font-weight: 100 900; src: url(data:font/woff2;base64,${font('geist.woff2')}) format('woff2'); }
+    @font-face { font-family: 'Geist Mono Variable'; font-weight: 100 900; src: url(data:font/woff2;base64,${font('geist-mono.woff2')}) format('woff2'); }`;
+  const tile = fs
+    .readFileSync(path.join(STORE, 'promo-tile.html'), 'utf8')
+    .replace('/*FONTS*/', fonts)
+    .replace('/*TOKENS*/', TOKENS);
+  await frame.setViewportSize({ width: 440, height: 280 });
+  await frame.setContent(tile);
+  await frame.evaluate(() => document.fonts.ready);
+  await frame.screenshot({ path: path.join(STORE, 'promo-tile-440x280.png') });
+  step('store promo tile');
 
   await ctx.close();
   await app.close();

@@ -10,7 +10,8 @@ import {
   type PairingCode,
   type RunDetail,
   type SaveListResult,
-  type UndoOutcome
+  type UndoOutcome,
+  type UpdateCheck
 } from './api';
 import type { Mode } from '@bridge/shared';
 
@@ -76,6 +77,9 @@ const api: BridgeApi = {
   setOnboardingDismissed: (dismissed) =>
     ipcRenderer.invoke(IPC.setOnboardingDismissed, dismissed) as Promise<void>,
   dismissAllowlistNote: () => ipcRenderer.invoke(IPC.dismissAllowlistNote) as Promise<void>,
+  checkForUpdates: () => ipcRenderer.invoke(IPC.checkForUpdates) as Promise<UpdateCheck>,
+  setCheckUpdatesOnStart: (on) =>
+    ipcRenderer.invoke(IPC.setCheckUpdatesOnStart, on) as Promise<void>,
   onMenu: (listener) => {
     const handler = (_event: IpcRendererEvent, action: MenuAction) => listener(action);
     ipcRenderer.on(IPC.menu, handler);

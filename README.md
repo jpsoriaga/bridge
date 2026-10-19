@@ -2,232 +2,270 @@
 
 <img src="packages/shared/assets/logo.svg" width="48" alt="" />
 
-Bridge lets the ChatGPT web chat edit a project on your computer. The chat writes whole files in a simple `@@FILE` format. Bridge shows each one as a diff card right in the conversation and writes it to your project when you say so, or automatically with undo.
+Bridge lets the chat on chatgpt.com edit a project on your computer, with you in charge. The chat writes whole files in a simple `@@FILE` format; Bridge shows each one as a diff card right under the reply, and writes it into your project only when you click **Apply** (or, if you choose, as soon as the reply finishes, with Undo).
 
-It runs entirely on your machine. The desktop app listens only on `127.0.0.1`, and nothing is sent anywhere else.
+Everything runs on your computer. The Bridge desktop app does the reading and writing inside one project folder; the Chrome extension talks only to that app, over `127.0.0.1`. No accounts, no telemetry, nothing sent anywhere else.
 
-> **Status:** Phase 7 of 8 (security hardening) is done. Edits show as diff cards with Apply, Reject and Undo; deletes and renames get their own cards and always need a click; Auto-apply writes edits for you with undo; commands on your allowlist run from RUN cards; and the opt-in Full auto mode can carry a task across several messages on its own, within a step limit. Pairing checks a fingerprint on both sides, and secrets are redacted before they reach the chat. Packaging is next. See [CHECKLIST.md](CHECKLIST.md) and [SECURITY.md](SECURITY.md).
+> Bridge is not affiliated with or endorsed by OpenAI.
 
 | Light                                                                                                   | Dark                                                                          |
 | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | ![The Bridge app's Session page, light](docs/screenshots/app-session-light.png)                         | ![The Bridge app's Session page, dark](docs/screenshots/app-session-dark.png) |
 | ![Cards in the chat: a diff, a delete, a rename and a command, light](docs/screenshots/cards-light.png) | ![The same cards, dark](docs/screenshots/cards-dark.png)                      |
 
-More in [`docs/screenshots/`](docs/screenshots): the Activity and Settings pages and the side panel, both themes. `node e2e/screenshots.cjs .` regenerates them.
+More in [`docs/screenshots/`](docs/screenshots): the Activity and Settings pages and the side panel, in both themes.
+
+**Contents:** [How it works](#how-it-works) · [Install the app](#install-the-app) · [Install the extension](#install-the-extension) · [Pair](#pair-the-extension) · [Open a project](#open-a-project) · [Use it in the chat](#use-it-in-the-chat) · [Modes](#modes) · [Commands and the allowlist](#commands-and-the-allowlist) · [Full auto](#full-auto) · [Updates](#updates) · [Troubleshooting](#troubleshooting) · [Where data lives](#where-data-lives) · [Uninstall](#uninstall) · [Development](#development) · [FAQ](docs/FAQ.md) · [Security](SECURITY.md) · [Privacy](PRIVACY.md)
 
 ## How it works
 
 ```
-chatgpt.com ──▶ Chrome extension ──WebSocket (127.0.0.1)──▶ Bridge desktop ──▶ your project
-  @@FILE blocks   parses, shows diff cards                    sandboxed writes, undo,
-                  side panel                                  allowlisted commands
+chatgpt.com ──▶ Bridge extension ──WebSocket on 127.0.0.1──▶ Bridge app ──▶ your project
+  @@FILE blocks   reads replies, shows diff cards            sandboxed writes, undo,
+                  side panel                                 allowlisted commands
 ```
 
-1. **Start session** puts instructions and your file list into the chat's message box. You send it.
-2. The chat replies with one or more blocks like:
+1. **Start session** (in the extension's side panel) puts short instructions and your project's file list into the chat's message box. You send it.
+2. The chat replies with whole files:
 
    ````
    `@@FILE src/hooks/useTheme.js@@`
    ```js
-   ...full file...
+   ...the full file...
    ```
    ````
 
-   or asks to see files with `` `@@READ src/app.ts@@` ``, or to delete or move one with `` `@@DELETE src/old.ts@@` `` and `` `@@RENAME src/a.ts -> src/b.ts@@` ``.
+   or asks to see files (`` `@@READ src/app.ts@@` ``), to delete or move one (`` `@@DELETE src/old.ts@@` ``, `` `@@RENAME src/a.ts -> src/b.ts@@` ``), or to run a command (`` `@@RUN pnpm test@@` ``).
 
-3. The extension parses finished replies with the shared parser and shows a diff card under each block, or a card listing the files it asked for.
-4. You click **Apply**. The desktop app checks the path against the project sandbox and writes the file. Every write can be undone.
-5. The chat can also ask to run a command with `` `@@RUN pnpm test@@` ``. Only commands on the allowlist you set in the app ever run.
-6. Three modes control how much happens on its own: **Manual**, **Auto-apply** and **Full auto** (see [Modes](#modes)).
+3. The extension shows a card under each one: a diff against your file, the files asked for, the command.
+4. You click **Apply** (or **Send these files**, **Run**…). The app checks the path against the project sandbox, backs up the old file, and writes the new one. Every change can be undone.
+5. **Modes** decide how much happens on its own: Manual, Auto-apply, or the opt-in Full auto.
 
-[PLAN.md](PLAN.md) has the full architecture. [SECURITY.md](SECURITY.md) has the threat model, every control and the known limits.
+[PLAN.md](PLAN.md) has the full architecture, and [SECURITY.md](SECURITY.md) the threat model, every control and the known limits.
 
-## Requirements
+## Install the app
 
-- Node.js 24 LTS (`nvm use` reads `.nvmrc`)
-- pnpm 9.15.4 (`corepack enable` picks it up from `packageManager`)
-- Google Chrome or another Chromium browser with side-panel support
-- macOS, Windows or Linux
+Download the installer for your system from the [latest release](https://github.com/jpsoriaga/bridge/releases/latest). `SHA256SUMS.txt` on the same page lets you check the download (`shasum -a 256 <file>` on macOS and Linux, `certutil -hashfile <file> SHA256` on Windows).
 
-## Setup
+| System                     | File                                 |
+| -------------------------- | ------------------------------------ |
+| macOS, Apple silicon (M1…) | `Bridge-X.Y.Z-mac-arm64.dmg`         |
+| macOS, Intel               | `Bridge-X.Y.Z-mac-x64.dmg`           |
+| Windows 10 or 11 (64-bit)  | `Bridge-X.Y.Z-win-x64-setup.exe`     |
+| Linux (64-bit)             | `Bridge-X.Y.Z-linux-x86_64.AppImage` |
 
-```bash
-corepack enable
-pnpm install
-pnpm dev
-```
+### Unsigned builds
 
-`pnpm dev` starts the Electron app (with hot reload) and rebuilds the extension into `apps/extension/dist` on every change.
+Signing an app costs a yearly fee to Apple and to a Windows certificate authority. Until Bridge's releases are signed (the release notes say whether they are), macOS and Windows warn before running it, because they can't tell who made it. The steps below tell them you trust this download. Check its SHA-256 first if you want to be sure it's the file from the release page.
 
-## Load the extension
+### macOS
 
-1. Run `pnpm dev` or `pnpm build` so that `apps/extension/dist` exists.
-2. Open `chrome://extensions` and turn on **Developer mode**.
-3. Click **Load unpacked** and choose **`apps/extension/dist`**.
-4. Open https://chatgpt.com (reload any tab that was already open).
-5. Click the Bridge toolbar icon to open the side panel.
+1. Open the `.dmg` and drag **Bridge** to **Applications**.
+2. **Unsigned build:** the first time, don't double-click. In Applications, **right-click (or Control-click) Bridge → Open**, then **Open** in the dialog. macOS remembers the choice.
+   On macOS 15 (Sequoia) and later the dialog may only offer **Done**: then open **System Settings → Privacy & Security**, scroll to "Bridge was blocked…", click **Open Anyway**, and confirm.
+   This is needed because the app isn't notarized by Apple, so Gatekeeper can't check it. A signed build opens normally.
+3. Bridge opens to the **Session** page with a **Get started** checklist. Keep it in the Dock if you like.
 
-The manifest carries a fixed `key`, so the unpacked extension always gets the ID `golkpkmancgpgkpfjggoimedcogghhip`. The desktop app only accepts connections from that ID.
+### Windows
 
-During `pnpm dev`, the content script and side panel rebuild automatically. Click the reload icon on the extension's card in `chrome://extensions` and refresh the chatgpt.com tab to pick up changes.
+1. Run `Bridge-X.Y.Z-win-x64-setup.exe`. It installs for your user only (in `%LOCALAPPDATA%\Programs\Bridge`), with no admin rights.
+2. **Unsigned build:** Microsoft Defender SmartScreen says "Windows protected your PC". Click **More info**, check the file name, then **Run anyway**. SmartScreen warns about programs without a known publisher signature; it isn't a virus warning.
+3. Bridge is in the Start menu.
+
+### Linux
+
+1. Make the AppImage executable and run it:
+
+   ```bash
+   chmod +x Bridge-X.Y.Z-linux-x86_64.AppImage
+   ./Bridge-X.Y.Z-linux-x86_64.AppImage
+   ```
+
+2. AppImages need FUSE 2 (`sudo apt install libfuse2` on Ubuntu 22.04, `libfuse2t64` on 24.04). Without it, run with `--appimage-extract-and-run`.
+3. On Ubuntu 24.04 and later, AppArmor may stop Electron's sandbox from starting ("The SUID sandbox helper binary was found, but is not configured correctly"). See [Troubleshooting](#troubleshooting).
+
+## Install the extension
+
+- **Chrome Web Store:** _link coming after the first review_ (Bridge is being submitted). Click **Add to Chrome**.
+- **Load unpacked** (works today):
+  1. Download `bridge-extension-X.Y.Z-unpacked.zip` from the [latest release](https://github.com/jpsoriaga/bridge/releases/latest) and unzip it into a folder you'll keep (Chrome loads it from there).
+  2. Open `chrome://extensions` and turn on **Developer mode** (top right).
+  3. Click **Load unpacked** and choose that folder.
+  4. Pin Bridge from the puzzle-piece menu, and reload any chatgpt.com tab that was already open.
+
+  To update an unpacked copy, unzip the new version over the same folder and click the reload icon on Bridge's card in `chrome://extensions`.
+
+Works in Google Chrome and other Chromium browsers with side panels (Edge, Brave, Arc). Click the Bridge icon to open the side panel.
+
+The app accepts only Bridge's own extension IDs. The unpacked zip (and a development build) carry a manifest `key` that fixes the ID to `golkpkmancgpgkpfjggoimedcogghhip`; the store version has the store's. The other zip on the release, `bridge-extension-X.Y.Z.zip`, is the store upload: it has no `key`, so loaded unpacked it gets a random ID and **can't pair**.
 
 ## Pair the extension
 
 You pair once. After that the extension reconnects on its own whenever both are running.
 
-1. Start the Bridge desktop app. Its status reads **Not paired**, and Settings shows the local server address (normally `127.0.0.1:47821`).
-2. Click **Pair extension**. The app shows a 6-digit code that works once and expires in 2 minutes.
-3. Open the Bridge side panel in Chrome (the toolbar icon), type the code and click **Pair**.
-4. **Check the fingerprint.** The app and the side panel each show a short fingerprint like `a1b2 c3d4`. If they're the same, click **They match** in the app, then **They match** in the side panel. If they differ, something other than the Bridge app answered the extension: click **Cancel** on both and start again.
-5. Both status pills turn to **Connected**.
+1. In the Bridge app, click **Pair extension** (on the Session page). It shows a 6-digit code that works once and expires in 2 minutes.
+2. Open the Bridge side panel in Chrome, type the code and click **Pair**.
+3. **Compare the fingerprint.** The app and the side panel each show a short fingerprint like `a1b2 c3d4`. If they're the same, click **They match** in the app, then **They match** in the side panel. If they differ, something other than the Bridge app answered: click **Cancel** on both and start again.
+4. Both show **Connected**.
 
-To unpair, click **Unpair** in either the app or the side panel. That revokes the pairing, and the other side shows **Not paired**. Pairing again from the app replaces the old pairing once the new one is confirmed.
+The fingerprint is what makes pairing safe: the key both sides keep comes from a key exchange, and only the real app can produce the same fingerprint. Confirming without looking gives that up.
 
-The key both sides keep comes from a key exchange during pairing; it never crosses the wire. After pairing they prove to each other that they hold it with an HMAC challenge, the app first, so a program pretending to be Bridge on one of its ports learns nothing. The extension remembers which port the real app was on and tries that one first.
+To unpair, click **Unpair** in the app or the side panel. After 5 wrong codes, pairing is locked for 60 seconds and the code is cancelled.
 
-Updating from a build before Phase 7: pairing changed, so pair again once (both sides show **Not paired**, or the side panel shows **Can't reach Bridge**; click **Unpair** there first).
-
-After 5 wrong codes, pairing is locked for 60 seconds and the current code is cancelled. Start a new code once the lock ends.
-
-If the side panel says **App not running**, open the desktop app. The extension keeps retrying (up to every 30 seconds, and at least once a minute even after Chrome suspends it) and retries immediately when you open the side panel.
+If one side is updated and the other isn't, both say which one to update (**Update the Bridge app** or **Update the extension**) instead of failing to connect.
 
 ## Open a project
 
-1. In the Bridge app, click **Open folder…** (⌘O) and choose your project. Bridge reopens it next time. The project switcher in the top bar lists your last 5.
-2. The project name shows in the app's top bar, and its path on the **Session** page and in the side panel.
+1. In the app, click **Open folder…** (⌘O / Ctrl+O) and choose your project. Bridge reopens it next time; the project switcher in the top bar lists your last 5.
+2. The extension can reach only files inside that folder. Bridge refuses absolute paths, `..`, links that lead outside it and files with more than one hard link, and never touches `.git/`, `.env` and `.env.*`, `*.pem`, `*.key`, `id_rsa*` or `node_modules/`. Add your own under **Settings → Project → Protected files**. Refused requests show in **Activity** with a red dot.
+3. Every write, delete and rename is backed up first (in Bridge's data folder, never in your project). The **Activity** page lists them: filter, search, click a row to see its diff and **Undo** it. Backups are kept 7 days by default (**Settings → Backups**, 1–90).
 
-If the folder disappears while it's open (deleted, moved, renamed, or its disk unmounted), the app says **Project missing** and every request fails cleanly until it's back; **Try again** or **Open folder…** fixes it.
-
-The first time you open the app, a **Get started** checklist on the Session page ticks itself off as you pair, open a project, confirm commands and start a session. Close it when you're done; **Help → Getting started** brings it back.
-
-The extension can reach only files inside that folder. Bridge refuses absolute paths, `..`, and symlinks that lead outside it, and never touches `.git/`, `.env` and `.env.*`, `*.pem`, `*.key`, `id_rsa*` or `node_modules/`. Add your own patterns under **Settings → Protected files**. Blocked requests show in **Activity** with a red dot.
-
-Every write, delete and rename is backed up first, into Bridge's own data folder (never into your project). The **Activity** page lists them: filter by kind (writes, deletes, renames, commands, blocked, automatic), search by path, and click a row to see its diff (or a command's full output) and **Undo** it. **Undo last** reverts the newest change. If you edited the file after Bridge changed it, Bridge asks before overwriting your edit. Backups are kept for 7 days (change it under **Settings → Backups**, 1–90) or 500 changes per project. **Settings → Backups** can also open the backups folder or clear it for the project.
-
-Bridge reads and writes UTF-8 text only. Files in another encoding are refused (`not UTF-8`) rather than corrupted, a byte order mark is kept, and a file that ends without a newline keeps ending without one.
-
-### Try it by hand (dev builds)
-
-With `pnpm dev` running, the side panel has a **Test read (dev only)** field once connected: pick `tree`, `read`, `write` or `undo`, enter a path (or an op id for undo) and click **Send**. A write after a read of the same path modifies that file; a write without one creates a new file. Production builds don't include this field.
+Bridge reads and writes UTF-8 text only; other encodings are refused rather than corrupted. If the folder disappears while open, the app says **Project missing** until it's back.
 
 ## Use it in the chat
 
 You need the app running with a project open, the extension paired, and a chat open on chatgpt.com.
 
-1. Open the side panel next to the chat tab. Under **Session** it shows how big the instructions are (your file list included), then click **Start session**. The text lands in the message box; read it and press send. In a new chat, the session attaches to the conversation once it gets its address after your first message. The panel then reads **Session active**.
-2. Ask for a change. When the reply finishes, each `@@FILE` block gets a card under it with a diff against your file, `+N −M`, and a badge (`new`, `modified`, `unchanged`, `conflict`, `blocked`, `partial?`).
-3. **Apply** writes the file, **Reject** dismisses the card, and **Undo** (after applying) puts the old file back. A reply with two or more files has **Apply all**, which stops at the first problem. A block that looks partial (`// ...rest unchanged`) needs a second click.
-4. If the file changes on disk after the card appeared, the card notices (the app watches the project) and shows `conflict` with the new diff before you click. Apply then writes over what's there now. If the same reply edits a file twice, both cards show with a warning and **Apply all** uses the last one. An edit that changes nothing says `unchanged`; binary or over-1 MB content is refused on the card.
-5. **Deletes and renames** get their own cards: a red DELETE card with the file's size, and a RENAME card with `old → new`. They only ever happen on a click (**Delete file**, **Rename**), in every mode, and **Undo** puts the file back. A rename onto a file that already exists is refused; a case-only rename (`App.tsx` → `app.tsx`) works on macOS.
-6. If the chat asks for files (`@@READ`), its card lists them and their size. **Send these files** puts them in the message box. To send files yourself, tick them under **Send files** in the side panel and click **Insert** (the tree loads one folder at a time, so big repos stay quick). Both warn above 30,000 characters, where the chat may turn the text into an attachment or cut it.
-7. **Files in context** in the side panel lists what you've sent this session and how much of the message each took. A file that changed on disk since is marked `changed`; **Resend changed** sends the new versions. Files the chat itself edited, deleted or renamed follow along instead.
-8. **End session** stops Bridge reading that conversation. Its cards stay but are disabled.
+1. In the side panel, under **Session**, check the size of the instructions and click **Start session**. The text lands in the message box; read it and press send. The panel reads **Session active**.
+2. Ask for a change. When the reply finishes, each file gets a card with a diff, `+N −M` and a badge (`new`, `modified`, `unchanged`, `conflict`, `blocked`, `partial?`).
+3. **Apply** writes the file, **Reject** dismisses the card, **Undo** puts the old file back. Two or more files get **Apply all**. A block that looks partial (`// ...rest unchanged`) needs a second click.
+4. If the file changes on disk after the card appeared, the card shows `conflict` and the new diff before you click.
+5. **Deletes and renames** get their own cards and only ever happen on a click, in every mode.
+6. When the chat asks for files (`@@READ`), **Send these files** puts them in the message box. Or tick files under **Send files** in the side panel. **Files in context** marks files that changed since you sent them; **Resend changed** sends the new versions.
+7. **End session** stops Bridge reading that conversation. Moving the tab to another chat ends it too.
 
-Card states survive a page reload, and come back when a long conversation scrolls old messages out and back in. Changes from cards show in the app's **Activity** as "via chat". Every card has **Copy path**, collapses to one line, and shows when it was applied.
-
-A session belongs to one tab. Another tab on the same conversation says **Session active in another tab**, with **Move here**. If you reload or update the extension while a chat is open, the page drops Bridge's cards and asks you to reload it. The page chip (mode, and the step count and **Stop** in Full auto) can be dragged to any corner.
-
-If the side panel says **Bridge can't read this page layout**, the chat page changed in a way Bridge doesn't recognise. Nothing is parsed until the selectors are updated (see `apps/extension/src/content/chat/selectors.ts`).
+Cards keep their state across reloads. A session belongs to one tab; another tab on the same conversation offers **Move here**.
 
 ## Modes
 
-You switch modes in the desktop app. The side panel and every card show the current one. The app enforces it: the extension can only ask.
+You switch modes in the app; the side panel and every card show the current one. The app enforces it: the extension can only ask.
 
-| Mode           | Edits                                                                                                  | Commands                                                                  | Sending                           |
-| -------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- | --------------------------------- |
-| **Manual**     | Diff cards; nothing is written until you click Apply                                                   | RUN cards; **Run** on a click, **Send output** puts the result in the box | You press send                    |
-| **Auto-apply** | Written as soon as a reply finishes. Each card says **Auto-applied** with Undo; **Undo all** per reply | As in Manual                                                              | You press send                    |
-| **Full auto**  | As in Auto-apply                                                                                       | Allowlisted commands run on their own                                     | Bridge sends the follow-up itself |
+| Mode           | Edits                                                                          | Commands                                                  | Sending                           |
+| -------------- | ------------------------------------------------------------------------------ | --------------------------------------------------------- | --------------------------------- |
+| **Manual**     | Diff cards; nothing is written until you click Apply                           | RUN cards: **Run** on a click, **Send output** to the box | You press send                    |
+| **Auto-apply** | Written as soon as a reply finishes; each card says **Auto-applied** with Undo | As in Manual                                              | You press send                    |
+| **Full auto**  | As in Auto-apply                                                               | Allowlisted commands run on their own                     | Bridge sends the follow-up itself |
 
-In every mode, Bridge leaves these for your click: deletes and renames, files that look partial, that changed on disk, that the sandbox refuses, that are over 1 MB, and **gated files**. Gated files can change what a command does: `package.json`, lockfiles, `.npmrc`, `.yarnrc*`, `pnpm-workspace.yaml`, `.github/workflows/`, `.husky/` and other hook folders, `Dockerfile`, `Makefile`. Add your own under **Settings → Gated files**. This only blocks the most direct routes: running the tests still runs test code the chat wrote.
+In every mode, these wait for your click: deletes and renames, files that look partial, changed on disk, refused by the sandbox or over 1 MB, and **gated files** that can change what a command does (`package.json`, lockfiles, `.npmrc`, CI workflows, git hooks, `Dockerfile`, `Makefile`; add more under **Settings → Gated files**).
 
-Auto-apply is remembered across sessions. Full auto is not: it turns off when you restart Bridge, start or end a session (the app and the side panel say "Full auto turned off: it's per session."), unpair or switch projects. Moving a tab to another chat ends that tab's session.
+Auto-apply carries over between sessions. Full auto doesn't: it turns off when you restart Bridge, start or end a session, unpair or switch projects.
 
 ## Commands and the allowlist
 
-The first time you open a project, **Settings → Commands** suggests commands from its `package.json` scripts (`pnpm test`, `pnpm lint`, …) plus `git status` and `git diff`. Tick the ones you want and click **Allow**. Nothing runs until you do. You can add and remove commands there at any time. Nothing in the chat or the extension can change the list.
+The first time you open a project, **Settings → Commands** suggests commands from its `package.json` scripts plus `git status` and `git diff`. Tick the ones you want and click **Allow**. Nothing runs until you do, and nothing in the chat or the extension can change the list.
 
-- An entry matches exactly: `pnpm test` allows `pnpm test` and nothing more. End it with `*` to allow extra arguments: `pnpm test *` also allows `pnpm test -- --run src/a.test.ts`, never `pnpm testx`. Lists saved before Phase 7 got a `*` on every entry, since that's how they behaved; Settings says so once. Prefer exact entries.
-- Some options are refused even with `*`, because they'd let an allowed program run other code, write files or change folder: `git -C`, `-c`, `--output`, `--exec`, `--git-dir`, …; `node -e`, `-p`, `-r`, `--import`, …; `npm`/`pnpm`/`yarn` `--dir`, `--prefix`, `-g`, `exec`, `dlx`; and `npx`, `pnpx` and `bunx` altogether. The full table is in [SECURITY.md](SECURITY.md).
-- There is no shell. Pipes, `&&`, `;`, redirects, `$`, backticks, wildcards and `FOO=1 cmd` are refused, and so is anything longer than 1,000 characters.
-- Programs are found on your `PATH`. One that resolves inside the project (say `node_modules/.bin` on your `PATH`) is refused; to run a project script, allowlist its exact path, like `./scripts/check.sh`.
-- Commands run in the project folder with your environment, minus anything that looks like a secret (`*TOKEN*`, `*SECRET*`, `*KEY*`, `*PASSWORD*`, `AWS_*`, `OPENAI_*`, …; add more under **Settings → Hidden from commands**), with `CI=1` and `FORCE_COLOR=0`.
-- One command at a time. The timeout is 120 seconds by default (up to 10 minutes) and kills everything the command started. Output is kept up to 200 KB (start and end), and the chat gets about 8,000 characters of it.
+- An entry matches exactly: `pnpm test` allows `pnpm test` and nothing more. End it with `*` to allow extra arguments (`pnpm test *` also allows `pnpm test -- --run a.test.ts`). Prefer exact entries.
+- Some options are refused even with `*`, because they'd let an allowed program run other code or write elsewhere: `git -C`, `-c`, `--output`, …; `node -e`, `-r`, `--import`, …; package managers' `--dir`, `--prefix`, `-g`, `exec`, `dlx`; and `npx`, `pnpx`, `bunx` entirely. The full table is in [SECURITY.md](SECURITY.md).
+- There's no shell: pipes, `&&`, redirects, `$`, wildcards and `FOO=1 cmd` are refused.
+- Commands run in the project folder with your environment minus anything that looks like a secret, one at a time, with a timeout (2 minutes by default) that stops everything they started.
+- Likely secrets in command output and file contents are replaced with `[redacted]` before they go into the chat. It's best effort: keep secrets in `.env` files, which Bridge never reads.
 
-Output streams live on the RUN card, in the side panel and in the app, where **Cancel** stops it.
-
-Before command output or file contents go into the message box, likely secrets (API keys, tokens, private keys, JWTs, high-entropy values next to words like `key` or `secret`) are replaced with `[redacted]`, and the card says how many. It's best effort: keep secrets in `.env` files, which Bridge never reads.
+The app reads your login shell's `PATH` at startup (macOS, Linux), so `pnpm` from nvm, Volta or Homebrew works even when Bridge is opened from the Dock. **Settings → Commands → PATH for commands** shows where it came from and can override it.
 
 ## Full auto
 
 > **Read this before turning it on.** Full auto clicks the chat's send button for you. Automating the chat this way may break its provider's terms of use and put your account at risk. The commands it runs execute code the model may have written (tests, build scripts), with your user's permissions. It's opt-in and at your own risk, and the app asks you to confirm every time you turn it on.
 
-When a reply finishes, Bridge applies its edits, reads the files it asked for, runs its allowlisted commands one after another, and sends one follow-up message with the results. It checks that the message really appeared, then waits for the next reply. It ends when a reply asks for nothing or says `` `@@DONE@@` ``.
+When a reply finishes, Bridge applies its edits, reads the files it asked for, runs its allowlisted commands, and sends one follow-up with the results, then waits for the next reply. It ends when a reply asks for nothing or says `` `@@DONE@@` ``. It pauses for you on anything that needs a click, a command that isn't allowed, an error banner, a lost connection, or the step limit (10 messages by default, up to 25). **Stop** is in the side panel, on the page chip and in the app (⌘. / Ctrl+.); it halts at once and reverts nothing.
 
-It pauses and waits for you on a delete or rename (those always need your click); a gated, partial, conflicting or blocked edit; a command that isn't allowed; a failed command if you turned on **Pause on failure** (off by default, so test failures go back to the chat to fix); a follow-up too big to send even trimmed; an error or limit banner on the page; a lost connection to the app; the app restarting (turn Full auto back on, then Resume); the computer sleeping in the middle of a step; or when you leave the conversation. Click **Resume** in the side panel to carry on.
+## Updates
 
-- **Step limit:** 10 messages per run by default (up to 25, under **Settings → Full auto**). The panel and a chip on the page show `3 / 10`. At the limit it pauses and offers **Continue for 10 more**.
-- **Pace:** at least 3 seconds between messages it sends, and no other delay.
-- **Stop:** in the side panel, on the page chip, and in the app on every page while a run is going (also ⌘. or **Session → Stop Full auto**). It halts the loop and cancels the running command at once. It reverts nothing; every edit can still be undone.
-- Every step shows in the app's **Activity**, grouped by run.
+**Settings → About** shows your version and has **Check for updates**. It asks GitHub Releases for the latest version number and, if there's a newer one, links to it. It never downloads or installs anything. Turn on **Check for updates when Bridge starts** to have it ask once at each launch (off by default). Unsigned macOS builds don't check; watch the [releases page](https://github.com/jpsoriaga/bridge/releases) instead.
 
-## Project structure
-
-```
-apps/
-  desktop/          Electron app (electron-vite)
-    src/main/       main process: window, local server, pairing, project sandbox and backups
-    src/preload/    contextBridge API (window.bridge)
-    src/renderer/   React UI
-    resources/      app icon, macOS entitlements
-  extension/        Chrome MV3 extension (CRXJS + Vite)
-    manifest.config.ts
-    src/content/    runs on chatgpt.com: chat/ reads messages, injects cards, fills the composer
-    fixtures/       saved chat page markup for the adapter tests
-    src/background/ service worker
-    src/sidepanel/  React side panel
-packages/
-  shared/           @bridge/shared: types, chat parser and prompts, diff helper, protocol schemas, logo, design tokens
-archive/prototype/  earlier server/pairing prototype, kept for reference (not built)
-```
-
-## Scripts
-
-| Command                                            | What it does                                                                              |
-| -------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `pnpm dev`                                         | Desktop app with hot reload + extension watch build                                       |
-| `pnpm build`                                       | Production build of both apps                                                             |
-| `pnpm lint`                                        | ESLint over the whole repo                                                                |
-| `pnpm format`                                      | Prettier write                                                                            |
-| `pnpm format:check`                                | Prettier check (CI)                                                                       |
-| `pnpm typecheck`                                   | `tsc --noEmit` in every package                                                           |
-| `pnpm test`                                        | Vitest (shared, desktop, renderer with Testing Library and axe, extension with happy-dom) |
-| `pnpm test:coverage`                               | The same, with coverage; fails below the thresholds in `vitest.config.ts` (CI)            |
-| `pnpm --filter @bridge/desktop verify:fuses <app>` | Checks a packaged app's Electron fuses                                                    |
-| `pnpm package:mac`                                 | Build a macOS dmg/zip with electron-builder                                               |
-| `pnpm package:win`                                 | Build a Windows installer with electron-builder                                           |
-
-End-to-end scripts (Playwright, against the built app and a stand-in chat page; CI runs them on Linux) live in [`e2e/`](e2e/README.md).
+To update, install the new version over the old one (drag it to Applications, run the new installer, or replace the AppImage). Your pairing, settings and backups stay. Update the extension too: the store does it on its own; for an unpacked copy, replace the folder and click reload on `chrome://extensions`.
 
 ## Troubleshooting
 
-- **`Cannot read properties of undefined (reading 'whenReady')` on `pnpm dev`**: your shell has `ELECTRON_RUN_AS_NODE=1` set. Some editor-integrated tools set it, so Electron starts as plain Node. Run `unset ELECTRON_RUN_AS_NODE` first.
-- **"That folder holds Bridge's own data"**: you picked Bridge's userData folder, or a folder containing it. Choose the project folder itself.
-- **Desktop says "Server error"**: something else is using every port from 47821 to 47830. Free one and restart Bridge.
-- **No cards in the chat**: check the side panel says **Session active** for this tab. Cards only appear once a reply has finished. If the chat tab was open before the extension was loaded or reloaded, reload the tab.
-- **"Project missing"**: the folder moved, was renamed or deleted, or its disk was unmounted. Put it back and click **Try again**, or open it from its new place.
-- **"Reload the page to use it here"**: the extension was reloaded or updated while the chat was open. Reload the chat tab.
-- **"Session active in another tab"**: another tab has this conversation's session. Click **Move here** to use this tab instead.
-- **Cards use the system font**: chatgpt.com's content security policy blocked the extension's fonts. Cards still work.
-- **A RUN card says "not allowed"**: the command isn't on the allowlist, or uses shell syntax. Add it under **Settings → Commands** if you want it.
-- **"That program isn't installed or isn't on the PATH"**: on macOS and Linux the app reads your login shell's PATH once at startup, so it works when opened from the Dock too. If that failed, **Settings → Commands** says why; set **PATH for commands** there (paste the output of `echo $PATH`), or allowlist the program's full path.
-- **Full auto paused with "no new message appeared"**: the chat page didn't take the send (its send button may have changed). Check the message box and press **Resume**.
-- **Side panel stays on "Can't reach Bridge"**: the app answered but the handshake failed. If you unpaired in the app while Chrome was closed, click **Unpair** in the side panel and pair again. Otherwise the extension ID may not match: check that the extension was loaded from `apps/extension/dist` and that the ID on `chrome://extensions` is the one above.
+- **macOS: "Bridge can't be opened because Apple cannot check it for malicious software"** or "Bridge is damaged": it's an unsigned build. Use right-click → **Open**, or **Open Anyway** in System Settings → Privacy & Security (see [Install the app](#macos)). If it still says "damaged", the download was quarantined in a way the dialog can't clear: run `xattr -dr com.apple.quarantine /Applications/Bridge.app` once.
+- **Windows: "Windows protected your PC"**: **More info → Run anyway** (unsigned build).
+- **Linux: the AppImage doesn't start**: install FUSE 2, or run it with `--appimage-extract-and-run`. If it mentions the "SUID sandbox helper", Ubuntu's AppArmor is blocking Electron's sandbox; the quickest fix is `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` (until reboot), or an AppArmor profile for the AppImage. Don't run it with `--no-sandbox`.
+- **Side panel says "App not running"**: open the Bridge app. The extension keeps retrying, and retries at once when you open the side panel.
+- **"Update the Bridge app" / "Update the extension"**: the two are on different versions. Update the one named (see [Updates](#updates)).
+- **Side panel stays on "Can't reach Bridge"**: the app answered but refused the extension. If you unpaired in the app while Chrome was closed, click **Unpair** in the side panel and pair again. If you loaded the store zip (`bridge-extension-X.Y.Z.zip`) unpacked, its ID is random and the app refuses it: load `bridge-extension-X.Y.Z-unpacked.zip` instead.
+- **App says "Server error"**: something else is using every port from 47821 to 47830. Free one and restart Bridge.
+- **No cards in the chat**: check the side panel says **Session active** for this tab. Cards appear once a reply has finished. Reload the chat tab if it was open before the extension was installed or updated.
+- **"Bridge can't read this page layout"**: the chat page changed in a way this version doesn't recognise. Check for an update.
+- **"Reload the page to use it here"**: the extension was updated while the chat was open. Reload the tab.
+- **A RUN card says "not allowed"**: add the command under **Settings → Commands** if you want it to run.
+- **"That program isn't installed or isn't on the PATH"**: see **Settings → Commands → PATH for commands**; paste the output of `echo $PATH` there if the login shell couldn't be read.
+- **Full auto paused with "no new message appeared"**: the page didn't take the send. Check the message box and press **Resume**.
+- **"Project missing"**: the folder was moved, renamed or unmounted. Put it back and click **Try again**, or open it from its new place.
+
+More in the [FAQ](docs/FAQ.md).
+
+## Where data lives
+
+**The app** keeps its settings, pairing key and backups in its data folder, readable only by your user:
+
+| System  | Folder                                            |
+| ------- | ------------------------------------------------- |
+| macOS   | `~/Library/Application Support/Bridge`            |
+| Windows | `%APPDATA%\Bridge`                                |
+| Linux   | `~/.config/Bridge` (or `$XDG_CONFIG_HOME/Bridge`) |
+
+Inside: `settings.json` (projects, patterns, allowlists, settings), `pairing.json` and `server-key.json` (keys, encrypted with your system keychain when available), and `backups/` (copies of changed files and the change log, per project). A development build (`pnpm dev`) uses `@bridge/desktop` instead of `Bridge`, so it never shares a pairing or backups with an installed app.
+
+**The extension** keeps the pairing key in its own IndexedDB, and session and card states (paths, hashes, counts, never file contents) in Chrome's extension storage. [PRIVACY.md](PRIVACY.md) lists everything.
+
+## Uninstall
+
+1. **Unpair** in the app (or the side panel), so neither side keeps a key the other forgot.
+2. Remove the extension: `chrome://extensions` → Bridge → **Remove**. That deletes its storage.
+3. Remove the app:
+   - **macOS:** quit Bridge, drag `/Applications/Bridge.app` to the Trash, then delete `~/Library/Application Support/Bridge` (Finder → Go → Go to Folder…). Also remove "Bridge Safe Storage" from Keychain Access if you want the keychain entry gone.
+   - **Windows:** Settings → Apps → Installed apps → Bridge → **Uninstall**, then delete `%APPDATA%\Bridge` (paste it into Explorer's address bar). The uninstaller leaves that folder so a reinstall keeps your backups.
+   - **Linux:** delete the AppImage and `~/.config/Bridge`.
+
+Bridge never writes anything else outside its data folder and the projects you opened.
+
+## Development
+
+Requirements: Node.js 24 (`nvm use` reads `.nvmrc`), pnpm 9.15.4 (`corepack enable`), and Chrome.
+
+```bash
+corepack enable
+pnpm install
+pnpm dev        # the app with hot reload, and the extension rebuilt into apps/extension/dist
+```
+
+Load `apps/extension/dist` unpacked (as above). It has the fixed development ID, so it pairs with both `pnpm dev` and installed apps. After a change, click reload on its card in `chrome://extensions` and refresh the chat tab. If `pnpm dev` fails with `electron.app` undefined, your shell has `ELECTRON_RUN_AS_NODE=1`: run `env -u ELECTRON_RUN_AS_NODE pnpm dev`. Development builds also have a **Test read (dev only)** field in the side panel.
+
+| Command                                                  | What it does                                                                                |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `pnpm dev`                                               | Desktop app with hot reload + extension watch build                                         |
+| `pnpm build`                                             | Production build of both apps                                                               |
+| `pnpm lint` / `pnpm format` / `pnpm format:check`        | ESLint; Prettier                                                                            |
+| `pnpm typecheck`                                         | `tsc --noEmit` in every package                                                             |
+| `pnpm test` / `pnpm test:coverage`                       | Vitest; with coverage thresholds (CI)                                                       |
+| `pnpm version:set X.Y.Z` / `pnpm version:check [vX.Y.Z]` | One version for the app, the extension and shared                                           |
+| `pnpm package:mac` / `package:win` / `package:linux`     | Installers in `apps/desktop/dist` (signed if the secrets are set; [RELEASE.md](RELEASE.md)) |
+| `pnpm --filter @bridge/desktop check:package`            | Fuses and app.asar contents of the packaged apps                                            |
+| `pnpm --filter @bridge/desktop smoke <app>`              | Launches a packaged app and checks its window and `/health`                                 |
+| `pnpm build:extension:release`                           | The store zip and the Load unpacked zip in `release/`                                       |
+
+End-to-end scripts (Playwright, against the built app and a stand-in chat page) are in [`e2e/`](e2e/README.md); they use their own ports, so they run alongside `pnpm dev`.
+
+```
+apps/
+  desktop/          Electron app (electron-vite): src/main, src/preload, src/renderer; scripts/ for packaging
+  extension/        Chrome MV3 extension (CRXJS + Vite): manifest.config.ts, src/content, src/background, src/sidepanel
+packages/
+  shared/           @bridge/shared: types, chat parser and prompts, diff, protocol, logo and icon, design tokens
+scripts/            version, extension release zip, changelog notes
+store/              Chrome Web Store listing and images
+e2e/                Playwright scripts
+archive/prototype/  earlier prototype, reference only (not built)
+```
 
 ## Docs
 
+- [docs/FAQ.md](docs/FAQ.md): common questions
 - [SECURITY.md](SECURITY.md): threat model, controls, known limits, reporting a problem
-- [PLAN.md](PLAN.md): architecture, modes, security model, phases
-- [CHECKLIST.md](CHECKLIST.md): task-level progress
-- [DESIGN.md](DESIGN.md): design tokens and component specs
+- [PRIVACY.md](PRIVACY.md): what's stored where; no telemetry
+- [CHANGELOG.md](CHANGELOG.md) and [RELEASE.md](RELEASE.md): versions, and how a release is cut
+- [PLAN.md](PLAN.md), [CHECKLIST.md](CHECKLIST.md), [DESIGN.md](DESIGN.md): architecture, progress, design system
 - [CLAUDE.md](CLAUDE.md): working rules for AI coding sessions
+
+## License
+
+[MIT](LICENSE) © Jaypee Soriaga. Bridge is not affiliated with or endorsed by OpenAI.

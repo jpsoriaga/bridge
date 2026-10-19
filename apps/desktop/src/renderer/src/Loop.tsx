@@ -146,6 +146,15 @@ export function toastsFor(
         hint: 'It may have been moved, renamed or unmounted.'
       });
     }
+    const update = now.about.update;
+    if (update?.state === 'available' && was.about.update?.state !== 'available') {
+      toasts.push({
+        id: `update:${update.version}`,
+        tone: undefined,
+        text: `Bridge ${update.version} is available`,
+        hint: 'Settings → About has the link.'
+      });
+    }
     if (was.status === 'connected' && now.status !== 'connected' && now.paired) {
       toasts.push({
         id: `disconnected:${Date.now()}`,

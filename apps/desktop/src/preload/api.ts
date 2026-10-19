@@ -23,6 +23,17 @@ export type PairingState =
   | ({ phase: 'code' } & PairingCode)
   | { phase: 'compare'; fingerprint: string; expiresAt: number; confirmed: boolean };
 
+/**
+ * "Check for updates" (notify only, see main/updates.ts). `off`: this build never checks
+ * (`dev`, or `unsigned-mac`: an unsigned macOS build).
+ */
+export type UpdateCheck =
+  | { state: 'off'; reason: 'dev' | 'unsigned-mac' }
+  | { state: 'checking' }
+  | { state: 'current'; version: string; checkedAt: number }
+  | { state: 'available'; version: string; url: string; checkedAt: number }
+  | { state: 'failed'; checkedAt: number };
+
 /** Everything the renderer shows about the server and pairing. */
 export interface DesktopState {
   /** `connecting` here means paired and waiting for the extension. */
@@ -67,6 +78,8 @@ export interface DesktopState {
   backupRetentionDays: number;
   /** The first-run checklist. */
   onboarding: { dismissed: boolean; sessionStarted: boolean };
+  /** The app's version, the last update check (null: none yet) and whether it checks at launch. */
+  about: { version: string; update: UpdateCheck | null; checkOnStart: boolean };
 }
 
 export type Theme = 'system' | 'light' | 'dark';
@@ -216,6 +229,10 @@ export interface BridgeApi {
   setOnboardingDismissed(dismissed: boolean): Promise<void>;
   /** The one-time note about exact-match allowlist entries was read. */
   dismissAllowlistNote(): Promise<void>;
+  /** Asks GitHub Releases for a newer version. Never downloads or installs. */
+  checkForUpdates(): Promise<UpdateCheck>;
+  /** Check once at every launch (off by default). */
+  setCheckUpdatesOnStart(on: boolean): Promise<void>;
   /** Menu items that act in the window. Returns an unsubscribe function. */
   onMenu(listener: (action: MenuAction) => void): () => void;
 }
@@ -252,5 +269,7 @@ export const IPC = {
   clearBackups: 'bridge:clear-backups',
   setOnboardingDismissed: 'bridge:set-onboarding-dismissed',
   dismissAllowlistNote: 'bridge:dismiss-allowlist-note',
+  checkForUpdates: 'bridge:check-for-updates',
+  setCheckUpdatesOnStart: 'bridge:set-check-updates-on-start',
   menu: 'bridge:menu'
 } as const;

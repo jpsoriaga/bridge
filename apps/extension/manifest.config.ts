@@ -17,12 +17,18 @@ const icons = {
 export const EXTENSION_PUBLIC_KEY =
   'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsXErLlD2rKBa0Ivi+XfBA0N+L7ePFgRFsk6DZDIlGhVfhRcaimYV1nuhMGLqeHk4wEFrqdfBSDb+uLBVyje64qpJMOj9ydStkfh327Xq3sUgZbrf6Bjear1uRsCudSldPPp2dxs2zPk+663HcA0OWMpOH6WT1phC9gD6cTrQk9/Q+lHKwX7zEYwUaUAEg4lnOXZ+Jpr2vArZ3+xI355I2TamOeEAq9/rGD6Cub8OQjv+lzIvQz+myP77fZUY7T/7cN2+0aKlDmmsFCcSf2e79pXCxa9VbCglcLCMvZlCT+Vh5ZA/OtQQPiWe8MT1i8mAjxLWQIVMPivgCNEc2cfNIQIDAQAB';
 
+/**
+ * The store build (`pnpm build:extension:release`, BRIDGE_RELEASE=1) has no `key`: the
+ * Chrome Web Store assigns the ID and refuses uploads that carry one. See RELEASE.md.
+ */
+const RELEASE = process.env.BRIDGE_RELEASE === '1';
+
 export default defineManifest({
   manifest_version: 3,
   name: 'Bridge',
   version: pkg.version,
   description: 'Apply file edits from your chat to a local project through the Bridge desktop app.',
-  key: EXTENSION_PUBLIC_KEY,
+  ...(RELEASE ? {} : { key: EXTENSION_PUBLIC_KEY }),
   icons,
   // Only what is used today. The content script match below is the extension's only
   // access to any website. `alarms` wakes the stopped worker to reconnect (PLAN.md).
