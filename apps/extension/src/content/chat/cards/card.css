@@ -18,14 +18,16 @@
   z-index: 2147483646 !important;
   margin: 0 !important;
 }
+/* Bottom corners sit above the composer and any banner over it: the chip measures them and
+   sets --bridge-chip-bottom (`chipBottom` in loop-chip.ts). `all` leaves custom properties. */
 :host([data-bridge-host='loop-chip'][data-corner='bottom-right']),
 :host([data-bridge-host='loop-chip']:not([data-corner])) {
   right: 16px !important;
-  bottom: 96px !important;
+  bottom: var(--bridge-chip-bottom, 96px) !important;
 }
 :host([data-bridge-host='loop-chip'][data-corner='bottom-left']) {
   left: 16px !important;
-  bottom: 96px !important;
+  bottom: var(--bridge-chip-bottom, 96px) !important;
 }
 :host([data-bridge-host='loop-chip'][data-corner='top-right']) {
   right: 16px !important;
@@ -80,11 +82,11 @@
   flex: none;
   color: var(--fg-muted);
 }
-.icon-success {
-  width: 16px;
-  height: 16px;
-  flex: none;
+.icon[data-tone='success'] {
   color: var(--success);
+}
+.icon[data-tone='danger'] {
+  color: var(--danger);
 }
 .path {
   min-width: 0;
@@ -151,6 +153,18 @@
 }
 .word[data-tone='success'] {
   color: var(--success);
+}
+.word[data-tone='danger'] {
+  color: var(--danger);
+}
+.word-note {
+  flex: none;
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+}
+/* A deleted file's row: the path is struck through. */
+.card[data-result='delete'] .path {
+  text-decoration: line-through;
 }
 
 .message {
@@ -476,6 +490,21 @@
 }
 .chip[data-dragging='true'] .chip-handle {
   cursor: grabbing;
+}
+/* Outside Full auto the chip is only its dot, and opens on hover or keyboard focus. */
+.chip[data-collapsed='true'] {
+  padding: var(--space-2);
+}
+.chip[data-collapsed='true'] .chip-label {
+  display: none;
+}
+.chip[data-collapsed='true']:hover,
+.chip[data-collapsed='true']:focus-within {
+  padding: var(--space-2) var(--space-3);
+}
+.chip[data-collapsed='true']:hover .chip-label,
+.chip[data-collapsed='true']:focus-within .chip-label {
+  display: inline;
 }
 
 /* One-line notice at the top of the page: session elsewhere, Bridge reloaded. */

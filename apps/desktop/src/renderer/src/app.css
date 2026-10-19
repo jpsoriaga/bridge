@@ -594,6 +594,26 @@
 .activity-note {
   font-size: var(--text-sm);
 }
+/* A file change's row: an icon and a verb coloured by kind (green: created, red: deleted). */
+.result-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--fg-muted);
+}
+.result-icon[data-tone='success'],
+.result-verb[data-tone='success'] {
+  color: var(--success);
+}
+.result-icon[data-tone='danger'],
+.result-verb[data-tone='danger'] {
+  color: var(--danger);
+}
+.result-verb {
+  font-weight: 500;
+}
+.activity-row[data-result='delete'] .activity-path {
+  text-decoration: line-through;
+}
 
 /* Activity detail: path, meta, diff or output, Undo. */
 .detail .back {

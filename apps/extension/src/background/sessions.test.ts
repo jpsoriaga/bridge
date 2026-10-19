@@ -37,14 +37,66 @@ describe('Sessions', () => {
     expect(await sessions.stateFor(1)).toBe('elsewhere');
     expect(await sessions.moveHere(2)).toBeNull();
 
-    // Tab 2 navigates away: tab 1 takes the session back on its next sync.
-    await sessions.sync(2, 'conv-other', 'ok');
-    expect(await sessions.sync(1, 'conv-1234', 'ok')).toBe('active');
-    // A closed owner hands over too.
+    // A closed owner hands over.
     await sessions.sync(3, 'conv-1234', 'ok');
     expect(await sessions.stateFor(3)).toBe('elsewhere');
-    await sessions.removeTab(1);
+    await sessions.removeTab(2);
     expect(await sessions.sync(3, 'conv-1234', 'ok')).toBe('active');
+    expect(await sessions.sync(1, 'conv-1234', 'ok')).toBe('elsewhere');
+  });
+
+  it('ends the session a tab owned when it moves to a new chat, then starts fresh there', async () => {
+    const { sessions } = setup();
+    const ended: string[] = [];
+    sessions.onEnded((id) => ended.push(id));
+    await sessions.sync(1, 'conv-aaaa', 'ok');
+    await sessions.start(1);
+    expect(await sessions.stateFor(1)).toBe('active');
+
+    // Client-side navigation to a new chat: no id yet.
+    expect(await sessions.sync(1, null, 'ok')).toBeNull();
+    expect(ended).toEqual(['conv-aaaa']);
+    expect(await sessions.isActive(1)).toBe(false);
+
+    // Start session there waits on the tab, then binds to the new conversation.
+    await sessions.start(1);
+    expect(await sessions.stateFor(1)).toBe('active');
+    expect(await sessions.activeConversation(1)).toBeNull();
+    expect(await sessions.sync(1, 'conv-bbbb', 'ok')).toBe('active');
+    expect(await sessions.activeConversation(1)).toBe('conv-bbbb');
+    // Binding isn't leaving: nothing else ended.
+    expect(ended).toEqual(['conv-aaaa']);
+
+    // Going back to the first chat shows its session as ended, not active.
+    expect(await sessions.sync(1, 'conv-aaaa', 'ok')).toBe('ended');
+    expect(ended).toEqual(['conv-aaaa', 'conv-bbbb']);
+  });
+
+  it('ends the session a tab owned when it moves to another chat, then starts there', async () => {
+    const { sessions } = setup();
+    const ended: string[] = [];
+    sessions.onEnded((id) => ended.push(id));
+    await sessions.sync(1, 'conv-aaaa', 'ok');
+    await sessions.start(1);
+    expect(await sessions.sync(1, 'conv-bbbb', 'ok')).toBeNull();
+    expect(ended).toEqual(['conv-aaaa']);
+    await sessions.start(1);
+    expect(await sessions.activeConversation(1)).toBe('conv-bbbb');
+    // The same conversation again (a reload, or a query string) ends nothing.
+    expect(await sessions.sync(1, 'conv-bbbb', 'ok')).toBe('active');
+    expect(ended).toEqual(['conv-aaaa']);
+  });
+
+  it('leaves a session alone when a tab that only viewed it moves on', async () => {
+    const { sessions } = setup();
+    const ended: string[] = [];
+    sessions.onEnded((id) => ended.push(id));
+    await sessions.sync(1, 'conv-aaaa', 'ok');
+    await sessions.start(1);
+    expect(await sessions.sync(2, 'conv-aaaa', 'ok')).toBe('elsewhere');
+    await sessions.sync(2, null, 'ok');
+    expect(ended).toEqual([]);
+    expect(await sessions.stateFor(1)).toBe('active');
   });
 
   it('has no session in a conversation that never started one', async () => {

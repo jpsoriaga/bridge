@@ -160,7 +160,7 @@ const CONV = 'e2e00000-0000-4000-8000-000000000001';
     fs.readFileSync(file('src/greet.ts'), 'utf8').includes('Hello, ${name}')
   );
   await waitFor('applied row', async () =>
-    (await cardText(cdp, 'diff-card', 0)).includes('Applied')
+    /Modified.*Undo/.test(await cardText(cdp, 'diff-card', 0))
   );
   await win
     .getByText(/Modified · via chat/)
@@ -250,11 +250,10 @@ const CONV = 'e2e00000-0000-4000-8000-000000000001';
     const cards = await hosts(cdp, 'diff-card');
     if (cards.length !== 3) return false;
     const texts = await Promise.all([0, 1, 2].map((i) => cardText(cdp, 'diff-card', i)));
-    return (
-      texts[0].includes('Undone') && texts[1].includes('Applied') && texts[2].includes('Applied')
-    );
+    const applied = (t) => /Created|Modified/.test(t) && t.includes('Undo');
+    return texts[0].includes('Undone') && applied(texts[1]) && applied(texts[2]);
   });
-  step('reload kept Undone / Applied / Applied');
+  step('reload kept Undone / applied / applied');
   await waitFor('read card restored', async () =>
     (await cardText(cdp, 'read-card', 0)).includes('Send again')
   );
@@ -288,9 +287,9 @@ const CONV = 'e2e00000-0000-4000-8000-000000000001';
     'auto-applied',
     () => fs.existsSync(file('src/one.ts')) && fs.existsSync(file('src/two.ts'))
   );
-  await waitFor('cards say Auto-applied', async () => {
+  await waitFor('cards say Created · auto', async () => {
     const texts = await Promise.all([0, 1].map((i) => cardText(cdp, 'diff-card', cardsBefore + i)));
-    return texts.every((t) => t.includes('Auto-applied'));
+    return texts.every((t) => /Created\s+auto/.test(t));
   });
   const gatedCard = await waitFor('gated card held', async () => {
     const t = await cardText(cdp, 'diff-card', cardsBefore + 2);

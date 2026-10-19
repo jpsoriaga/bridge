@@ -204,12 +204,14 @@ function Body({
   status,
   project,
   config,
+  fullAutoOff,
   chat,
   live
 }: {
   status: ConnectionStatus;
   project: ProjectInfo | null;
   config: BridgeConfig | null;
+  fullAutoOff: boolean;
   chat: ChatPanelState;
   live: LiveRun | null;
 }) {
@@ -229,7 +231,7 @@ function Body({
         <>
           <ConnectionSection project={project} />
           <SessionSection chat={chat} project={project} />
-          <ModeSection config={config} />
+          <ModeSection config={config} fullAutoOff={fullAutoOff} />
           <LoopSection config={config} loop={chat.loop} />
           <CommandSection config={config} live={live} />
           {active && <Requests requests={chat.requests} />}
@@ -316,6 +318,7 @@ export function App() {
             status={update.status}
             project={update.project}
             config={update.config ?? null}
+            fullAutoOff={update.fullAutoOff}
             chat={chat}
             live={live}
           />

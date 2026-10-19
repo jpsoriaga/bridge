@@ -221,6 +221,30 @@ describe('ModeState', () => {
     expect(modes.mode).toBe('auto-apply');
   });
 
+  it('keeps Auto-apply across sessions and drops only Full auto, counting each reset', () => {
+    const store = memoryStore();
+    const modes = new ModeState(store);
+    modes.set('auto-apply');
+    // Start session, End session, Start again: Auto-apply stays, nothing to tell.
+    expect(modes.noteSession()).toBe(false);
+    expect(modes.noteSession()).toBe(false);
+    expect(modes.mode).toBe('auto-apply');
+    expect(store.saved).toBe('auto-apply');
+    expect(modes.sessionResets).toBe(0);
+
+    modes.set('manual');
+    expect(modes.noteSession()).toBe(false);
+    expect(modes.mode).toBe('manual');
+
+    // Full auto is per session: a new one starts in Manual, and the app says so once.
+    modes.set('full-auto');
+    expect(modes.noteSession()).toBe(true);
+    expect(modes.mode).toBe('manual');
+    expect(modes.sessionResets).toBe(1);
+    expect(modes.noteSession()).toBe(false);
+    expect(modes.sessionResets).toBe(1);
+  });
+
   it('drops Full auto when the project switches, not when it stays', () => {
     const modes = new ModeState(memoryStore());
     modes.noteProject('/work/a');

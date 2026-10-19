@@ -16,7 +16,16 @@ import {
   type WriteResult
 } from '@bridge/shared';
 import type { CardState, DiffCardRecord, RequestOutcome, WorkerRequest } from '../../../messages';
-import { copyButton, formatCount, formatTime, h, icon, renderCard } from './dom';
+import {
+  copyButton,
+  formatCount,
+  formatTime,
+  h,
+  icon,
+  renderCard,
+  resultIcon,
+  resultWord
+} from './dom';
 import { createHost } from './host';
 
 /** Diff rows rendered before "Show all". */
@@ -605,22 +614,19 @@ export class DiffCard {
         this.busy === 'undo' ? 'Undoing…' : 'Undo'
       );
       undo.disabled = this.disabled || this.busy !== null || !this.opId;
+      const result = this.kind ?? (this.diff?.status === 'new' ? 'create' : 'modify');
       card = h(
         'div',
-        { class: 'card', attrs: { 'data-state': 'applied', ...group } },
+        { class: 'card', attrs: { 'data-state': 'applied', 'data-result': result, ...group } },
         h(
           'div',
           { class: 'header' },
-          icon('check', 'icon-success'),
+          resultIcon(result),
           path,
           copy,
           this.meta(),
           h('span', { class: 'spacer' }),
-          h(
-            'span',
-            { class: 'word', attrs: { 'data-tone': 'success' } },
-            this.auto ? 'Auto-applied' : 'Applied'
-          ),
+          ...resultWord(result, this.auto),
           this.appliedAt !== undefined
             ? h('span', { class: 'time' }, formatTime(this.appliedAt))
             : null,

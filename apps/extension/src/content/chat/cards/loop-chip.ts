@@ -40,6 +40,34 @@ export interface ChipState {
   loop: { state: LoopState; step: number; limit: number; reason?: PauseReason } | null;
 }
 
+/** A box on the page, as `getBoundingClientRect` gives it. */
+export interface Box {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
+/** Space kept between the chip and the composer area, and the bottom corners' default. */
+const CHIP_GAP = 12;
+export const CHIP_BOTTOM_DEFAULT = 96;
+
+/**
+ * How far up from the viewport's bottom a chip in a bottom corner goes, in px: above every
+ * obstacle (the composer and any banner over it) it would overlap side to side, and never
+ * lower than the default. `chip` is the chip's own box, for its width and side.
+ */
+export function chipBottom(obstacles: readonly Box[], chip: Box, viewportHeight: number): number {
+  let bottom = CHIP_BOTTOM_DEFAULT;
+  for (const box of obstacles) {
+    const sideBySide = box.right <= chip.left || box.left >= chip.right;
+    if (sideBySide || box.bottom <= box.top) continue;
+    bottom = Math.max(bottom, Math.ceil(viewportHeight - box.top + CHIP_GAP));
+  }
+  // Never off the top of a short window.
+  return Math.min(bottom, Math.max(16, viewportHeight - (chip.bottom - chip.top) - 16));
+}
+
 /** The corner nearest a point in the viewport. */
 export function nearestCorner(x: number, y: number, width: number, height: number): ChipCorner {
   const top = y < height / 2;
@@ -61,17 +89,37 @@ export class LoopChip {
 
   constructor(
     private readonly onStop: () => void,
-    private readonly onCorner: (corner: ChipCorner) => void = () => {}
+    private readonly onCorner: (corner: ChipCorner) => void = () => {},
+    /** The composer and the banners over it, which a bottom corner must stay clear of. */
+    private readonly obstacles: () => Box[] = () => []
   ) {
     ({ host: this.host, root: this.root } = createHost('loop-chip'));
     this.host.hidden = true;
     this.host.dataset.corner = this.corner;
+    addEventListener('resize', () => this.place());
   }
 
   /** Puts the chip in a corner (from storage, or after a drag). */
   setCorner(corner: ChipCorner): void {
     this.corner = corner;
     this.host.dataset.corner = corner;
+    this.place();
+  }
+
+  /**
+   * Keeps a bottom corner clear of the composer and the banners over it. Runs on every
+   * render, on resize, and on the controller's poll (banners come and go).
+   */
+  place(): void {
+    if (this.host.hidden || !this.host.isConnected || !this.corner.startsWith('bottom')) {
+      this.host.style.removeProperty('--bridge-chip-bottom');
+      return;
+    }
+    const bottom = chipBottom(this.obstacles(), this.host.getBoundingClientRect(), innerHeight);
+    const value = `${bottom}px`;
+    if (this.host.style.getPropertyValue('--bridge-chip-bottom') !== value) {
+      this.host.style.setProperty('--bridge-chip-bottom', value);
+    }
   }
 
   private move(corner: ChipCorner): void {
@@ -125,13 +173,18 @@ export class LoopChip {
       this.root,
       h(
         'div',
-        { class: 'chip', attrs: { role: 'status' } },
+        // Outside Full auto it's a dot that opens on hover or focus.
+        {
+          class: 'chip',
+          attrs: { role: 'status', 'data-collapsed': running ? undefined : 'true' }
+        },
         handle,
         running ? h('span', { class: 'chip-count' }, `${loop.step} / ${loop.limit}`) : null,
         running ? h('span', { class: 'chip-state' }, this.label(loop)) : null,
         stop
       )
     );
+    this.place();
   }
 
   private tone(chip: ChipState): string | undefined {

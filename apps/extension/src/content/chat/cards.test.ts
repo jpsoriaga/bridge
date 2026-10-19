@@ -540,3 +540,61 @@ describe('insertIntoComposer', () => {
     expect(insertIntoComposer('x')).toEqual({ ok: false, error: 'no-composer' });
   });
 });
+
+/** The card's own row, through a shadow root forced open for the test. */
+function openShadows() {
+  const attach = HTMLElement.prototype.attachShadow;
+  return vi.spyOn(HTMLElement.prototype, 'attachShadow').mockImplementation(function (
+    this: HTMLElement,
+    init: ShadowRootInit
+  ) {
+    return attach.call(this, { ...init, mode: 'open' });
+  });
+}
+
+function resultRow(host: HTMLElement) {
+  const root = host.shadowRoot!;
+  const words = [...root.querySelectorAll('.header .word')];
+  return {
+    result: root.querySelector('.card')?.getAttribute('data-result'),
+    word: words.map((w) => [w.textContent, w.getAttribute('data-tone')]),
+    note: root.querySelector('.word-note')?.textContent ?? null,
+    iconTone: root.querySelector('.header svg')?.getAttribute('data-tone') ?? null,
+    time: root.querySelector('.time') !== null
+  };
+}
+
+describe('Applied rows', () => {
+  it('say what happened, coloured by kind: green only for a new file, no check icon', async () => {
+    const spy = openShadows();
+    const worker = fakeWorker({ 'a.ts': { content: 'old\n', hash: HASH_A } });
+    const modified = await card(worker, edit('a.ts', 'new\n'));
+    const created = await card(worker, edit('b.ts', 'b\n'));
+    await modified.apply();
+    await created.apply();
+    expect(resultRow(modified.host)).toEqual({
+      result: 'modify',
+      word: [['Modified', null]],
+      note: null,
+      iconTone: null,
+      time: true
+    });
+    expect(resultRow(created.host)).toEqual({
+      result: 'create',
+      word: [['Created', 'success']],
+      note: null,
+      iconTone: 'success',
+      time: true
+    });
+    spy.mockRestore();
+  });
+
+  it('mark automatic edits with a muted “auto”', async () => {
+    const spy = openShadows();
+    const worker = fakeWorker({});
+    const created = await card(worker, edit('c.ts', 'c\n'));
+    await autoApply([created]);
+    expect(resultRow(created.host)).toMatchObject({ word: [['Created', 'success']], note: 'auto' });
+    spy.mockRestore();
+  });
+});

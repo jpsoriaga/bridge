@@ -182,6 +182,36 @@ export function checkLayout(doc: Document = document): LayoutHealth {
   return 'ok';
 }
 
+/**
+ * The composer and whatever sits over it, as boxes the page chip must stay clear of: the
+ * composer's form, then each ancestor about as wide as it and under half the window tall
+ * (so a banner stacked in the same column counts), plus any visible error or limit banner
+ * in the lower half of the window.
+ */
+export function composerArea(doc: Document = document): DOMRect[] {
+  const boxes: DOMRect[] = [];
+  const height = doc.defaultView?.innerHeight ?? 0;
+  const composer = findComposer(doc);
+  if (composer) {
+    const form = composer.closest('form') ?? composer;
+    const own = form.getBoundingClientRect();
+    boxes.push(own);
+    for (let el = form.parentElement; el && el !== doc.body; el = el.parentElement) {
+      const box = el.getBoundingClientRect();
+      if (box.width > own.width + 64 || box.height > height / 2) break;
+      boxes.push(box);
+    }
+  }
+  for (const selector of SELECTORS.errorBanner) {
+    for (const element of doc.querySelectorAll(selector)) {
+      if (element.closest(`[${BRIDGE_HOST_ATTRIBUTE}]`)) continue;
+      const box = element.getBoundingClientRect();
+      if (box.height > 0 && box.top > height / 2) boxes.push(box);
+    }
+  }
+  return boxes;
+}
+
 export function findSendButton(doc: Document = document): HTMLButtonElement | null {
   const found = first(doc, SELECTORS.sendButton);
   return found instanceof HTMLButtonElement ? found : null;

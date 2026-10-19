@@ -134,4 +134,20 @@ describe('ChatController', () => {
     expect(hosts('diff-card')).toHaveLength(0);
     expect(count('chat-write')).toBe(0);
   });
+
+  it('tells the worker at once when Start session asks where the tab is after navigating', async () => {
+    const chat = await startWithNewReply();
+    expect(hosts('diff-card')).toHaveLength(1);
+    const syncs = count('chat-sync');
+    // A new chat, before the next poll: locate notices, drops the old cards and syncs.
+    history.pushState(null, '', '/');
+    expect(chat.locate()).toEqual({ conversationId: null, layout: 'ok' });
+    expect(hosts('diff-card')).toHaveLength(0);
+    expect(count('chat-sync')).toBe(syncs + 1);
+    expect(calls.at(-1)).toMatchObject({ type: 'chat-sync', conversationId: null });
+    // Another chat: the same, with its id.
+    history.pushState(null, '', '/c/conv-5678efgh');
+    expect(chat.locate().conversationId).toBe('conv-5678efgh');
+    expect(calls.at(-1)).toMatchObject({ type: 'chat-sync', conversationId: 'conv-5678efgh' });
+  });
 });

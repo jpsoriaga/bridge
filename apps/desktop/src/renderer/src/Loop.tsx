@@ -130,6 +130,14 @@ export function toastsFor(
         });
       }
     }
+    if (now.sessionResets > was.sessionResets) {
+      toasts.push({
+        id: `session-reset:${now.sessionResets}`,
+        tone: 'warning',
+        text: 'Full auto turned off: it’s per session.',
+        hint: 'Auto-apply and Manual carry over between sessions.'
+      });
+    }
     if (now.project?.missing && !was.project?.missing) {
       toasts.push({
         id: `missing:${now.project.path}`,

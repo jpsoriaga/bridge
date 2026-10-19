@@ -6,6 +6,7 @@ import type {
   PendingRequest,
   ReadCardRecord,
   SessionState,
+  TabLocation,
   WorkerRequest
 } from '../../messages';
 import { messageToText } from './adapter';
@@ -31,6 +32,7 @@ import {
   assistantMessages,
   checkLayout,
   closest,
+  composerArea,
   first,
   SELECTORS,
   conversationIdFrom,
@@ -172,7 +174,8 @@ export class ChatController {
   constructor(private readonly ask: Ask) {
     this.chip = new LoopChip(
       () => this.loop.stop(),
-      (corner) => void this.ask({ type: 'chip-corner', corner })
+      (corner) => void this.ask({ type: 'chip-corner', corner }),
+      () => composerArea()
     );
     this.loop = new FullAutoLoop({
       page: livePage,
@@ -194,6 +197,11 @@ export class ChatController {
     this.conversationId = conversationIdFrom(location.href);
     void this.sync();
     this.pollTimer = setInterval(() => this.poll(), POLL_MS);
+    // Client-side navigation: the Navigation API says so at once; the poll is the fallback.
+    const navigation = (window as { navigation?: EventTarget }).navigation;
+    navigation?.addEventListener('currententrychange', () => {
+      if (!this.invalid) this.followUrl();
+    });
     this.attach();
   }
 
@@ -498,16 +506,10 @@ export class ChatController {
       }
     } else this.missingStrikes = 0;
 
-    const id = conversationIdFrom(location.href);
-    if (id !== this.conversationId) {
-      // Another conversation (or a new chat): drop this one's cards and bind again.
-      this.loop.onNavigate(id);
-      this.conversationId = id;
-      this.history = null;
-      this.clear();
-      void this.sync();
-    }
+    this.followUrl();
     this.loop.tick();
+    // Banners over the composer come and go; the chip stays clear of them.
+    this.chip.place();
 
     const health = checkLayout();
     this.layoutStrikes = health === 'ok' ? 0 : this.layoutStrikes + 1;
@@ -519,6 +521,26 @@ export class ChatController {
 
     // The page swaps out <main> on some navigations.
     if (!this.observed?.isConnected) this.attach();
+  }
+
+  /**
+   * Another conversation (or a new chat) since the last look: drop this one's cards and
+   * tell the worker, which ends the session this tab had in the one it left.
+   */
+  private followUrl(): void {
+    const id = conversationIdFrom(location.href);
+    if (id === this.conversationId) return;
+    this.loop.onNavigate(id);
+    this.conversationId = id;
+    this.history = null;
+    this.clear();
+    void this.sync();
+  }
+
+  /** The worker asks where this tab is right now (before Start session). */
+  locate(): TabLocation {
+    if (!this.invalid) this.followUrl();
+    return { conversationId: this.conversationId, layout: this.layout };
   }
 
   private attach(): void {

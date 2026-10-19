@@ -25,6 +25,7 @@ export function makeState(overrides: Partial<DesktopState> = {}): DesktopState {
     mode: 'manual',
     allowlist: ['pnpm test'],
     allowlistSuggestions: [],
+    sessionResets: 0,
     defaultGatedPatterns: ['package.json'],
     gatedPatterns: [],
     defaultEnvPatterns: ['*TOKEN*'],

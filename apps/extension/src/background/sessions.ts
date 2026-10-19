@@ -83,6 +83,7 @@ interface Found {
 export class Sessions {
   private readonly serial = new Serial();
   private readonly listeners = new Set<() => void>();
+  private readonly endedListeners = new Set<(conversationId: string) => void>();
 
   constructor(
     private readonly local: KeyValueArea,
@@ -94,6 +95,12 @@ export class Sessions {
   onChange(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  /** A tab left the conversation whose session it owned, which ended that session. */
+  onEnded(listener: (conversationId: string) => void): () => void {
+    this.endedListeners.add(listener);
+    return () => this.endedListeners.delete(listener);
   }
 
   private changed(): void {
@@ -111,15 +118,29 @@ export class Sessions {
 
   /**
    * The content script reports its tab's conversation and whether it can read the page.
-   * A tab claims its conversation's session if no other tab still shows it.
+   * A tab claims its conversation's session if no other tab still shows it. A tab that moved
+   * to another conversation or a new chat ends the session it owned in the one it left.
    */
   sync(tabId: number, conversationId: string | null, layout: TabRecord['layout']) {
     return this.serial.run(async () => {
       const { sessions, pending, tabs } = await this.load();
       const key = String(tabId);
       const before = JSON.stringify(tabs[key]);
+      const left = tabs[key]?.conversationId ?? null;
       tabs[key] = { conversationId, layout };
       let saved = false;
+      let ended: string | null = null;
+      const owned = left === null ? undefined : sessions[left];
+      if (
+        left !== null &&
+        left !== conversationId &&
+        owned?.endedAt === undefined &&
+        owned?.tabId === tabId
+      ) {
+        owned.endedAt = this.now();
+        ended = left;
+        saved = true;
+      }
       const waiting = pending[key];
       if (conversationId && waiting) {
         // The new chat got its id: the session waiting on this tab now belongs to it.
@@ -140,6 +161,7 @@ export class Sessions {
       if (saved) await this.saveSessions(sessions);
       await this.session.set(TABS, tabs);
       if (saved || before !== JSON.stringify(tabs[key])) this.changed();
+      if (ended !== null) for (const listener of this.endedListeners) listener(ended);
       return this.resolve(key, tabs, sessions, pending)?.state ?? null;
     });
   }

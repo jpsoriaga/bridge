@@ -4,7 +4,7 @@ import type { ParsedEdit, StatResult, WriteResult } from '@bridge/shared';
 import type { RequestOutcome, WorkerRequest } from '../../messages';
 import { ChangeCard, type FileChange } from './cards/change-card';
 import { DiffCard, type Ask } from './cards/diff-card';
-import { nearestCorner } from './cards/loop-chip';
+import { chipBottom, LoopChip, nearestCorner, type Box } from './cards/loop-chip';
 import { applyAllTargets } from './cards/message-bar';
 import { autoApply, changeSummary, markDuplicates } from './controller';
 import { conversationMissing } from './selectors';
@@ -277,5 +277,116 @@ describe('conversationMissing', () => {
     expect(conversationMissing()).toBe(false);
     document.body.innerHTML = '<main><h1>What can I help with?</h1></main>';
     expect(conversationMissing()).toBe(false);
+  });
+});
+
+describe('ChangeCard: applied rows', () => {
+  const opened = () => {
+    const attach = HTMLElement.prototype.attachShadow;
+    return vi.spyOn(HTMLElement.prototype, 'attachShadow').mockImplementation(function (
+      this: HTMLElement,
+      init: ShadowRootInit
+    ) {
+      return attach.call(this, { ...init, mode: 'open' });
+    });
+  };
+  const row = (host: HTMLElement) => {
+    const root = host.shadowRoot!;
+    const word = root.querySelector('.header .word')!;
+    return {
+      result: root.querySelector('.card')?.getAttribute('data-result'),
+      word: [word.textContent, word.getAttribute('data-tone')],
+      iconTone: root.querySelector('.header svg')?.getAttribute('data-tone') ?? null
+    };
+  };
+
+  it('a delete is red with a trash icon; a rename is neutral with an arrow', async () => {
+    const spy = opened();
+    const worker = fakeWorker({
+      'old.ts': { content: 'x', hash: HASH_A, size: 10 },
+      'a.ts': { content: 'y', hash: HASH_A, size: 10 }
+    });
+    const deleted = await changeCard(worker, { kind: 'delete', path: 'old.ts' });
+    const renamed = await changeCard(worker, { kind: 'rename', from: 'a.ts', to: 'b.ts' });
+    await deleted.apply();
+    await renamed.apply();
+    expect(row(deleted.host)).toEqual({
+      result: 'delete',
+      word: ['Deleted', 'danger'],
+      iconTone: 'danger'
+    });
+    expect(row(renamed.host)).toEqual({
+      result: 'rename',
+      word: ['Renamed', null],
+      iconTone: null
+    });
+    spy.mockRestore();
+  });
+});
+
+describe('Page chip', () => {
+  const box = (left: number, top: number, right: number, bottom: number): Box => ({
+    left,
+    top,
+    right,
+    bottom
+  });
+  // A 1200×800 window; the chip is 120px wide, 16px in from the right.
+  const chip = box(1064, 600, 1184, 640);
+
+  it('sits above the composer and a banner over it when they share its column', () => {
+    expect(chipBottom([], chip, 800)).toBe(96);
+    // A narrow centred composer doesn't reach the right corner: the default stays.
+    expect(chipBottom([box(300, 650, 900, 780)], chip, 800)).toBe(96);
+    // A wide composer under the chip pushes it up, 12px clear.
+    expect(chipBottom([box(200, 650, 1190, 780)], chip, 800)).toBe(162);
+    // A banner over the composer pushes it further.
+    expect(chipBottom([box(200, 650, 1190, 780), box(200, 560, 1190, 640)], chip, 800)).toBe(252);
+    // Never off the top of a short window.
+    expect(chipBottom([box(0, 10, 1200, 300)], chip, 300)).toBe(244);
+  });
+
+  it('is a dot outside Full auto, and fully open in Full auto', () => {
+    const attach = HTMLElement.prototype.attachShadow;
+    const spy = vi.spyOn(HTMLElement.prototype, 'attachShadow').mockImplementation(function (
+      this: HTMLElement,
+      init: ShadowRootInit
+    ) {
+      return attach.call(this, { ...init, mode: 'open' });
+    });
+    const chipEl = new LoopChip(() => {});
+    chipEl.render({ mode: 'auto-apply', loop: null });
+    const root = chipEl.host.shadowRoot!;
+    expect(root.querySelector('.chip')?.getAttribute('data-collapsed')).toBe('true');
+    // The label is still there, for hover and focus (and the handle's own aria-label).
+    expect(root.querySelector('.chip-label')?.textContent).toBe('Auto-apply');
+    chipEl.render({ mode: 'full-auto', loop: { state: 'idle', step: 0, limit: 10 } });
+    expect(root.querySelector('.chip')?.hasAttribute('data-collapsed')).toBe(false);
+    expect(root.querySelector('.chip-count')?.textContent).toBe('0 / 10');
+    chipEl.host.remove();
+    spy.mockRestore();
+  });
+
+  it('measures the page on render, on resize and when asked, and only in bottom corners', () => {
+    let obstacles: Box[] = [];
+    const chipEl = new LoopChip(
+      () => {},
+      () => {},
+      () => obstacles
+    );
+    vi.spyOn(chipEl.host, 'getBoundingClientRect').mockReturnValue(chip as DOMRect);
+    vi.stubGlobal('innerHeight', 800);
+    chipEl.render({ mode: 'manual', loop: null });
+    expect(chipEl.host.style.getPropertyValue('--bridge-chip-bottom')).toBe('96px');
+    obstacles = [box(0, 650, 1200, 780)];
+    dispatchEvent(new Event('resize'));
+    expect(chipEl.host.style.getPropertyValue('--bridge-chip-bottom')).toBe('162px');
+    obstacles = [box(0, 600, 1200, 780)];
+    chipEl.place();
+    expect(chipEl.host.style.getPropertyValue('--bridge-chip-bottom')).toBe('212px');
+    chipEl.setCorner('top-left');
+    expect(chipEl.host.style.getPropertyValue('--bridge-chip-bottom')).toBe('');
+    chipEl.host.remove();
+    vi.unstubAllGlobals();
   });
 });

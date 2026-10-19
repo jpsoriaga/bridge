@@ -2,6 +2,7 @@ import { useState, type KeyboardEvent } from 'react';
 import { MODE_DESCRIPTIONS, MODE_LABELS, MODES, type Mode } from '@bridge/shared';
 import type { ActivityEntry, DesktopState, OpenFolderResult } from '../../preload/api';
 import { RunningCommand } from './Commands';
+import { EntryMark, EntryMeta, resultOf } from './EntryMark';
 import { describeEntry, OPEN_ERRORS } from './errors';
 import { formatCountdown, formatTime, useNow } from './hooks';
 import { LoopStatus } from './Loop';
@@ -265,16 +266,21 @@ function RecentActivity({
       ) : (
         <ul className="activity">
           {recent.map((entry) => {
-            const { meta, tone } = describeEntry(entry);
+            const description = describeEntry(entry);
             return (
-              <li key={entry.id} className="activity-row" data-undone={entry.undone === true}>
-                <span className="dot" data-tone={tone} />
+              <li
+                key={entry.id}
+                className="activity-row"
+                data-undone={entry.undone === true}
+                data-result={resultOf(entry, description)}
+              >
+                <EntryMark description={description} />
                 <span className="activity-text">
                   <span className="activity-path" title={entry.path}>
                     {entry.path || '(no path)'}
                   </span>
                   <span className="activity-meta">
-                    {formatTime(entry.time)} · {meta}
+                    <EntryMeta description={description} time={formatTime(entry.time)} />
                   </span>
                 </span>
               </li>

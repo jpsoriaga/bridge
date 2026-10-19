@@ -43,6 +43,9 @@ chrome.runtime.onMessage.addListener((raw: unknown, sender, sendResponse) => {
     case 'reveal-request':
       controller.reveal(message.id);
       return false;
+    case 'locate':
+      sendResponse(controller.locate());
+      return false;
     case 'diagnose':
       sendResponse(controller.diagnose());
       return false;

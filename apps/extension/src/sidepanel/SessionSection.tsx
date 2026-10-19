@@ -192,7 +192,7 @@ export function SessionSection({
         </p>
         <ul className="activity session-stats">
           <li className="activity-row">
-            <span className="dot" data-tone={session.applied > 0 ? 'success' : undefined} />
+            <span className="dot" />
             <span className="activity-text">
               {session.applied} {session.applied === 1 ? 'edit' : 'edits'} applied
             </span>

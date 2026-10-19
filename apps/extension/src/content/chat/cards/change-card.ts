@@ -10,7 +10,16 @@ import {
 } from '@bridge/shared';
 import type { CardState, ChangeCardRecord, RequestOutcome } from '../../../messages';
 import { failureText, modeTag, type Ask } from './diff-card';
-import { copyButton, formatSize, formatTime, h, icon, renderCard } from './dom';
+import {
+  copyButton,
+  formatSize,
+  formatTime,
+  h,
+  icon,
+  renderCard,
+  resultIcon,
+  resultWord
+} from './dom';
 import { createHost } from './host';
 
 /** A `@@DELETE` or `@@RENAME` from the chat. */
@@ -443,21 +452,18 @@ export class ChangeCard {
         this.busy === 'undo' ? 'Undoing…' : 'Undo'
       );
       undo.disabled = this.disabled || this.busy !== null || !this.opId;
+      const result = deleting ? 'delete' : 'rename';
       card = h(
         'div',
-        { class: 'card', attrs: { 'data-state': 'applied', ...group } },
+        { class: 'card', attrs: { 'data-state': 'applied', 'data-result': result, ...group } },
         h(
           'div',
           { class: 'header' },
-          icon('check', 'icon-success'),
+          resultIcon(result),
           this.title(),
           copyButton(this.path),
           h('span', { class: 'spacer' }),
-          h(
-            'span',
-            { class: 'word', attrs: { 'data-tone': 'success' } },
-            deleting ? 'Deleted' : 'Renamed'
-          ),
+          ...resultWord(result),
           this.appliedAt !== undefined
             ? h('span', { class: 'time' }, formatTime(this.appliedAt))
             : null,

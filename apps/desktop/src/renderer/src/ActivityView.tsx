@@ -11,6 +11,7 @@ import {
   type ActivityKind
 } from './errors';
 import { formatTime } from './hooks';
+import { EntryMark, EntryMeta, resultOf } from './EntryMark';
 import { Icon } from './Icon';
 
 /** Diff rows rendered before "Show all". */
@@ -61,24 +62,30 @@ export function filterActivity(
 const canUndo = (entry: ActivityEntry) => entry.opId !== undefined && !entry.undone;
 
 function Row({ entry, onOpen }: { entry: ActivityEntry; onOpen: (entry: ActivityEntry) => void }) {
-  const { meta, tone } = describeEntry(entry);
+  const description = describeEntry(entry);
+  const { meta } = description;
   const title = entry.kind === 'loop' ? (entry.text ?? '') : entry.path || '(no path)';
   const openable = entry.kind !== 'loop';
   const body = (
     <>
-      <span className="dot" data-tone={tone} />
+      <EntryMark description={description} />
       <span className="activity-text">
         <span className={entry.kind === 'loop' ? 'activity-note' : 'activity-path'} title={title}>
           {title}
         </span>
         <span className="activity-meta">
-          {formatTime(entry.time)} · {meta}
+          <EntryMeta description={description} time={formatTime(entry.time)} />
         </span>
       </span>
     </>
   );
   return (
-    <li className="activity-row" data-undone={entry.undone === true} data-entry={entry.id}>
+    <li
+      className="activity-row"
+      data-undone={entry.undone === true}
+      data-result={resultOf(entry, description)}
+      data-entry={entry.id}
+    >
       {openable ? (
         <button
           type="button"
@@ -156,7 +163,7 @@ function Detail({ entry, onBack }: { entry: ActivityEntry; onBack: () => void })
   const [run, setRun] = useState<Loaded<RunDetail>>({ status: 'loading' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { meta, tone } = describeEntry(entry);
+  const description = describeEntry(entry);
 
   useEffect(() => heading.current?.focus(), []);
   useEffect(() => {
@@ -205,8 +212,10 @@ function Detail({ entry, onBack }: { entry: ActivityEntry; onBack: () => void })
         )}
       </div>
       <p className="status detail-meta">
-        <span className="dot" data-tone={tone} />
-        {new Date(entry.time).toLocaleString()} · {meta}
+        <EntryMark description={description} />
+        <span>
+          <EntryMeta description={description} time={new Date(entry.time).toLocaleString()} />
+        </span>
       </p>
       {error && (
         <p className="error-text" role="alert">

@@ -7,7 +7,7 @@ Tokens live in [`packages/shared/src/tokens.css`](packages/shared/src/tokens.css
 ## Principles
 
 - **Neutral first.** Surfaces are white (or near-black in dark mode), text is ink, and borders are hairlines. The only colours are the semantic ones below.
-- **Colour means state.** Green means added or applied, red means removed or destructive, orange means waiting on you, and grey means idle. Nothing is coloured for decoration.
+- **Colour means state.** Green means added, red means removed or destructive, orange means waiting on you, and grey means idle. A result row is coloured by what it did (a new file is green, a delete red, the rest neutral), never just for having worked. Nothing is coloured for decoration.
 - **Hairlines, not shadows.** Separate things with 1px borders and space. Only two places get a shadow (see Elevation).
 - **One primary action per view.** It's the black button. Everything else is secondary.
 - **Sentence case** everywhere: "Start session", not "Start Session".
@@ -57,25 +57,25 @@ The image wins on each point below. Each deviation is deliberate and scoped:
 
 ## Color tokens
 
-| Token             | Light     | Dark                  | Use                                                           |
-| ----------------- | --------- | --------------------- | ------------------------------------------------------------- |
-| `--bg`            | `#ffffff` | `#0d0d0d`             | Page, cards, secondary buttons                                |
-| `--bg-muted`      | `#f3f3f3` | `#1c1c1c`             | User bubble, inline code, segmented track                     |
-| `--bg-hover`      | `#f7f7f7` | `#161616`             | Button hover, diff-card footer                                |
-| `--bg-raised`     | `#ffffff` | `#2e2e2e`             | Active mode segment (sits above the track)                    |
-| `--fg`            | `#111111` | `#ededed`             | Primary text, file paths                                      |
-| `--fg-muted`      | `#5c5c5c` | `#a3a3a3`             | Labels, meta ("New file · +18"), hints                        |
-| `--fg-subtle`     | `#6e6e6e` | `#858585`             | Placeholders, version, hunk headers, file sizes               |
-| `--border`        | `#e5e5e5` | `#262626`             | Hairlines, card and button edges                              |
-| `--border-strong` | `#d4d4d4` | `#3a3a3a`             | Pending diff card, dashed command card, hovered button        |
-| `--inverse-bg`    | `#111111` | `#ededed`             | Primary button, send button, logo tile                        |
-| `--inverse-fg`    | `#ffffff` | `#0d0d0d`             | Text and icons on `--inverse-bg`                              |
-| `--success`       | `#1a7f37` | `#3fb950`             | "Applied", `+N`, "new" tag, applied/connected dot, check icon |
-| `--success-bg`    | `#e8f6ec` | `rgb(63 185 80/.12)`  | Added diff lines                                              |
-| `--danger`        | `#c4261d` | `#f2655c`             | `−N`, Stop, destructive buttons                               |
-| `--danger-bg`     | `#fdeceb` | `rgb(242 101 92/.12)` | Removed diff lines, danger button hover                       |
-| `--warning`       | `#b54f0a` | `#e8853d`             | "Waiting for review" dot, warning text                        |
-| `--idle`          | `#a3a3a3` | `#6b6b6b`             | Neutral activity dot, "Not connected"                         |
+| Token             | Light     | Dark                  | Use                                                            |
+| ----------------- | --------- | --------------------- | -------------------------------------------------------------- |
+| `--bg`            | `#ffffff` | `#0d0d0d`             | Page, cards, secondary buttons                                 |
+| `--bg-muted`      | `#f3f3f3` | `#1c1c1c`             | User bubble, inline code, segmented track                      |
+| `--bg-hover`      | `#f7f7f7` | `#161616`             | Button hover, diff-card footer                                 |
+| `--bg-raised`     | `#ffffff` | `#2e2e2e`             | Active mode segment (sits above the track)                     |
+| `--fg`            | `#111111` | `#ededed`             | Primary text, file paths                                       |
+| `--fg-muted`      | `#5c5c5c` | `#a3a3a3`             | Labels, meta ("New file · +18"), hints                         |
+| `--fg-subtle`     | `#6e6e6e` | `#858585`             | Placeholders, version, hunk headers, file sizes                |
+| `--border`        | `#e5e5e5` | `#262626`             | Hairlines, card and button edges                               |
+| `--border-strong` | `#d4d4d4` | `#3a3a3a`             | Pending diff card, dashed command card, hovered button         |
+| `--inverse-bg`    | `#111111` | `#ededed`             | Primary button, send button, logo tile                         |
+| `--inverse-fg`    | `#ffffff` | `#0d0d0d`             | Text and icons on `--inverse-bg`                               |
+| `--success`       | `#1a7f37` | `#3fb950`             | "Created", `+N`, "new" tag, connected dot, the `+` result icon |
+| `--success-bg`    | `#e8f6ec` | `rgb(63 185 80/.12)`  | Added diff lines                                               |
+| `--danger`        | `#c4261d` | `#f2655c`             | `−N`, "Deleted", Stop, destructive buttons                     |
+| `--danger-bg`     | `#fdeceb` | `rgb(242 101 92/.12)` | Removed diff lines, danger button hover                        |
+| `--warning`       | `#b54f0a` | `#e8853d`             | "Waiting for review" dot, warning text                         |
+| `--idle`          | `#a3a3a3` | `#6b6b6b`             | Neutral activity dot, "Not connected"                          |
 
 Each colour token is `light-dark(light, dark)`, so `color-scheme` picks the theme: it follows the system, the desktop app's **Appearance** setting overrides it with `data-theme` on `<html>`, and the chat cards follow the chat page's `html.light` / `html.dark`. Components use only tokens and never raw hex values.
 
@@ -131,7 +131,7 @@ Injected right after the code block it describes, in a closed shadow root, so th
    - Body: a hairline above, then mono 13px/21px rows with 16px side padding, scrolling past 480px. Hunk headers (`@@ -1,3 +1,4 @@`) are `--fg-subtle`. Added rows have a `--success-bg` background and a `+ ` prefix. Removed rows have `--danger-bg` and a `- ` prefix. Context rows have no fill. At most 400 rows render; a full-width "Show all N lines" row under them renders the rest.
    - Footer: a hairline above, `--bg-hover` fill, a 12px hint on the left, and **Reject** (secondary) and **Apply** (primary, `.btn-lg`) on the right. **Retry** (secondary) appears when the read failed for a reason other than the sandbox.
    - Hints: "Review before applying." by default; "Already up to date." for unchanged; "Bridge won't write this file." when blocked; in `--warning`: the partial warning, "This looks like part of a file… Click again to apply anyway." while confirming (the button reads **Apply anyway**), and "The file was updated since this diff was first shown. This is the new diff." after a conflict; "Session ended. Start a new one to apply." when the session is over (every button disabled).
-2. **Applied**: one row with a `--border` edge: a check icon in `--success`, the path, meta ("New file · +18 −0"), the word "Applied" in `--success` at 13px/500, and an **Undo** button (secondary; "Undoing…" while busy).
+2. **Applied**: one row with a `--border` edge: the result icon, the path, meta ("New file · +18 −0"), the result word at 13px/500 (see "Result rows"), the time, and an **Undo** button (secondary; "Undoing…" while busy).
 3. **Rejected / undone**: one row with the path and the meta struck through in `--fg-subtle`, the word "Rejected" or "Undone" in `--fg-muted`, and no actions.
 
 **Badges** are mono 12px tags with a 6px radius and a 1px border, 18px tall. Tone comes from colour of text and border (35% mix), never a fill:
@@ -147,6 +147,19 @@ Injected right after the code block it describes, in a closed shadow root, so th
 
 On error (a write failed, the app isn't connected), the card keeps its state and adds a 12px `--danger` line under the header with the reason (`role="alert"`). It never shows a raw code or stack trace.
 
+### Result rows
+
+What a click (or Auto-apply) did, on the chat cards' applied rows and the app's Activity list. Colour follows the kind of change, not the fact that it worked; the word and the time say it's done, so there's no check icon.
+
+| Kind     | Icon   | Word       | Tone                                         |
+| -------- | ------ | ---------- | -------------------------------------------- |
+| Created  | `+`    | "Created"  | `success` icon and word (the only green one) |
+| Modified | pencil | "Modified" | neutral (`--fg-muted` icon, word)            |
+| Renamed  | arrow  | "Renamed"  | neutral                                      |
+| Deleted  | trash  | "Deleted"  | `danger` icon and word; path struck through  |
+
+An automatic change adds a muted 12px "auto" after the word on a card, and "· auto" in an Activity row's meta. An undone row loses its tone and is struck through in `--fg-subtle`. Commands, refusals and loop events keep the dot. The side panel's "N edits applied" row has a neutral dot.
+
 ### Message bar (Apply all, Undo all)
 
 Under the last diff card of a reply. Same card frame with a `--border` edge, holding only a footer row. **Apply all (N)** (primary 32px, "Applying…") shows with two or more applicable files (pending, readable, changed, not `partial?`), hint "Applies each file in order and stops at the first problem." **Undo all (N)** (secondary, "Undoing…") shows with two or more applied files, hint "Undoes this reply's edits, newest first." If either stops, the hint turns `--warning`: "Stopped at path. Its card says why." With neither, the bar is hidden.
@@ -157,7 +170,7 @@ At the end of a reply that asked for files with `@@READ`. Pending-card frame (`-
 
 ### Mode tag on cards
 
-Pending diff cards and RUN cards start their footer hint with the app's mode ("Manual", "Auto-apply", "Full auto") in 12px/500 `--fg`, then a hairline `--border-strong` divider and the hint. Applied cards say **Applied** or **Auto-applied** in `--success`. A diff card Auto-apply left for a click because the file is gated says, in `--warning`: "This file can change what commands do, so it needs your click in every mode. Review it, then Apply."
+Pending diff cards and RUN cards start their footer hint with the app's mode ("Manual", "Auto-apply", "Full auto") in 12px/500 `--fg`, then a hairline `--border-strong` divider and the hint. Applied cards say what they did (see "Result rows"), with a muted "auto" when Auto-apply or Full auto did it. A diff card Auto-apply left for a click because the file is gated says, in `--warning`: "This file can change what commands do, so it needs your click in every mode. Review it, then Apply."
 
 ### RUN card (command)
 
@@ -178,7 +191,10 @@ Body: the output, mono 13px/21px, wrapping, scrolling past 480px, the last 400 l
 
 ### Page chip
 
-In a corner of the page (default bottom-right, 16px in, 96px up, clear of the composer; top corners sit 72px down), in its own closed shadow root. A pill: 1px `--border`, `--bg`, `--radius-full`, no shadow. Inside: the handle (an 8px dot, `success` while a run goes, `warning` paused, idle otherwise, and the mode, 12px/600), then in Full auto the counter `3 / 10` (tabular), the state in `--fg-muted` ("Waiting for the reply", "Paused · step limit", "On") and a 28px pill **Stop** (`.btn-danger`). Shown while the tab's session is active, or while a run isn't idle. Drag the handle to another corner (it snaps to the nearest), or focus it and use the arrow keys; the corner is remembered.
+In a corner of the page (default bottom-right, 16px in; top corners sit 72px down), in its own closed shadow root. A pill: 1px `--border`, `--bg`, `--radius-full`, no shadow. Inside: the handle (an 8px dot, `success` while a run goes, `warning` paused, idle otherwise, and the mode, 12px/600), then in Full auto the counter `3 / 10` (tabular), the state in `--fg-muted` ("Waiting for the reply", "Paused · step limit", "On") and a 28px pill **Stop** (`.btn-danger`). Shown while the tab's session is active, or while a run isn't idle. Drag the handle to another corner (it snaps to the nearest), or focus it and use the arrow keys; the corner is remembered.
+
+- **Collapsed outside Full auto**: just the dot in an 8px-padded circle. Hover or keyboard focus opens it to show the mode. In Full auto it's always fully open.
+- **Clear of the composer**: a bottom corner sits at least 96px up, and higher if the composer, or a banner over it, shares the chip's column: 12px above the topmost of them (`chipBottom`). It measures on every render, on resize and on each 1s poll, so a banner appearing moves it.
 
 ### Page notice
 
@@ -191,7 +207,7 @@ After the message bar, before the READ card, one per marker. The same frame and 
 - **DELETE, pending**: the border and the trash icon are `--danger` (35% border), the path, **Copy path**, a `delete` badge (`danger`) and the size ("1.2 KB", 12px muted). Footer hint in `--danger`: "Bridge will delete this file. It keeps a backup, so you can undo." In Auto-apply and Full auto it starts "Deletes always need your click, even in this mode." Buttons: **Reject** (secondary) and **Delete file** (`.btn-danger .btn-lg`, "Deleting…").
 - **RENAME, pending**: an arrow icon, `old → new` in mono (old in `--fg-muted`, the arrow in `--fg-subtle`), a neutral `rename` badge, the size. **Reject** and **Rename** (primary `.btn-lg`).
 - Other badges: `missing` (`warning`, no file there; nothing to do), `exists` (`warning`, the new path is taken), `conflict` (`warning`, changed on disk since the card checked), `blocked` (`danger`).
-- **Applied**: like a diff card's applied row, with "Deleted" or "Renamed" in `--success`, the time, and **Undo**. Rejected and undone rows are struck through.
+- **Applied**: like a diff card's applied row (see "Result rows"): trash icon, struck path and "Deleted" in `--danger`, or arrow icon and "Renamed" neutral; the time, and **Undo**. Rejected and undone rows are struck through.
 
 ### Card conventions
 
@@ -231,7 +247,7 @@ On the desktop's Extension section: the six digits in Geist Mono 24px/600 with a
 
 ### Activity log row
 
-An 8px dot and 13px `--fg` text with an 8px gap. Rows are spaced 8px apart, newest first. Dot tones: `success` for applied or passed, `warning` for waiting on review, `danger` for failed or blocked, and idle for informational events ("Sent 3 files to chat") and undone writes. Show about the last 20 rows; older ones scroll.
+A 16px result icon (file changes, see "Result rows") or an 8px dot (everything else), and 13px `--fg` text with an 8px gap. Rows are spaced 8px apart, newest first. Dot tones: `success` for a command that passed, `warning` for waiting on review, `danger` for failed or blocked, and idle for informational events ("Sent 3 files to chat"). Show about the last 20 rows; older ones scroll.
 
 Classes `.activity`, `.activity-row`, `.activity-text`, `.activity-path` and `.activity-meta` live in `styles.css`. The text is two lines: the path in mono (truncated, full path in the tooltip) and a 12px `--fg-muted` meta line, "07:50 PM · Modified", "07:50 PM · Modified · via chat" (applied from a diff card) or "07:50 PM · Blocked read · protected file" (reasons from `FILE_ERROR_LABELS`). Writes that can be undone end with a secondary **Undo** button. Automatic writes say "· auto" instead of "· via chat". Command rows show the command in mono and "Passed · 1.2s" (`success`), "Exit 1 · 1.2s" (`danger`), "Timed out" or "Cancelled". A write left for a click reads "Left for a click · gated file". A Full auto run's rows (its steps, writes and commands) sit together under "Full auto run · N messages sent" (12px/500 muted), indented 12px with a 1px `--border-strong` line on the left. An undone row (`data-undone="true"`) strikes the path through in `--fg-subtle` and says "· undone". The section label row has **Undo last** on the right.
 
@@ -279,7 +295,7 @@ In order: Connection (label row with **Unpair** as a text button; the project na
 
 ### Side panel: Mode, Full auto, Command
 
-- **Mode**: a read-only badge (`.mode-badge`, 1px `--border-strong`, 6px radius, 13px/600; `warning` text and border for Full auto) and the mode description plus "Change the mode in the Bridge app."
+- **Mode**: a read-only badge (`.mode-badge`, 1px `--border-strong`, 6px radius, 13px/600; `warning` text and border for Full auto) and the mode description plus "Change the mode in the Bridge app." When a session starting or ending turned Full auto off, a `--warning` hint below: "Full auto turned off: it’s per session." It goes when Full auto is on again.
 - **Full auto** (in Full auto, or while a run exists): a status line with a dot and the state and `step / limit`. Paused: the reason in the bordered warning notice, then **Resume** (primary), or **Continue for N more** at the step limit. Stopped: "Stopped. Nothing was reverted; undo is still available." and **Allow Full auto again** (secondary).
 - **Command** (while one runs, or after one ran): label row with **Cancel** (`.btn-danger`) while running; `$ command` in mono; "Running…", "Passed" or "Failed (exit N)" (`--danger`); the last 200 lines in a `--bg-muted` mono 12px box, 240px tall at most.
 
@@ -323,7 +339,7 @@ Label row "Activity" with **Undo last**. A 32px search field with a search icon,
 
 ### Toasts (desktop)
 
-Bottom-right, 20px in, up to three stacked, 4s each, `aria-live="polite"`: a dot, the message (13px) with an optional mono detail, and a 12px muted hint on the next line. 1px `--border-strong`, `--radius-md`, `--bg`, no shadow. For: auto-applied edits, Full auto pausing or finishing, the project going missing, the extension disconnecting.
+Bottom-right, 20px in, up to three stacked, 4s each, `aria-live="polite"`: a dot, the message (13px) with an optional mono detail, and a 12px muted hint on the next line. 1px `--border-strong`, `--radius-md`, `--bg`, no shadow. For: auto-applied edits, Full auto pausing or finishing, Full auto turning off because a session started or ended ("Full auto turned off: it’s per session."), the project going missing, the extension disconnecting.
 
 ### Desktop: Mode, Commands, loop bar, toast
 
@@ -344,7 +360,7 @@ The mark is a plus and a minus set on a diagonal, the two sides of a diff, drawn
 
 ### Icons
 
-Use outline icons 16px with a 1.5px stroke (Lucide style). Icons inherit `currentColor` and are hidden from screen readers; a button with only an icon has an `aria-label`. The chat cards draw theirs with `createElementNS` from path data in `cards/dom.ts` (check, file, chevron, alert, trash, arrow, copy, terminal). The desktop app draws its own the same way from `renderer/src/Icon.tsx` (chevron, check, circle, folder, session, activity, settings, help, back, close, search), so no icon package is needed.
+Use outline icons 16px with a 1.5px stroke (Lucide style). Icons inherit `currentColor` and are hidden from screen readers; a button with only an icon has an `aria-label`. The chat cards draw theirs with `createElementNS` from path data in `cards/dom.ts` (file, plus, pencil, chevron, alert, trash, arrow, copy, terminal). The desktop app draws its own the same way from `renderer/src/Icon.tsx` (chevron, check, circle, folder, session, activity, settings, help, back, close, search, plus, pencil, arrow, trash), so no icon package is needed. The check is only the onboarding checklist's.
 
 ## Don'ts
 

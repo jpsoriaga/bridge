@@ -165,7 +165,7 @@ Modes, the command runner and Full auto. Code: shared `commands.ts`, `loop.ts`, 
 
 **The app is the authority.**
 
-- `ModeState` (desktop `policy.ts`) holds the mode. `settings.json` saves `manual` or `auto-apply` only; turning on Full auto saves `manual`, so a restart comes back in Manual. Full auto also drops to Manual on End session (`session_end`), unpairing (either side, or a new pairing replacing the old one) and switching project, and whatever is running is cancelled. Auto-apply survives all of these.
+- `ModeState` (desktop `policy.ts`) holds the mode. `settings.json` saves `manual` or `auto-apply` only; turning on Full auto saves `manual`, so a restart comes back in Manual. Full auto also drops to Manual when a session starts or ends (`session_start`, `session_end`; since Phase 7, see "Phase 7 decisions"), on unpairing (either side, or a new pairing replacing the old one) and switching project, and whatever is running is cancelled. Auto-apply survives all of these.
 - Turning on Full auto shows a native dialog from main (the renderer can't skip it) that says the automation may break the chat provider's terms and risk the account, that commands run code the model may have written, and that it's opt-in and at the user's own risk.
 - The server refuses `write` with `trigger: 'auto'` in Manual (`mode`) and on gated files in any mode (`gated`), before the sandbox. It refuses `run` with `trigger: 'auto'` outside Full auto (`mode`), and any command not on the allowlist even on a click (`not-allowlisted`). `trigger` is the extension's word; nothing proves a click was real. What it guarantees is that Bridge's own automation can't write or run more than the mode allows, and that nothing runs that the user didn't allowlist.
 
@@ -240,7 +240,7 @@ Code: desktop `project/watcher.ts`; extension `background/sessions.ts`, `sidepan
 
 ### Sessions, tabs and lifecycle
 
-- **One tab per session.** A session record keeps its tab. Another tab showing the same conversation gets `elsewhere`: cards there stay off and a one-line page notice offers **Move here** (also in the side panel), which hands the session over and stops the old tab's loop. A tab whose owner closed or navigated away takes the session over on its next sync.
+- **One tab per session.** A session record keeps its tab. Another tab showing the same conversation gets `elsewhere`: cards there stay off and a one-line page notice offers **Move here** (also in the side panel), which hands the session over and stops the old tab's loop. A tab whose owner closed takes the session over on its next sync. (Since Phase 7 an owner that navigates away ends the session instead; see "Phase 7 decisions".)
 - **Extension reloaded.** The content script outlives its extension. When `chrome.runtime.id` is gone or a request fails with "Extension context invalidated", it removes every card and the chip, stops polling and shows "Reload the page".
 - **App restarted.** Sessions live in the extension, so they survive. A loop that was running sees a new `instance` in the config and pauses with `app-restarted`; it stays paused (the app comes back in Manual) until Full auto is on again and the user resumes.
 - **Sleep.** The worker's ping timer notices a jump (no tick for 60s): instead of calling the socket stale it pings it now. A content script that misses its 1s poll for 150s (background tabs can be throttled to once a minute, so less could just be throttling) tells the worker (`chat-sync { wake }`, which reconnects at once if disconnected) and pauses a loop that was `acting` or `sending` with `slept`.
@@ -279,6 +279,15 @@ Open points carried forward:
 - `MISSING_TEXT` and the deleted-conversation detection are guesses at the live page's wording; checked only on the stand-in page.
 - chokidar on macOS uses one `fs.watch` per folder; under heavy load the OS can drop an event. Bridge copes (Apply always compares hashes, and context is rechecked on reconnect), but a stale marker can be late.
 - A command's full output in Activity lasts until the app quits.
+
+## Phase 7 decisions
+
+### Step 0: fixes from the live run
+
+- **Navigating ends the session.** A session belongs to the conversation and the tab it started in. When that tab moves to another conversation or a new chat (client-side navigation, seen at once through the Navigation API's `currententrychange` and otherwise by the 1s poll), the worker ends the session it owned there (`Sessions.sync`), tells the app (`session_end`) and other tabs on it (`ended`). Going back shows **Session ended**. A session waiting in a new chat still binds when that chat gets its id; a tab that only viewed a session elsewhere ends nothing. Before inserting, **Start session** asks the tab where it is right now (`locate`) instead of trusting the last poll, so it always inserts the prompt when the tab and its conversation have no active session.
+- **Full auto is per session.** Starting or ending a session turns Full auto off (`ModeState.noteSession`); Manual and Auto-apply carry over. When that happens the app toasts "Full auto turned off: it’s per session." (`sessionResets` goes up) and the side panel shows the same note under Mode until Full auto is on again.
+- **Result rows** are coloured by what they did, not by success: see DESIGN.md "Result rows".
+- **Page chip** collapses to its dot outside Full auto and keeps its bottom corners clear of the composer and any banner over it (DESIGN.md "Page chip").
 
 ## Modes
 

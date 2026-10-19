@@ -73,8 +73,9 @@ export interface ModeStore {
  * checks every automatic write and run against it.
  *
  * Full auto is never saved. Turning it on saves `manual` as the mode to start in, so a
- * restart comes back in Manual. `dropFullAuto` puts it back to Manual on End session,
- * unpairing and switching project. Auto-apply is saved and survives all of those.
+ * restart comes back in Manual. `dropFullAuto` puts it back to Manual on unpairing and
+ * switching project, and `noteSession` when a chat session starts or ends. Auto-apply is
+ * saved and survives all of those.
  */
 export class ModeState {
   private current: Mode;
@@ -103,6 +104,19 @@ export class ModeState {
   dropFullAuto(): boolean {
     if (this.current !== 'full-auto') return false;
     this.set('manual');
+    return true;
+  }
+
+  /** How many times a session starting or ending turned Full auto off. */
+  sessionResets = 0;
+
+  /**
+   * A chat session started or ended. Full auto is per session, so it goes back to Manual;
+   * Manual and Auto-apply stay as they are. Returns whether Full auto was on.
+   */
+  noteSession(): boolean {
+    if (!this.dropFullAuto()) return false;
+    this.sessionResets += 1;
     return true;
   }
 

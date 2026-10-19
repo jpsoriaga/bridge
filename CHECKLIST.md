@@ -214,6 +214,15 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 
 ## Phase 7: Security hardening
 
+### Step 0: live-test fixes
+
+- [x] Navigating to a new or different chat ends the tab's session; Start session re-locates the tab and always inserts when there's no active session (tests: A → new chat → Start, A → B → Start, `locate`)
+- [x] Auto-apply carries over between sessions; only Full auto resets, with a toast in the app and a note in the side panel (tests: `noteSession`, toast)
+- [x] Result rows coloured by kind (Created green `+`, Modified pencil, Renamed arrow, Deleted red trash, struck); no check icon; cards, Activity, Session page, side panel stats (tests)
+- [x] Page chip: a dot outside Full auto that opens on hover or focus; bottom corners kept clear of the composer and banners, re-measured on resize and each poll (tests)
+- [x] `e2e/sessions.cjs`: Start session after client-side navigation to a new chat and to another chat
+- [x] `e2e/stale.cjs`: send a file, edit it on disk, `changed` mark in the panel, Resend changed inserts the new content
+
 - [ ] Security review against PLAN.md "Security model"
 - [x] Upgrade Electron to a supported major (34 → 44, done at the start of Phase 2)
 - [ ] E2E smoke test: the parser runs in the content script, apply and undo work against a temp project

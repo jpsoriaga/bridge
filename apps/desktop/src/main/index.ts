@@ -149,6 +149,7 @@ function desktopState(): DesktopState {
     defaultDenyPatterns: DEFAULT_DENYLIST,
     denyPatterns: projects.denyPatterns,
     mode: modes.mode,
+    sessionResets: modes.sessionResets,
     allowlist: confirmed,
     allowlistSuggestions: confirmed === null ? suggestions : [],
     defaultGatedPatterns: DEFAULT_GATED_FILES,
@@ -288,10 +289,17 @@ function configChanged(): void {
   server?.pushStatus();
 }
 
-/** Full auto ends, and whatever is running stops. On End session, unpairing, a project switch. */
+/** Full auto ends, and whatever is running stops. On unpairing or a project switch. */
 function leaveFullAuto(): void {
   modes.dropFullAuto();
   runner.cancelAll();
+}
+
+/** A chat session started or ended: Full auto is per session, so it ends with a toast. */
+function sessionBoundary(): void {
+  if (!modes.noteSession()) return;
+  runner.cancelAll();
+  broadcast();
 }
 
 /** Project switched or settings changed: tell the window and the extension. */
@@ -649,8 +657,9 @@ async function startServer(): Promise<void> {
       }
       broadcast();
     },
-    onSessionEnd: leaveFullAuto,
+    onSessionEnd: sessionBoundary,
     onSessionStart: () => {
+      sessionBoundary();
       if (settings.read().sessionStarted) return;
       settings.update({ sessionStarted: true });
       broadcast();

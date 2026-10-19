@@ -34,6 +34,8 @@ export interface DesktopState {
   /** The user's extra protected patterns. */
   denyPatterns: string[];
   mode: Mode;
+  /** How many times a chat session starting or ending turned Full auto off. Goes up: a toast. */
+  sessionResets: number;
   /** The open project's allowlist, or null until the user confirms one. */
   allowlist: string[] | null;
   /** Suggested entries from the project's package.json, shown until it's confirmed. */

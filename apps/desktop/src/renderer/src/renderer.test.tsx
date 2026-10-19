@@ -111,6 +111,36 @@ describe('Activity', () => {
     ]);
   });
 
+  it('colours file rows by what happened: green only for created, red and struck for deleted', () => {
+    installBridge();
+    const { container } = render(<ActivityView entries={rows} hasProject />);
+    const row = (id: string) => container.querySelector(`[data-entry="${id}"]`)!;
+    const verb = (id: string) => row(id).querySelector('.result-verb');
+    const mark = (id: string) => row(id).querySelector('.result-icon');
+    expect([verb('6')?.textContent, verb('6')?.getAttribute('data-tone')]).toEqual([
+      'Created',
+      'success'
+    ]);
+    expect(mark('6')?.getAttribute('data-tone')).toBe('success');
+    expect([verb('1')?.textContent, verb('1')?.hasAttribute('data-tone')]).toEqual([
+      'Modified',
+      false
+    ]);
+    expect([verb('3')?.textContent, verb('3')?.hasAttribute('data-tone')]).toEqual([
+      'Renamed',
+      false
+    ]);
+    expect([verb('2')?.textContent, verb('2')?.getAttribute('data-tone')]).toEqual([
+      'Deleted',
+      'danger'
+    ]);
+    expect(row('2').getAttribute('data-result')).toBe('delete');
+    // No check icon, and no green dot, on a modify.
+    expect(row('1').querySelector('.dot')).toBeNull();
+    // Commands and refusals keep their dot.
+    expect(row('4').querySelector('.dot')?.getAttribute('data-tone')).toBe('danger');
+  });
+
   it('filters with chips, clears, and shows an empty state', () => {
     installBridge();
     render(<ActivityView entries={rows} hasProject />);
@@ -348,5 +378,18 @@ describe('App shell', () => {
     const toast = (await screen.findByText('Auto-applied')).closest('.toast') as HTMLElement;
     expect(within(toast).getByText('src/new.ts')).toBeTruthy();
     expect(within(toast).getByText('Undo it in Activity.')).toBeTruthy();
+  });
+
+  it('toasts Full auto turning off when a session starts or ends', async () => {
+    const t = installBridge(makeState({ mode: 'full-auto' }), []);
+    render(<App />);
+    await screen.findByRole('heading', { name: 'Project' });
+    act(() => t.push(makeState({ mode: 'manual', sessionResets: 1 })));
+    const toast = (await screen.findByText('Full auto turned off: it’s per session.')).closest(
+      '.toast'
+    ) as HTMLElement;
+    expect(
+      within(toast).getByText('Auto-apply and Manual carry over between sessions.')
+    ).toBeTruthy();
   });
 });

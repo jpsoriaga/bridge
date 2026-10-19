@@ -295,9 +295,18 @@ export const TabMessage = z.discriminatedUnion('type', [
     type: z.literal('loop-control'),
     action: z.enum(['stop', 'resume', 'continue'])
   }),
-  z.strictObject({ type: z.literal('diagnose') })
+  z.strictObject({ type: z.literal('diagnose') }),
+  // Which conversation the tab shows right now, checked on the spot (`TabLocation`).
+  z.strictObject({ type: z.literal('locate') })
 ]);
 export type TabMessage = z.infer<typeof TabMessage>;
+
+/** The content script's answer to `locate`. */
+export const TabLocation = z.strictObject({
+  conversationId: ConversationId.nullable(),
+  layout: LayoutHealth
+});
+export type TabLocation = z.infer<typeof TabLocation>;
 
 export type InsertResult =
   | { ok: true; method: 'paste' | 'insert-text' | 'textarea'; chars: number }
@@ -385,6 +394,8 @@ export interface StatusUpdate {
   project: ProjectInfo | null;
   /** The app's mode, allowlist and running command while connected, else null. */
   config: BridgeConfig | null;
+  /** A session starting or ending turned Full auto off. Cleared when it's on again. */
+  fullAutoOff: boolean;
   chat: ChatPanelState;
 }
 

@@ -11,6 +11,7 @@ import {
   ChipCorner,
   PanelHello,
   SIDE_PANEL_PORT,
+  TabLocation,
   TabMessage,
   WorkerRequest,
   type ChatSyncReply,
@@ -126,6 +127,21 @@ async function chatTab(
   if (tabId === null || !tab) return { ok: false, error: 'no-chat-tab' };
   if (tab.layout !== 'ok') return { ok: false, error: 'layout-unknown' };
   return { ok: true, tabId };
+}
+
+/**
+ * A session started or ended while the app was in Full auto, which turns it off (it's per
+ * session). The side panel says so until Full auto is on again.
+ */
+let fullAutoOff = false;
+
+/** Tells the app a session started or ended. The app drops Full auto on both. */
+function sessionBoundary(type: 'session_start' | 'session_end'): void {
+  if (connection.config?.mode === 'full-auto' && !fullAutoOff) {
+    fullAutoOff = true;
+    notifyPanels();
+  }
+  connection.notify(type, {});
 }
 
 /** The tab that started each running command, so its card gets the output. */
@@ -264,15 +280,28 @@ async function previewSession(windowId: number): Promise<SessionPreview> {
   return { ok: true, chars: prompt.text.length, total: prompt.total, shown: prompt.shown };
 }
 
+/**
+ * Asks the tab which conversation it shows right now and records it, rather than trust its
+ * last poll: a tab that just moved to a new chat ends the session it left before anything
+ * is inserted.
+ */
+async function locateTab(tabId: number): Promise<void> {
+  const reply = TabLocation.safeParse(await tellTab(tabId, { type: 'locate' }));
+  if (reply.success) await sessions.sync(tabId, reply.data.conversationId, reply.data.layout);
+}
+
 async function startSession(windowId: number): Promise<SessionStartResult> {
-  const tab = await chatTab(windowId);
+  let tab = await chatTab(windowId);
+  if (!tab.ok) return tab;
+  await locateTab(tab.tabId);
+  tab = await chatTab(windowId);
   if (!tab.ok) return tab;
   const prompt = await sessionPrompt();
   if (!prompt.ok) return prompt;
   const inserted = await insertIntoChat(tab.tabId, prompt.text);
   if (!inserted.ok) return inserted;
   await sessions.start(tab.tabId);
-  connection.notify('session_start', {});
+  sessionBoundary('session_start');
   void tellTab(tab.tabId, { type: 'session-changed', session: 'active' });
   void tellOtherTabs(tab.tabId, 'elsewhere');
   void syncWatch();
@@ -286,7 +315,7 @@ async function endSession(windowId: number): Promise<void> {
   void tellTab(tabId, { type: 'session-changed', session: 'ended' });
   void tellOtherTabs(tabId, 'ended');
   // The app drops out of Full auto when a session ends.
-  connection.notify('session_end', {});
+  sessionBoundary('session_end');
   void syncWatch();
 }
 
@@ -458,7 +487,7 @@ async function handleChat(
       if (await sessions.isActive(tabId)) {
         await sessions.end(tabId);
         void tellOtherTabs(tabId, 'ended');
-        connection.notify('session_end', {});
+        sessionBoundary('session_end');
         void syncWatch();
       }
       return sessions.stateFor(tabId);
@@ -624,6 +653,7 @@ chrome.runtime.onConnect.addListener((port) => {
           status: connection.current,
           project: connection.project,
           config: connection.config,
+          fullAutoOff,
           chat
         } satisfies StatusUpdate);
       })
@@ -654,6 +684,19 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 sessions.onChange(notifyPanels);
+// A tab moved to another chat, which ended the session it had: the app drops out of Full
+// auto as on End session, and other tabs on that conversation hear it ended.
+sessions.onEnded((conversationId) => {
+  sessionBoundary('session_end');
+  void sessions.tabIds().then(async (ids) => {
+    for (const id of ids) {
+      if ((await sessions.tab(id))?.conversationId === conversationId) {
+        void tellTab(id, { type: 'session-changed', session: 'ended' });
+      }
+    }
+  });
+  void syncWatch();
+});
 chrome.tabs.onActivated.addListener(notifyPanels);
 chrome.windows.onFocusChanged.addListener(notifyPanels);
 /**
@@ -690,6 +733,10 @@ connection.onStatus((status) => {
 
 // The app's mode and allowlist, and the connection itself, are mirrored in every chat tab.
 connection.onConfig(() => {
+  if (fullAutoOff && connection.config?.mode === 'full-auto') {
+    fullAutoOff = false;
+    notifyPanels();
+  }
   void chatTabIds().then((ids) => {
     // The config as it is now, not as it was when this push started: several changes in a
     // row (a command starting and ending) must not land in the tab out of order.

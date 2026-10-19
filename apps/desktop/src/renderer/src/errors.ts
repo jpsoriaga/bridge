@@ -84,24 +84,45 @@ export function kindsOf(entry: ActivityEntry): ActivityKind[] {
 }
 
 /** An activity row's meta line ("Modified · via chat") and its dot. */
-export function describeEntry(entry: ActivityEntry): { meta: string; tone?: Tone } {
+/** What a file change did. Its row shows an icon and the verb, coloured by kind. */
+export type ResultKind = 'create' | 'modify' | 'rename' | 'delete';
+
+/** Only a new file is green and only a delete is red; the others stay neutral. */
+export const RESULT_TONES: Record<ResultKind, Tone> = {
+  create: 'success',
+  modify: undefined,
+  rename: undefined,
+  delete: 'danger'
+};
+
+export interface EntryDescription {
+  /** The whole line after the time, for labels: "Created · via chat". */
+  meta: string;
+  /** The dot's tone, for rows that aren't file changes. */
+  tone?: Tone;
+  /** File changes: the kind, and the verb and the rest of `meta` to show apart. */
+  result?: { kind: ResultKind; verb: string; rest: string; tone: Tone };
+}
+
+export function describeEntry(entry: ActivityEntry): EntryDescription {
   const reason = entry.code ? FILE_ERROR_LABELS[entry.code] : '';
   const via = entry.trigger === 'auto' ? ' · auto' : entry.source === 'chat' ? ' · via chat' : '';
-  const done = (verb: string) =>
-    entry.undone
-      ? { meta: `${verb}${via} · undone` }
-      : { meta: `${verb}${via}`, tone: 'success' as const };
+  const done = (kind: ResultKind, verb: string, detail = ''): EntryDescription => {
+    const rest = `${detail}${via}${entry.undone ? ' · undone' : ''}`;
+    return {
+      meta: `${verb}${rest}`,
+      result: { kind, verb, rest, tone: entry.undone ? undefined : RESULT_TONES[kind] }
+    };
+  };
   switch (entry.kind) {
     case 'create':
-      return done('Created');
+      return done('create', 'Created');
     case 'modify':
-      return done('Modified');
+      return done('modify', 'Modified');
     case 'delete':
-      return entry.undone
-        ? { meta: `Deleted${via} · undone` }
-        : { meta: `Deleted${via}`, tone: 'danger' };
+      return done('delete', 'Deleted');
     case 'rename':
-      return done(`Renamed from ${entry.from ?? '?'}`);
+      return done('rename', 'Renamed', ` from ${entry.from ?? '?'}`);
     case 'rejected':
       return { meta: `Blocked ${entry.op ?? 'request'} · ${reason}`, tone: 'danger' };
     case 'failed': {

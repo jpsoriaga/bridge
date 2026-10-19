@@ -33,7 +33,13 @@ const loopRequest = (action: 'stop' | 'resume' | 'continue') =>
   );
 
 /** The app's mode, read-only here: it's switched in the Bridge app. */
-export function ModeSection({ config }: { config: BridgeConfig | null }) {
+export function ModeSection({
+  config,
+  fullAutoOff = false
+}: {
+  config: BridgeConfig | null;
+  fullAutoOff?: boolean;
+}) {
   return (
     <section>
       <p className="label">Mode</p>
@@ -47,6 +53,11 @@ export function ModeSection({ config }: { config: BridgeConfig | null }) {
           <p className="hint">
             {MODE_DESCRIPTIONS[config.mode]} Change the mode in the Bridge app.
           </p>
+          {fullAutoOff && config.mode !== 'full-auto' && (
+            <p className="hint" data-tone="warning" role="status">
+              Full auto turned off: it’s per session.
+            </p>
+          )}
         </>
       ) : (
         <p className="hint">Shown once the Bridge app is connected.</p>

@@ -33,7 +33,11 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 /** Outline icons, 16px, 1.5px stroke (DESIGN.md "Icons"). Path data is ours, not the chat's. */
 const ICONS = {
   file: ['M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z', 'M14 2v4a2 2 0 0 0 2 2h4'],
-  check: ['M20 6 9 17l-5-5'],
+  plus: ['M12 5v14', 'M5 12h14'],
+  pencil: [
+    'M21.17 6.81a1 1 0 0 0-3.98-3.98L3.84 16.17a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5Z',
+    'm15 5 4 4'
+  ],
   chevron: ['m6 9 6 6 6-6'],
   alert: [
     'M12 9v4',
@@ -128,4 +132,34 @@ export function renderCard(root: ShadowRoot, card: HTMLElement): void {
       root.querySelector<HTMLElement>(`[data-focus="${focusKey}"]:not(:disabled)`)) ||
     root.querySelector<HTMLElement>('button:not(:disabled)');
   target?.focus();
+}
+
+/** What an applied card did. Its row says so with an icon and a word, coloured by kind. */
+export type ResultKind = 'create' | 'modify' | 'rename' | 'delete';
+
+const RESULTS: Record<
+  ResultKind,
+  { icon: keyof typeof ICONS; word: string; tone?: 'success' | 'danger' }
+> = {
+  create: { icon: 'plus', word: 'Created', tone: 'success' },
+  modify: { icon: 'pencil', word: 'Modified' },
+  rename: { icon: 'arrow', word: 'Renamed' },
+  delete: { icon: 'trash', word: 'Deleted', tone: 'danger' }
+};
+
+/** The row's icon: `+` and the word are green only for a new file, red for a delete. */
+export function resultIcon(kind: ResultKind): SVGSVGElement {
+  const { icon: name, tone } = RESULTS[kind];
+  const svg = icon(name);
+  if (tone) svg.setAttribute('data-tone', tone);
+  return svg;
+}
+
+/** "Created", "Modified", "Renamed" or "Deleted", then a muted "auto" when no click did it. */
+export function resultWord(kind: ResultKind, auto = false): HTMLElement[] {
+  const { word, tone } = RESULTS[kind];
+  return [
+    h('span', { class: 'word', attrs: { 'data-tone': tone } }, word),
+    ...(auto ? [h('span', { class: 'word-note' }, 'auto')] : [])
+  ];
 }

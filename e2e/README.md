@@ -24,6 +24,8 @@ If your shell sets `ELECTRON_RUN_AS_NODE=1`, the scripts unset it for the app th
 | `node e2e/chat.cjs .`    | Phases 4–5 against a stand-in chatgpt.com served from the fixtures: allowlist confirmed in the app, start session (prompt lists the allowlist), card fonts on dynamic URLs, Apply/Undo, Apply all, READ card, conflict, reload, regenerate, Auto-apply with a gated file and Undo all, a 2-step Full auto run to `@@DONE@@` (3s gap checked), End session back to Manual. `E2E_SCREENSHOTS=dir` saves screenshots |
 
 | `node e2e/phase6.cjs .` | Phase 6 on the same stand-in page: the first-run checklist ticking itself off, the session prompt teaching DELETE/RENAME, delete and a case-only rename that Auto-apply leaves alone, a click and Undo for each, the Activity filter and diff, a file in context going stale and Resend changed, a second tab with Move here, and the extension reloading under the page |
+| `node e2e/sessions.cjs .` | Sessions across client-side navigation: chat A, then New chat and Start session at once (prompt inserted, binds when the chat gets its id), back to A (ended), then another chat and Start again |
+| `node e2e/stale.cjs .` | Stale files through the side panel's UI: a file sent to the chat, edited on disk, marked `changed`; **Resend changed** inserts the new content and the mark clears |
 | `node e2e/screenshots.cjs .` | Saves the README screenshots (app pages, cards, side panel; light and dark) to `docs/screenshots/` |
 
 `chat-lib.cjs` holds the stand-in page and the card helpers both chat scripts use.
