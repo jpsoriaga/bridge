@@ -19,7 +19,7 @@ import { LoopReport, MAX_STEP_LIMIT } from './loop';
 import { MODES } from './types';
 
 /** Bumped when a message shape changes incompatibly. Both sides reject other versions. */
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 
 export { candidatePorts, DEFAULT_PORT, E2E_PORT, PORT_RANGE } from './ports';
 

@@ -1,6 +1,6 @@
 import {
+  buildRunMessage,
   COMMAND_REJECTION_TEXT,
-  formatRunResult,
   commandRefusal,
   deniedArgument,
   parseCommand,
@@ -13,7 +13,16 @@ import {
 import type { RequestOutcome } from '../../../messages';
 import { insertIntoComposer } from '../composer';
 import { DIFF_RENDER_LIMIT, failureText, modeTag, type Ask } from './diff-card';
-import { copyButton, formatCount, formatTime, h, icon, redactionNote, renderCard } from './dom';
+import {
+  copyButton,
+  formatCount,
+  formatFixedBadge,
+  formatTime,
+  h,
+  icon,
+  redactionNote,
+  renderCard
+} from './dom';
 import { createHost } from './host';
 
 export type RunBadge =
@@ -62,6 +71,8 @@ export class RunCard {
   private waiter: ((result: RunResult) => void) | null = null;
   /** Epoch ms when the last run ended, for the header. */
   private finishedAt: number | null = null;
+  /** The marker was missing its closing `@@`. Set before the first `setConfig`. */
+  formatFixed = false;
 
   constructor(
     readonly command: string,
@@ -208,7 +219,7 @@ export class RunCard {
     if (!this.result) return null;
     // Redacting up to 200 KB of output is worth doing once per result, not per render.
     if (this.built?.result !== this.result) {
-      this.built = { result: this.result, value: formatRunResult(this.result) };
+      this.built = { result: this.result, value: buildRunMessage(this.result) };
     }
     return this.built.value;
   }
@@ -368,6 +379,7 @@ export class RunCard {
           },
           badge
         ),
+        this.formatFixed ? formatFixedBadge() : null,
         this.result
           ? h('span', { class: 'meta' }, `${(this.result.durationMs / 1000).toFixed(1)}s`)
           : null,

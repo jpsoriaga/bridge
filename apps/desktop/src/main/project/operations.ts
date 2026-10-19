@@ -543,9 +543,12 @@ export async function undo(
 
 /** Never listed. Built output and framework caches. */
 export const TREE_SKIP_DIRS: readonly string[] = ['dist/', 'out/', 'build/', '.next/'];
+/** Never listed, in any folder, ignoring case. Files the OS leaves behind. */
+export const TREE_SKIP_FILES: readonly string[] = ['.DS_Store', 'Thumbs.db', 'desktop.ini'];
 /** Shown as one collapsed entry, never opened. */
 const COLLAPSED_DIRS = new Set(['node_modules']);
 const skipDirs = ignore().add([...TREE_SKIP_DIRS]);
+const skipFiles = ignore({ ignorecase: true }).add([...TREE_SKIP_FILES]);
 
 export interface GitignoreScope {
   /** Relative directory the .gitignore lives in; '' for the root. */
@@ -580,7 +583,10 @@ export async function withGitignore(
   }
 }
 
-/** Whether Bridge lists a path at all: the sandbox's names, the denylist and skip dirs. */
+/**
+ * Whether Bridge lists a path at all: the sandbox's names, the denylist, every .gitignore,
+ * and the default ignore list (skip dirs and OS junk files).
+ */
 export function isListed(
   sandbox: Sandbox,
   scopes: readonly GitignoreScope[],
@@ -589,7 +595,7 @@ export function isListed(
 ): boolean {
   if (!checkPath(rel).ok || sandbox.denylist.matches(rel)) return false;
   if (gitignored(scopes, rel, isDir)) return false;
-  return !(isDir && skipDirs.ignores(`${rel}/`));
+  return isDir ? !skipDirs.ignores(`${rel}/`) : !skipFiles.ignores(rel);
 }
 
 type Child = TreeEntry & { abs: string; follow: boolean };

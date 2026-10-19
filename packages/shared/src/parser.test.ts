@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { looksPartial, parseChat, parseFileBlocks } from './parser';
-import { buildContextMessage } from './prompts';
+import { findFormatIssues, looksPartial, parseChat, parseFileBlocks } from './parser';
+import { buildContextMessage, buildFollowUp, buildRunMessage, FORMAT_FOOTER } from './prompts';
+
+const NONE_FIXED = { reads: [], runs: [], deletes: [], renames: [], done: false };
 
 const block = (path: string, body: string, fence = '```ts', inline = false) => {
   const marker = inline ? `\`@@FILE ${path}@@\`` : `@@FILE ${path}@@`;
@@ -123,7 +125,9 @@ describe('@@READ', () => {
       runs: [],
       done: false,
       deletes: [],
-      renames: []
+      renames: [],
+      fixed: NONE_FIXED,
+      issues: []
     });
   });
 
@@ -144,7 +148,9 @@ describe('@@READ', () => {
       runs: [],
       done: false,
       deletes: [],
-      renames: []
+      renames: [],
+      fixed: NONE_FIXED,
+      issues: []
     });
   });
 });
@@ -191,7 +197,9 @@ describe('@@RUN', () => {
       runs: ['pnpm test'],
       done: false,
       deletes: [],
-      renames: []
+      renames: [],
+      fixed: NONE_FIXED,
+      issues: []
     });
   });
 });
@@ -224,7 +232,9 @@ describe('@@CONTEXT', () => {
       runs: [],
       done: false,
       deletes: [],
-      renames: []
+      renames: [],
+      fixed: NONE_FIXED,
+      issues: []
     });
   });
 });
@@ -312,5 +322,177 @@ describe('@@DELETE and @@RENAME', () => {
     const parsed = parseChat(text);
     expect(parsed.deletes).toEqual(['gone.ts']);
     expect(parsed.edits).toMatchObject([{ path: 'a.ts', fence: 0 }]);
+  });
+});
+
+describe('lenient markers (missing closing @@)', () => {
+  it.each([
+    ['`@@RUN npm test`', 'runs', ['npm test']],
+    ['`@@RUN npm test@`', 'runs', ['npm test']],
+    ['- `@@RUN pnpm lint --fix`', 'runs', ['pnpm lint --fix']],
+    ['`@@READ src/app.ts`', 'reads', ['src/app.ts']],
+    ['`@@DELETE src/old.ts`', 'deletes', ['src/old.ts']],
+    ['`@@RENAME src/a.ts -> src/b.ts`', 'renames', [{ from: 'src/a.ts', to: 'src/b.ts' }]],
+    ['`@@RENAME src/a.ts → src/b.ts @`', 'renames', [{ from: 'src/a.ts', to: 'src/b.ts' }]]
+  ] as const)('reads %j and marks it fixed', (line, key, expected) => {
+    const parsed = parseChat(`Next:\n\n${line}`);
+    expect(parsed[key]).toEqual(expected);
+    expect(parsed.fixed[key]).toEqual(expected);
+    expect(parsed.issues).toEqual([]);
+  });
+
+  it.each(['`@@DONE`', '`@@DONE@`', '- `@@DONE `'])('reads %j as DONE, fixed', (line) => {
+    const parsed = parseChat(`All green.\n\n${line}`);
+    expect(parsed.done).toBe(true);
+    expect(parsed.fixed.done).toBe(true);
+  });
+
+  it('does not mark well-formed markers as fixed', () => {
+    const parsed = parseChat('`@@RUN npm test@@`\n`@@READ a.ts@@`\n`@@DONE@@`');
+    expect(parsed.fixed).toEqual(NONE_FIXED);
+  });
+
+  it('keeps DONE unfixed when any DONE in the reply was well formed', () => {
+    expect(parseChat('`@@DONE`\n`@@DONE@@`').fixed.done).toBe(false);
+  });
+
+  it('reads FILE without its closing @@ when a code block follows', () => {
+    const edits = parseFileBlocks('`@@FILE src/app.ts`\n\n```ts\nexport {};\n```');
+    expect(edits).toEqual([{ ...edit('src/app.ts', 'export {};\n'), formatFixed: true }]);
+  });
+
+  it('ignores FILE without its closing @@ when no code block follows, and says so', () => {
+    const parsed = parseChat('`@@FILE src/app.ts`\n\nThen run the tests.');
+    expect(parsed.edits).toEqual([]);
+    expect(parsed.issues).toEqual([{ kind: 'no-block', text: '`@@FILE src/app.ts`' }]);
+  });
+
+  it('only reads loose markers inside an inline-code span holding nothing else', () => {
+    expect(parseChat('@@RUN npm test').runs).toEqual([]);
+    expect(parseChat('@@DONE').done).toBe(false);
+    expect(parseChat('Then `@@RUN npm test` again').runs).toEqual([]);
+    expect(parseFileBlocks('@@FILE a.ts\n```\nx\n```')).toEqual([]);
+    // Bridge's own CONTEXT marker is never read loosely.
+    expect(parseFileBlocks('`@@CONTEXT a.ts`\n```\nx\n```')).toEqual([]);
+  });
+
+  it.each([
+    'Diff hunks start with @@ -1,3 +1,4 @@ in git.',
+    'Use `@@` as the separator.',
+    '`@@`',
+    '`@@ -1,3 +1,4 @@`',
+    'Python matrix multiply: `a @@ b` is not valid, `a @ b` is.',
+    'Email me at me@@example.com',
+    '`@@RUN`',
+    '```diff\n@@ -1 +1 @@\n-a\n+b\n```'
+  ])('finds nothing in normal text with @@: %j', (text) => {
+    const parsed = parseChat(text);
+    expect(parsed).toMatchObject({
+      edits: [],
+      reads: [],
+      runs: [],
+      deletes: [],
+      renames: [],
+      done: false,
+      fixed: NONE_FIXED
+    });
+  });
+});
+
+describe('findFormatIssues', () => {
+  it.each([
+    ['`@@RUNS npm test@@`'],
+    ['`@@ FILE src/app.ts@@`'],
+    ['`@RUN npm test@@`'],
+    ['@RUN npm test'],
+    ['`@@run npm test@@`'],
+    ['`@@READS src/app.ts@@`'],
+    ['`@@DELET src/a.ts@@`'],
+    ['@@RUN npm test'],
+    ['@@DONE'],
+    ['`@@FILE:src/app.ts@@`'],
+    ['`@@RUN npm test@@` to check it'],
+    ['- `@@FIEL src/a.ts@@`']
+  ])('flags a marker with a typo or out of place: %j', (line) => {
+    expect(findFormatIssues(`Here:\n\n${line}\n\nThanks.`)).toEqual([
+      { kind: 'bad-marker', text: line }
+    ]);
+  });
+
+  it.each([
+    'src/app.ts',
+    '`src/app.ts`',
+    '__src/app.ts__',
+    '### src/app.ts',
+    'File: src/app.ts',
+    '- `src/app.ts`:',
+    'Here is the updated `src/app.ts`:'
+  ])('flags a full code block with a path above it and no marker: %j', (label) => {
+    const text = `${label}\n\n\`\`\`ts\nimport a from 'a';\nexport const b = a;\n\`\`\``;
+    expect(findFormatIssues(text)).toEqual([{ kind: 'no-marker', text: label }]);
+  });
+
+  it('flags @@FILE with no code block after it', () => {
+    expect(findFormatIssues('`@@FILE src/app.ts@@`\n\nI changed the import.')).toEqual([
+      { kind: 'no-block', text: '`@@FILE src/app.ts@@`' }
+    ]);
+  });
+
+  it('flags a "rest unchanged" placeholder in an edit', () => {
+    const text = block('src/app.ts', 'import a from "a";\n// ...rest unchanged', '```ts', true);
+    expect(findFormatIssues(text)).toEqual([{ kind: 'placeholder', text: 'src/app.ts' }]);
+  });
+
+  it('lists several issues in order', () => {
+    const text = [
+      '`@@RUNS npm test@@`',
+      '',
+      'src/a.ts',
+      '```ts',
+      'const a = 1;',
+      'export { a };',
+      '```',
+      '`@@FILE b.ts@@`'
+    ].join('\n');
+    expect(findFormatIssues(text).map((i) => i.kind)).toEqual([
+      'bad-marker',
+      'no-marker',
+      'no-block'
+    ]);
+  });
+
+  it.each([
+    ['a reply in the format', `${block('src/a.ts', 'a', '```ts', true)}\n\n\`@@RUN pnpm test@@\``],
+    ['"Ready."', 'Ready.'],
+    ['a plain answer', 'The bug is in the loop: it never resets `i`. Want me to fix it?'],
+    ['markers mentioned mid-sentence', 'I will end with `@@DONE@@` when it is all done.'],
+    ['a shell snippet', 'Run this:\n\n```sh\npnpm install\n```'],
+    ['a one-line block under a path', '`package.json`:\n```json\n{}\n```'],
+    ['an example with no path above', 'For example:\n```ts\nconst a = 1;\nconst b = 2;\n```'],
+    ['prose about a file', 'I looked at src/app.ts and it seems fine.'],
+    ['@-mentions and decorators', '@readonly is a decorator.\n@runtime_checkable too.\n@Done'],
+    ['markers missing @@ that Bridge fixed', '`@@RUN npm test`\n`@@READ a.ts`\n`@@DONE`'],
+    [
+      'files Bridge sent, echoed',
+      buildContextMessage([{ path: 'a.ts', content: '// ...rest unchanged\n@@RUNS x\n' }]).text
+    ],
+    ['the format footer', FORMAT_FOOTER],
+    [
+      'a Full auto follow-up',
+      buildFollowUp({ applied: ['a.ts'], skipped: [], files: [], refused: [], runs: [] })!.text
+    ],
+    [
+      'command output',
+      buildRunMessage({
+        argv: ['pnpm', 'test'],
+        status: 'exited',
+        exitCode: 1,
+        signal: null,
+        durationMs: 10,
+        output: 'src/a.ts\n@@RUNS\n'
+      }).text
+    ]
+  ])('finds nothing in %s', (_, text) => {
+    expect(findFormatIssues(text)).toEqual([]);
   });
 });

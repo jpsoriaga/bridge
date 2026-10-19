@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  FORMAT_REMINDER,
   LOOP_MIN_SEND_GAP_MS,
   type BridgeConfig,
   type LoopReport,
@@ -7,6 +8,7 @@ import {
 } from '@bridge/shared';
 import {
   FullAutoLoop,
+  MAX_FORMAT_REMINDERS,
   SEND_CONFIRM_MS,
   type EditHold,
   type LoopPage,
@@ -88,6 +90,8 @@ interface FakeReply {
   done?: boolean;
   /** Deletes and renames. Mutate `pending`/`applied` to stand for a click. */
   changes?: { applied: string[]; pending: string[] };
+  /** The reply missed Bridge's format somewhere. */
+  formatIssues?: boolean;
 }
 
 function reply(spec: FakeReply = {}) {
@@ -104,6 +108,8 @@ function reply(spec: FakeReply = {}) {
         (spec.changes ? spec.changes.applied.length + spec.changes.pending.length : 0) >
       0,
     done: spec.done ?? false,
+    formatIssues: spec.formatIssues ?? false,
+    markReminded: () => log.push('reminded'),
     applyEdits: async (loopId) => {
       log.push(`apply:${loopId ?? '-'}`);
     },
@@ -683,5 +689,150 @@ describe('FullAutoLoop', () => {
     await settle();
     expect(t.loop.state).toBe('waiting-reply');
     expect(t.page.sent).toHaveLength(2);
+  });
+
+  describe('format reminders', () => {
+    it('asks the chat to redo a reply that missed the format, instead of acting on it', async () => {
+      const t = setup();
+      const broken = reply({ formatIssues: true });
+      t.loop.onReply(broken.actions);
+      await settle();
+      expect(t.page.sent).toEqual([FORMAT_REMINDER]);
+      expect(broken.log).toEqual(['reminded']);
+      expect(t.loop.state).toBe('waiting-reply');
+      expect(t.loop.step).toBe(1);
+      expect(t.events()).toContain('sent: Sent message 1 of 10: a format reminder (1 of 2).');
+    });
+
+    it('does not apply, read or run anything from that reply', async () => {
+      const t = setup();
+      const broken = reply({
+        formatIssues: true,
+        edits: { applied: ['a.ts'] },
+        reads: ['b.ts'],
+        runs: [{ command: 'pnpm test' }]
+      });
+      t.loop.onReply(broken.actions);
+      await settle();
+      expect(broken.log).toEqual(['reminded']);
+      expect(t.page.sent).toEqual([FORMAT_REMINDER]);
+    });
+
+    it('carries on normally once the chat gets the format right', async () => {
+      const t = setup();
+      t.loop.onReply(reply({ formatIssues: true }).actions);
+      await settle();
+      t.advance(LOOP_MIN_SEND_GAP_MS);
+      const fixed = reply({ runs: [{ command: 'pnpm test' }] });
+      t.loop.onReply(fixed.actions);
+      await settle();
+      expect(fixed.log).toEqual(['apply:loop-1', 'run:pnpm test', 'reads-sent']);
+      expect(t.page.sent).toHaveLength(2);
+      expect(t.loop.step).toBe(2);
+    });
+
+    it('sends at most one reminder per step, even after a failed send and Resume', async () => {
+      const t = setup();
+      t.page.sendWorks = false;
+      const broken = reply({ formatIssues: true });
+      t.loop.onReply(broken.actions);
+      await settle();
+      expect(t.loop.state).toBe('paused');
+      expect(t.loop.reason).toBe('send-failed');
+      t.page.sendWorks = true;
+      t.loop.resume();
+      await settle();
+      // The same reminder, still in the composer, went out once.
+      expect(t.page.sent).toEqual([FORMAT_REMINDER]);
+      expect(broken.log).toEqual(['reminded']);
+      expect(t.loop.step).toBe(1);
+      expect(t.events().filter((e) => e.includes('format reminder'))).toHaveLength(1);
+    });
+
+    it(`sends at most ${MAX_FORMAT_REMINDERS} per run, then pauses with format-issues`, async () => {
+      const t = setup();
+      for (let i = 0; i < MAX_FORMAT_REMINDERS; i += 1) {
+        t.loop.onReply(reply({ formatIssues: true }).actions);
+        await settle();
+        t.advance(LOOP_MIN_SEND_GAP_MS);
+      }
+      expect(t.page.sent).toEqual([FORMAT_REMINDER, FORMAT_REMINDER]);
+      const third = reply({ formatIssues: true });
+      t.loop.onReply(third.actions);
+      await settle();
+      expect(t.page.sent).toHaveLength(2);
+      expect(third.log).toEqual([]);
+      expect(t.loop.state).toBe('paused');
+      expect(t.loop.reason).toBe('format-issues');
+      expect(t.reports.at(-1)).toMatchObject({ state: 'paused', reason: 'format-issues' });
+      expect(t.loop.step).toBe(2);
+    });
+
+    it('acts on what Bridge could read when Resumed after format-issues', async () => {
+      const t = setup();
+      for (let i = 0; i < MAX_FORMAT_REMINDERS; i += 1) {
+        t.loop.onReply(reply({ formatIssues: true }).actions);
+        await settle();
+        t.advance(LOOP_MIN_SEND_GAP_MS);
+      }
+      const third = reply({ formatIssues: true, runs: [{ command: 'pnpm test' }] });
+      t.loop.onReply(third.actions);
+      await settle();
+      expect(t.loop.reason).toBe('format-issues');
+      t.loop.resume();
+      await settle();
+      expect(third.log).toEqual(['apply:loop-1', 'run:pnpm test', 'reads-sent']);
+      expect(t.page.sent).toHaveLength(3);
+      expect(t.page.sent[2]).not.toBe(FORMAT_REMINDER);
+    });
+
+    it('waits for the next reply when Resumed after format-issues with nothing to act on', async () => {
+      const t = setup();
+      for (let i = 0; i <= MAX_FORMAT_REMINDERS; i += 1) {
+        t.loop.onReply(reply({ formatIssues: true }).actions);
+        await settle();
+        t.advance(LOOP_MIN_SEND_GAP_MS);
+      }
+      expect(t.loop.reason).toBe('format-issues');
+      t.loop.resume();
+      expect(t.loop.state).toBe('waiting-reply');
+      expect(t.page.sent).toHaveLength(2);
+    });
+
+    it('starts a new run with a fresh count', async () => {
+      const t = setup();
+      for (let i = 0; i < MAX_FORMAT_REMINDERS; i += 1) {
+        t.loop.onReply(reply({ formatIssues: true }).actions);
+        await settle();
+        t.advance(LOOP_MIN_SEND_GAP_MS);
+      }
+      t.loop.onReply(reply().actions); // no actions: the run ends
+      expect(t.loop.state).toBe('idle');
+      t.loop.onReply(reply({ formatIssues: true }).actions);
+      await settle();
+      expect(t.page.sent).toHaveLength(3);
+      expect(t.loop.state).toBe('waiting-reply');
+    });
+
+    it('lets a DONE reply end the run, issues or not', async () => {
+      const t = setup();
+      const done = reply({ formatIssues: true, done: true, edits: { applied: ['a.ts'] } });
+      t.loop.onReply(done.actions);
+      await settle();
+      expect(t.page.sent).toEqual([]);
+      expect(done.log).toEqual(['apply:-']);
+      expect(t.loop.state).toBe('idle');
+    });
+
+    it('counts reminders against the step limit', async () => {
+      const t = setup({ stepLimit: 1 });
+      t.loop.onReply(reply({ runs: [{ command: 'pnpm test' }] }).actions);
+      await settle();
+      t.advance(LOOP_MIN_SEND_GAP_MS);
+      t.loop.onReply(reply({ formatIssues: true }).actions);
+      await settle();
+      expect(t.loop.reason).toBe('step-limit');
+      expect(t.page.sent).toHaveLength(1);
+    });
   });
 });

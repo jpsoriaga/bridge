@@ -12,6 +12,7 @@ import type {
 import { messageToText } from './adapter';
 import { ChangeCard, type FileChange } from './cards/change-card';
 import { DiffCard, type Ask } from './cards/diff-card';
+import { FormatCard } from './cards/format-card';
 import { loadFonts } from './cards/host';
 import { LoopChip } from './cards/loop-chip';
 import { MessageBar } from './cards/message-bar';
@@ -75,6 +76,8 @@ interface MessageView {
   /** DELETE then RENAME cards, in the reply's order. */
   changes: ChangeCard[];
   bar: MessageBar | null;
+  /** What in the reply missed Bridge's format, with **Send format reminder**. */
+  format: FormatCard | null;
   /** Every card has read what it needs. */
   ready: Promise<unknown>;
 }
@@ -372,7 +375,8 @@ export class ChatController {
           edits: parsed.edits.map((e) => e.path),
           reads: parsed.reads,
           runs: parsed.runs,
-          done: parsed.done
+          done: parsed.done,
+          issues: parsed.issues.map((issue) => issue.kind)
         }
       },
       selectors: {
@@ -632,6 +636,8 @@ export class ChatController {
       hasActions:
         view.cards.length + parse.reads.length + view.runs.length + view.changes.length > 0,
       done: parse.done,
+      formatIssues: parse.issues.length > 0,
+      markReminded: () => view.format?.markAutoSent(),
       applyEdits: async (loopId) => {
         await autoApply(view.cards, loopId);
         await Promise.allSettled(view.changes.map((card) => card.ready()));
@@ -660,7 +666,7 @@ export class ChatController {
     text: string
   ): Promise<MessageView> {
     const parse = parseChat(text);
-    const { edits, reads, runs, deletes, renames } = parse;
+    const { edits, reads, runs, deletes, renames, fixed, issues } = parse;
     const view: MessageView = {
       id: messageId,
       element,
@@ -672,13 +678,14 @@ export class ChatController {
       runs: [],
       changes: [],
       bar: null,
+      format: issues.length > 0 ? new FormatCard(issues) : null,
       ready: Promise.resolve()
     };
     const changes: FileChange[] = [
       ...deletes.map((path) => ({ kind: 'delete' as const, path })),
       ...renames.map((rename) => ({ kind: 'rename' as const, ...rename }))
     ];
-    if (edits.length + reads.length + runs.length + changes.length > 0) loadFonts();
+    if (edits.length + reads.length + runs.length + changes.length + issues.length > 0) loadFonts();
 
     const keys = await Promise.all(
       edits.map(async (edit, i) =>
@@ -724,6 +731,11 @@ export class ChatController {
       (change, i) => new ChangeCard(changeKeys[i] ?? '', change, this.ask, changed)
     );
     for (const [i, card] of view.changes.entries()) {
+      const { change } = card;
+      card.formatFixed =
+        change.kind === 'delete'
+          ? fixed.deletes.includes(change.path)
+          : fixed.renames.some((r) => r.from === change.from && r.to === change.to);
       card.setMode(this.config?.mode ?? null);
       const record = records[changeKeys[i] ?? ''];
       loading.push(
@@ -737,6 +749,7 @@ export class ChatController {
         void this.ask({ type: 'chat-sent', files });
         this.reportRequests();
       });
+      view.read.formatFixed = fixed.reads.length > 0;
       loading.push(
         view.read.init(
           record && 'card' in record && record.card === 'read'
@@ -753,7 +766,10 @@ export class ChatController {
           this.reportRequests();
         })
     );
-    for (const card of view.runs) card.setConfig(this.config);
+    for (const card of view.runs) {
+      card.formatFixed = fixed.runs.includes(card.command);
+      card.setConfig(this.config);
+    }
     view.ready = Promise.allSettled(loading);
     return view;
   }
@@ -776,11 +792,12 @@ export class ChatController {
       last = card.host;
     }
     if (view.bar) placeAfter(view.bar.host, last);
-    // DELETE, RENAME, READ and RUN cards go at the end, in that order.
+    // DELETE, RENAME, READ, RUN and format cards go at the end, in that order.
     const tail = [
       ...view.changes.map((c) => c.host),
       view.read?.host,
-      ...view.runs.map((r) => r.host)
+      ...view.runs.map((r) => r.host),
+      view.format?.host
     ].filter((host): host is HTMLElement => host !== undefined);
     const inPlace = tail.every((host, i) => {
       const fromEnd = body.children[body.children.length - tail.length + i];
@@ -794,6 +811,7 @@ export class ChatController {
     for (const card of view.changes) card.setDisabled(disabled);
     view.read?.setDisabled(disabled);
     for (const run of view.runs) run.setDisabled(disabled);
+    view.format?.setDisabled(disabled);
     view.bar?.render();
   }
 
@@ -802,6 +820,7 @@ export class ChatController {
     for (const card of view.changes) card.host.remove();
     view.read?.host.remove();
     for (const run of view.runs) run.host.remove();
+    view.format?.host.remove();
     view.bar?.host.remove();
   }
 

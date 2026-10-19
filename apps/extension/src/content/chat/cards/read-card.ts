@@ -11,7 +11,7 @@ import {
 import type { ReadCardRecord, RequestOutcome, SentFile } from '../../../messages';
 import { insertIntoComposer } from '../composer';
 import { failureText, type Ask } from './diff-card';
-import { formatCount, h, icon, redactionNote, renderCard } from './dom';
+import { formatCount, formatFixedBadge, h, icon, redactionNote, renderCard } from './dom';
 import { createHost } from './host';
 
 type Entry =
@@ -37,6 +37,8 @@ export class ReadCard {
   private unreachable = false;
   private reading: Promise<void> = Promise.resolve();
   private expanded = true;
+  /** A marker was missing its closing `@@`. Set before `init`. */
+  formatFixed = false;
 
   constructor(
     readonly key: string,
@@ -252,6 +254,7 @@ export class ReadCard {
         icon('file'),
         h('span', { class: 'title' }, title),
         this.sent ? h('span', { class: 'badge', attrs: { 'data-tone': 'success' } }, 'sent') : null,
+        this.formatFixed ? formatFixedBadge() : null,
         h('span', { class: 'spacer' }),
         toggle
       ),

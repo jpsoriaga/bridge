@@ -1,5 +1,6 @@
 import {
   buildFollowUp,
+  FORMAT_REMINDER,
   LOOP_MIN_SEND_GAP_MS,
   PAUSE_REASON_TEXT,
   type BridgeConfig,
@@ -19,6 +20,8 @@ export const SEND_CONFIRM_MS = 10_000;
 /** How long the send button may take to appear after the text goes in. */
 export const SEND_BUTTON_WAIT_MS = 5_000;
 const SEND_POLL_MS = 250;
+/** Format reminders Full auto sends in one run before it pauses with `format-issues`. */
+export const MAX_FORMAT_REMINDERS = 2;
 
 /** The chat page, as the loop sees it. `page.ts` has the real one; tests use a fake. */
 export interface LoopPage {
@@ -66,6 +69,13 @@ export interface ReplyActions {
   hasActions: boolean;
   /** `@@DONE@@`: apply the edits, then end. */
   done: boolean;
+  /**
+   * Something in the reply looks meant for Bridge but isn't in its format (`FormatIssue`).
+   * Full auto asks the chat to redo it instead of acting on it.
+   */
+  formatIssues: boolean;
+  /** Full auto sent the format reminder for this reply. */
+  markReminded(): void;
   /** Applies pending edits by the Auto-apply rules (skipping held ones). */
   applyEdits(loopId?: string): Promise<void>;
   /** Where the edits stand now, after Auto-apply and any clicks. */
@@ -112,6 +122,8 @@ interface Step {
   redacted: number;
   /** Set once the message is in the composer: user turns before the send. */
   sentFrom: number | null;
+  /** The step only sends `FORMAT_REMINDER`: the reply missed the format. */
+  reminder: boolean;
 }
 
 const HOLD_REASON: Record<EditHold, PauseReason> = {
@@ -129,6 +141,7 @@ const HOLD_REASON: Record<EditHold, PauseReason> = {
  *
  *   idle → acting → sending → waiting-reply → acting → … → idle
  *
+ * A reply that misses Bridge's format gets a reminder instead (see `onFormatIssues`).
  * It ends when a reply has no actions or says `@@DONE@@`, and pauses for a click on
  * anything it shouldn't decide alone (see `PauseReason`). Stop halts it at once and is
  * sticky: nothing starts again until Resume. Sends are at least 3s apart, and there's no
@@ -144,6 +157,8 @@ export class FullAutoLoop {
   private conversation: string | null = null;
   private current: Step | null = null;
   private lastSendAt = Number.NEGATIVE_INFINITY;
+  /** Format reminders sent (or being sent) in this run. */
+  private reminders = 0;
   /** Bumped by Stop and by a new run, so work still in flight drops its result. */
   private generation = 0;
   /** The generation whose work is running now, if any. */
@@ -176,7 +191,7 @@ export class FullAutoLoop {
       this.finish('A new reply arrived while paused, so that run ended.');
     }
     if (this.state === 'idle') {
-      if (!actions.hasActions || actions.done) {
+      if ((!actions.hasActions && !actions.formatIssues) || actions.done) {
         // Nothing to loop on. Still apply what a DONE reply edits.
         if (actions.done && actions.hasActions) void actions.applyEdits();
         return;
@@ -190,14 +205,43 @@ export class FullAutoLoop {
       this.conversation = this.deps.page.conversationId();
       this.reason = undefined;
       this.lastSendAt = Number.NEGATIVE_INFINITY;
+      this.reminders = 0;
       this.emit({ kind: 'started', text: 'Full auto run started.' });
     }
     // waiting-reply (or a run that just started).
+    if (actions.formatIssues && !actions.done) {
+      this.onFormatIssues(actions);
+      return;
+    }
     if (!actions.hasActions) {
       this.finish(actions.done ? 'The chat said it’s done.' : 'The chat asked for nothing more.');
       return;
     }
-    this.current = {
+    this.current = this.newStep(actions);
+    this.set('acting');
+    void this.advance();
+  }
+
+  /**
+   * The reply missed Bridge's format. Rather than act on half of it, ask the chat to redo it:
+   * one reminder per reply, `MAX_FORMAT_REMINDERS` per run. Past that the run pauses; Resume
+   * acts on whatever Bridge could read.
+   */
+  private onFormatIssues(actions: ReplyActions): void {
+    if (this.reminders >= MAX_FORMAT_REMINDERS) {
+      this.current = actions.hasActions ? this.newStep(actions) : null;
+      this.pause('format-issues');
+      return;
+    }
+    this.reminders += 1;
+    this.current = { ...this.newStep(actions), phase: 'send', reminder: true };
+    this.current.message = FORMAT_REMINDER;
+    this.set('acting');
+    void this.advance();
+  }
+
+  private newStep(actions: ReplyActions): Step {
+    return {
       actions,
       phase: 'edits',
       editsReviewed: false,
@@ -209,10 +253,9 @@ export class FullAutoLoop {
       runIndex: 0,
       message: null,
       redacted: 0,
-      sentFrom: null
+      sentFrom: null,
+      reminder: false
     };
-    this.set('acting');
-    void this.advance();
   }
 
   /** Halts the loop and its command now. Reverts nothing. */
@@ -518,14 +561,16 @@ export class FullAutoLoop {
   /** The follow-up went out: count it and wait for the reply. */
   private confirmSent(step: Step): void {
     this.step += 1;
-    step.actions.markReadsSent();
+    if (step.reminder) step.actions.markReminded();
+    else step.actions.markReadsSent();
     this.current = null;
     this.reason = undefined;
     this.set('waiting-reply', {
       kind: 'sent',
       // Redactions don't stop the send; the log says how many.
-      text:
-        step.redacted > 0
+      text: step.reminder
+        ? `Sent message ${this.step} of ${this.limit}: a format reminder (${this.reminders} of ${MAX_FORMAT_REMINDERS}).`
+        : step.redacted > 0
           ? `Sent message ${this.step} of ${this.limit}, with ${step.redacted} likely ${step.redacted === 1 ? 'secret' : 'secrets'} redacted.`
           : `Sent message ${this.step} of ${this.limit}.`
     });

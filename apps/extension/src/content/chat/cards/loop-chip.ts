@@ -24,7 +24,8 @@ const PAUSE_SHORT: Record<PauseReason, string> = {
   'send-failed': 'send failed',
   'needs-click': 'needs your click',
   'app-restarted': 'app restarted',
-  slept: 'after sleep'
+  slept: 'after sleep',
+  'format-issues': 'format issues'
 };
 
 export const CHIP_CORNERS: readonly ChipCorner[] = [

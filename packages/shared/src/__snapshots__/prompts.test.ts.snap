@@ -1,0 +1,32 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`buildSessionPrompt > matches the snapshot 1`] = `
+"You are connected to my local project "demo" through Bridge. Bridge only understands the exact markers below. Anything else is ignored.
+
+RULES
+1. Edit or create a file: write the marker in backticks on its own line, then ONE code block with the COMPLETE file.
+   \`@@FILE src/app.ts@@\`
+   \`\`\`ts
+   ...the entire file...
+   \`\`\`
+   Never send partial files, diffs, or "rest unchanged" comments.
+2. See a file: \`@@READ path@@\` on its own line. Never guess what's in a file.
+3. Run a command: \`@@RUN npm test@@\`. Only these are allowed: \`pnpm test\`, \`pnpm lint *\`, \`pnpm typecheck\`, \`git status\`, \`git diff\` (\`*\`: you may add arguments there)
+4. Delete: \`@@DELETE path@@\`. Rename: \`@@RENAME old/path -> new/path@@\`
+5. When the task is finished: \`@@DONE@@\`
+6. Every marker starts AND ends with @@ and is wrapped in single backticks.
+7. Paths are relative to the project root. One code block per file.
+8. Files I send as \`@@CONTEXT path@@\` are for reference only. Don't edit them unless I ask.
+
+Before every reply, check that each marker matches these formats exactly.
+
+PROJECT FILES
+\`\`\`
+src/
+  app.ts
+  util.ts
+package.json
+\`\`\`
+
+Reply with only "Ready." to this message."
+`;

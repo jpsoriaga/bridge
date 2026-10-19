@@ -36,7 +36,8 @@ export const PAUSE_REASONS = [
   'send-failed',
   'needs-click',
   'app-restarted',
-  'slept'
+  'slept',
+  'format-issues'
 ] as const;
 export const PauseReason = z.enum(PAUSE_REASONS);
 export type PauseReason = z.infer<typeof PauseReason>;
@@ -58,7 +59,9 @@ export const PAUSE_REASON_TEXT: Record<PauseReason, string> = {
     'The reply deletes or renames files. Those always need your click: review them on their cards, then Resume.',
   'app-restarted':
     'The Bridge app restarted, which turns Full auto off. Turn it on again in the app, then Resume.',
-  slept: 'The computer slept in the middle of a step. Check the cards, then Resume.'
+  slept: 'The computer slept in the middle of a step. Check the cards, then Resume.',
+  'format-issues':
+    'The chat kept missing Bridge’s format after two reminders. Check the reply, then Resume.'
 };
 
 export const LOOP_STATE_LABELS: Record<LoopState, string> = {

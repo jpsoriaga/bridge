@@ -164,6 +164,20 @@ export function resultWord(kind: ResultKind, auto = false): HTMLElement[] {
   ];
 }
 
+/** On a card whose marker was missing its closing `@@`: Bridge read it anyway. */
+export const formatFixedBadge = (): HTMLElement =>
+  h(
+    'span',
+    {
+      class: 'badge',
+      attrs: {
+        title: 'The chat’s marker was missing its closing @@. Bridge read it anyway.',
+        'data-badge': 'format-fixed'
+      }
+    },
+    'format fixed'
+  );
+
 /** A card's note when likely secrets were replaced in what it inserts. */
 export const redactionNote = (count: number): string =>
   `${count} likely ${count === 1 ? 'secret was' : 'secrets were'} replaced with [redacted].`;

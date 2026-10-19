@@ -6,6 +6,7 @@ import { MAX_FILE_BYTES } from '@bridge/shared';
 import { BACKUP_MAX_AGE_MS, BACKUP_MAX_OPS, History } from './history';
 import {
   FileOpError,
+  listDir,
   listTree,
   readFile,
   sha256,
@@ -411,6 +412,21 @@ describe('tree', () => {
       { path: 'src', type: 'dir', size: 0 },
       { path: 'src/index.ts', type: 'file', size: 0 }
     ]);
+  });
+
+  it('hides OS junk files from the session prompt tree and the Send files tree', async () => {
+    for (const junk of ['.DS_Store', 'Thumbs.db', 'desktop.ini']) {
+      project.write(junk, '');
+      project.write(`src/${junk}`, '');
+    }
+    project.write('src/THUMBS.DB', '');
+    project.write('src/index.ts', '');
+    project.write('docs/.ds_store', '');
+    // `tree` feeds the session prompt; `list` (and `tree`, when filtering) the side panel.
+    expect(await paths()).toEqual(['docs/', 'src/', 'src/index.ts']);
+    expect((await listDir(sandbox, '')).entries.map((e) => e.path)).toEqual(['docs', 'src']);
+    expect((await listDir(sandbox, 'src')).entries.map((e) => e.path)).toEqual(['src/index.ts']);
+    expect((await listDir(sandbox, 'docs')).entries).toEqual([]);
   });
 
   it('honours user deny patterns', async () => {

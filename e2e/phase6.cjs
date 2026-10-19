@@ -79,8 +79,8 @@ const CONV = 'e2e00000-0000-4000-8000-000000000006';
   if (!started.ok) throw new Error('session-start: ' + JSON.stringify(started));
   const prompt = await chat.locator('#prompt-textarea').innerText();
   if (
-    !prompt.includes('`@@DELETE src/old.ts@@`') ||
-    !prompt.includes('`@@RENAME src/a.ts -> src/b.ts@@`')
+    !prompt.includes('`@@DELETE path@@`') ||
+    !prompt.includes('`@@RENAME old/path -> new/path@@`')
   ) {
     throw new Error('session prompt lacks delete/rename: ' + prompt.slice(0, 300));
   }

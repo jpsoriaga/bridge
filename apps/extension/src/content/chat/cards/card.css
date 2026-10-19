@@ -535,3 +535,17 @@
     transition: none !important;
   }
 }
+
+/* Format card: a reply that missed Bridge's format. Warning edge, like the page notice. */
+.card[data-kind='format'] {
+  border-color: color-mix(in srgb, var(--warning) 35%, transparent);
+}
+.card[data-kind='format'] .header > .icon {
+  color: var(--warning);
+}
+.issue {
+  padding: 2px 0;
+  font-size: var(--text-sm);
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+}

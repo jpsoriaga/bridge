@@ -37,7 +37,7 @@ chatgpt.com ──▶ Bridge extension ──WebSocket on 127.0.0.1──▶ Bri
 
    or asks to see files (`` `@@READ src/app.ts@@` ``), to delete or move one (`` `@@DELETE src/old.ts@@` ``, `` `@@RENAME src/a.ts -> src/b.ts@@` ``), or to run a command (`` `@@RUN pnpm test@@` ``).
 
-3. The extension shows a card under each one: a diff against your file, the files asked for, the command.
+3. The extension shows a card under each one: a diff against your file, the files asked for, the command. If the chat slips out of the format, the reply gets a card saying so, with **Send format reminder**.
 4. You click **Apply** (or **Send these files**, **Run**…). The app checks the path against the project sandbox, backs up the old file, and writes the new one. Every change can be undone.
 5. **Modes** decide how much happens on its own: Manual, Auto-apply, or the opt-in Full auto.
 
@@ -166,7 +166,7 @@ The app reads your login shell's `PATH` at startup (macOS, Linux), so `pnpm` fro
 
 > **Read this before turning it on.** Full auto clicks the chat's send button for you. Automating the chat this way may break its provider's terms of use and put your account at risk. The commands it runs execute code the model may have written (tests, build scripts), with your user's permissions. It's opt-in and at your own risk, and the app asks you to confirm every time you turn it on.
 
-When a reply finishes, Bridge applies its edits, reads the files it asked for, runs its allowlisted commands, and sends one follow-up with the results, then waits for the next reply. It ends when a reply asks for nothing or says `` `@@DONE@@` ``. It pauses for you on anything that needs a click, a command that isn't allowed, an error banner, a lost connection, or the step limit (10 messages by default, up to 25). **Stop** is in the side panel, on the page chip and in the app (⌘. / Ctrl+.); it halts at once and reverts nothing.
+When a reply finishes, Bridge applies its edits, reads the files it asked for, runs its allowlisted commands, and sends one follow-up with the results, then waits for the next reply. It ends when a reply asks for nothing or says `` `@@DONE@@` ``. A reply that misses Bridge's format gets a short reminder instead (twice per run at most; the third time it pauses). It pauses for you on anything that needs a click, a command that isn't allowed, an error banner, a lost connection, or the step limit (10 messages by default, up to 25). **Stop** is in the side panel, on the page chip and in the app (⌘. / Ctrl+.); it halts at once and reverts nothing.
 
 ## Updates
 

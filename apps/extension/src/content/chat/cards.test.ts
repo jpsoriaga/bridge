@@ -1,9 +1,18 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { BridgeConfig, ParsedEdit, ReadResult, RunResult, WriteResult } from '@bridge/shared';
+import {
+  FORMAT_FOOTER,
+  FORMAT_REMINDER,
+  type BridgeConfig,
+  type ParsedEdit,
+  type ReadResult,
+  type RunResult,
+  type WriteResult
+} from '@bridge/shared';
 import type { RequestOutcome, WorkerRequest } from '../../messages';
 import { applyAllTargets, MessageBar, undoAllTargets } from './cards/message-bar';
 import { DiffCard, type Ask } from './cards/diff-card';
+import { FormatCard, issueLines } from './cards/format-card';
 import { ReadCard } from './cards/read-card';
 import { RunCard } from './cards/run-card';
 import { autoApply, editSummary } from './controller';
@@ -448,6 +457,7 @@ describe('RunCard', () => {
     const text = document.getElementById('prompt-textarea')!.textContent ?? '';
     expect(text).toContain('Output of `pnpm test` (exit 1, 2.5s):');
     expect(text).toContain('FAIL');
+    expect(text.endsWith(FORMAT_FOOTER)).toBe(true);
     expect(submitted).toBe(false);
   });
 
@@ -601,6 +611,93 @@ describe('Applied rows', () => {
     const created = await card(worker, edit('c.ts', 'c\n'));
     await autoApply([created]);
     expect(resultRow(created.host)).toMatchObject({ word: [['Created', 'success']], note: 'auto' });
+    spy.mockRestore();
+  });
+});
+
+describe('format fixed', () => {
+  const badge = (host: HTMLElement) =>
+    host.shadowRoot!.querySelector('[data-badge="format-fixed"]')?.textContent ?? null;
+
+  it('shows on a diff card whose marker was missing its closing @@', async () => {
+    const spy = openShadows();
+    const worker = fakeWorker({});
+    const fixed = await card(worker, { ...edit('a.ts', 'a\n'), formatFixed: true });
+    const plain = await card(worker, edit('b.ts', 'b\n'));
+    expect(badge(fixed.host)).toBe('format fixed');
+    expect(badge(plain.host)).toBeNull();
+    spy.mockRestore();
+  });
+
+  it('shows on RUN and READ cards when set before they render', async () => {
+    const spy = openShadows();
+    const worker = fakeWorker({ 'a.ts': { content: 'a\n', hash: HASH_A } });
+    const run = new RunCard('pnpm test', worker.ask, () => {});
+    run.formatFixed = true;
+    run.setConfig(CONFIG);
+    expect(badge(run.host)).toBe('format fixed');
+    const read = new ReadCard('k', ['a.ts'], worker.ask, () => {});
+    read.formatFixed = true;
+    await read.init();
+    expect(badge(read.host)).toBe('format fixed');
+    spy.mockRestore();
+  });
+});
+
+describe('FormatCard', () => {
+  beforeEach(() => {
+    document.body.innerHTML =
+      '<main></main><form><div id="prompt-textarea" contenteditable="true" class="ProseMirror"></div></form>';
+    const composer = document.getElementById('prompt-textarea')!;
+    composer.addEventListener('paste', (event) => {
+      event.preventDefault();
+      composer.textContent += (event as ClipboardEvent).clipboardData?.getData('text/plain') ?? '';
+    });
+  });
+
+  it('says what Bridge could not read, three issues at most', () => {
+    expect(
+      issueLines([
+        { kind: 'bad-marker', text: '`@@RUNS npm test@@`' },
+        { kind: 'no-marker', text: 'src/app.ts' },
+        { kind: 'no-block', text: '`@@FILE a.ts@@`' },
+        { kind: 'placeholder', text: 'b.ts' },
+        { kind: 'placeholder', text: 'c.ts' }
+      ])
+    ).toEqual([
+      'Not a Bridge marker: `@@RUNS npm test@@`',
+      'A code block under “src/app.ts” has no @@FILE marker.',
+      'No code block after `@@FILE a.ts@@`',
+      'And 2 more.'
+    ]);
+  });
+
+  it('inserts the reminder into the composer without sending', () => {
+    const spy = openShadows();
+    let submitted = false;
+    document.querySelector('form')!.addEventListener('submit', () => (submitted = true));
+    const c = new FormatCard([{ kind: 'bad-marker', text: '@@RUN npm test' }]);
+    document.body.append(c.host);
+    const root = c.host.shadowRoot!;
+    expect(root.querySelector('.title')?.textContent).toBe('The chat didn’t use Bridge’s format');
+    expect(root.textContent).not.toMatch(/chatgpt|openai/i);
+    root.querySelector<HTMLButtonElement>('[data-focus="remind"]')!.click();
+    expect(document.getElementById('prompt-textarea')!.textContent).toBe(FORMAT_REMINDER);
+    expect(submitted).toBe(false);
+    expect(root.querySelector('.hint')?.textContent).toBe(
+      'The reminder is in the message box. Press send.'
+    );
+    spy.mockRestore();
+  });
+
+  it('says when Full auto sent it, and turns off when the session ends', () => {
+    const spy = openShadows();
+    const c = new FormatCard([{ kind: 'no-block', text: '`@@FILE a.ts@@`' }]);
+    c.markAutoSent();
+    const root = c.host.shadowRoot!;
+    expect(root.querySelector('.hint')?.textContent).toBe('Full auto sent a format reminder.');
+    c.setDisabled(true);
+    expect(root.querySelector<HTMLButtonElement>('[data-focus="remind"]')!.disabled).toBe(true);
     spy.mockRestore();
   });
 });

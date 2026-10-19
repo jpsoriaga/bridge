@@ -145,6 +145,8 @@ Injected right after the code block it describes, in a closed shadow root, so th
 | `blocked`   | `danger`  | The sandbox refused the path, or the file is binary or over 1 MB       |
 | `partial?`  | `warning` | Shown next to the others when the content has a placeholder comment    |
 
+**`format fixed`** (neutral, any card: diff, READ, RUN, DELETE, RENAME) sits after the other badges when the chat's marker was missing its closing `@@` and Bridge read it anyway. Its tooltip says so. It changes nothing about what the card does.
+
 On error (a write failed, the app isn't connected), the card keeps its state and adds a 12px `--danger` line under the header with the reason (`role="alert"`). It never shows a raw code or stack trace.
 
 ### Result rows
@@ -167,6 +169,10 @@ Under the last diff card of a reply. Same card frame with a `--border` edge, hol
 ### READ card
 
 At the end of a reply that asked for files with `@@READ`. Pending-card frame (`--border-strong`). Header: file icon and "The chat asked for N files" (13px/500). Then one row per path (mono 13px, ~25px tall): file icon, path, and on the right either "1,204 chars" (12px muted), "Reading…", or a `danger` badge "blocked · protected file" with the path struck through in `--fg-subtle`. Footer: a hint with the total ("12,345 characters. Bridge puts them in the message box; you press send."), followed by "N likely secrets were replaced with [redacted]." when any were, in `--warning` above 30,000 characters ("The chat may turn this into an attachment or cut it off."), and **Send these files** (primary `.btn-lg`). After sending, the hint says "Added to the message box. Review it and press send." and the button reads **Send again**.
+
+### Format card
+
+Last under a reply that looks meant for Bridge but missed its format (a marker with a typo, a file block with a path above it and no marker, `@@FILE` with no block, a "rest unchanged" placeholder). Pending-card frame with a `--warning` edge at 35% and the alert icon in `--warning`. Header: "The chat didn’t use Bridge’s format" (13px/500). Then up to three 13px `--fg-muted` lines saying what Bridge couldn't read ("Not a Bridge marker: `@@RUNS npm test@@`", "A code block under “src/app.ts” has no @@FILE marker."), and "And N more." Footer: the hint "Bridge ignored what it couldn’t read. A reminder asks the chat to redo the reply." in `--warning`, and **Send format reminder** (primary), which puts the reminder in the message box without sending. After that the hint reads "The reminder is in the message box. Press send." (or, when Full auto sent it, "Full auto sent a format reminder.") and the button **Insert again**. The card never names the chat's vendor.
 
 ### Mode tag on cards
 

@@ -4,7 +4,10 @@ import { parseChat } from './parser';
 import {
   buildContextMessage,
   buildFollowUp,
+  buildRunMessage,
   buildSessionPrompt,
+  FORMAT_FOOTER,
+  FORMAT_REMINDER,
   formatContextBlock,
   formatRunResult,
   pickFence,
@@ -110,66 +113,6 @@ describe('summarizeTree', () => {
   });
 });
 
-describe('buildSessionPrompt', () => {
-  const prompt = buildSessionPrompt({ projectName: 'demo', tree: [file('a.ts')] });
-
-  it('teaches the FILE, READ and CONTEXT markers', () => {
-    expect(prompt).toContain('`@@FILE src/app.ts@@`');
-    expect(prompt).toContain('`@@READ src/app.ts@@`');
-    expect(prompt).toContain('@@CONTEXT path@@');
-    expect(prompt).toContain('Never send partial files');
-  });
-
-  it('includes the project name and tree', () => {
-    expect(prompt).toContain('"demo"');
-    expect(prompt).toContain('Project files (1 entry).');
-    expect(prompt).toContain('```\na.ts\n```');
-  });
-
-  it('never names a vendor', () => {
-    expect(prompt).not.toMatch(/openai|chatgpt|codex|gpt/i);
-  });
-
-  it('is not itself parsed as an edit if echoed back', () => {
-    // The example sits in a fence after the marker, so it would parse as one example edit.
-    // That is fine for a user message (never parsed); this pins the example's path.
-    expect(parseChat(prompt).edits.map((e) => e.path)).toEqual(['src/app.ts']);
-  });
-});
-
-describe('buildSessionPrompt with commands', () => {
-  const prompt = buildSessionPrompt({
-    projectName: 'demo',
-    tree: [file('a.ts')],
-    allowlist: ['pnpm test', 'git diff']
-  });
-
-  it('teaches RUN and DONE and lists exactly the allowlist', () => {
-    expect(prompt).toContain('`@@RUN pnpm test@@`');
-    expect(prompt).toContain('`@@DONE@@`');
-    expect(prompt).toContain('- `pnpm test`\n- `git diff`');
-    expect(prompt).toContain('Only these commands are allowed');
-  });
-
-  it('tells the chat not to ask for commands when none are allowed', () => {
-    const none = buildSessionPrompt({ projectName: 'demo', tree: [file('a.ts')] });
-    expect(none).not.toContain('@@RUN');
-    expect(none).toContain("Bridge can't run commands in this project");
-  });
-
-  it('never names a vendor', () => {
-    expect(prompt).not.toMatch(/openai|chatgpt|codex|gpt/i);
-  });
-
-  it('pins the example markers, which only ever sit in a user message', () => {
-    // The examples are on their own lines, so an echoed prompt reads as asking for them.
-    // It's a user message, which Bridge never parses; this pins what's in it.
-    const parsed = parseChat(prompt);
-    expect(parsed.runs).toEqual(['pnpm test']);
-    expect(parsed.done).toBe(true);
-  });
-});
-
 const result = {
   argv: ['pnpm', 'test'],
   status: 'exited' as const,
@@ -178,6 +121,128 @@ const result = {
   durationMs: 3210,
   output: 'FAIL src/a.test.ts\n  expected 1 to be 2\n'
 };
+
+describe('buildSessionPrompt', () => {
+  const allowlist = ['pnpm test', 'pnpm lint *', 'pnpm typecheck', 'git status', 'git diff'];
+  const tree = [dir('src'), file('src/app.ts'), file('src/util.ts'), file('package.json')];
+  const prompt = buildSessionPrompt({ projectName: 'demo', tree, allowlist });
+
+  it('matches the snapshot', () => {
+    expect(prompt).toMatchSnapshot();
+  });
+
+  it('keeps the rules before the tree, under 1,500 characters', () => {
+    const before = prompt.slice(0, prompt.indexOf('PROJECT FILES'));
+    expect(before.length).toBeLessThan(1_500);
+    expect(prompt.indexOf('RULES')).toBeLessThan(prompt.indexOf('PROJECT FILES'));
+    expect(prompt.endsWith('Reply with only "Ready." to this message.')).toBe(true);
+  });
+
+  it('teaches every marker, in backticks, with the complete-file rule', () => {
+    for (const marker of [
+      '`@@FILE src/app.ts@@`',
+      '`@@READ path@@`',
+      '`@@RUN npm test@@`',
+      '`@@DELETE path@@`',
+      '`@@RENAME old/path -> new/path@@`',
+      '`@@DONE@@`',
+      '`@@CONTEXT path@@`'
+    ]) {
+      expect(prompt).toContain(marker);
+    }
+    expect(prompt).toContain('Never send partial files, diffs, or "rest unchanged" comments.');
+    expect(prompt).toContain('Every marker starts AND ends with @@');
+  });
+
+  it('includes the project name and tree', () => {
+    expect(prompt).toContain('"demo"');
+    expect(prompt).toContain('PROJECT FILES\n```\nsrc/\n  app.ts\n  util.ts\npackage.json\n```');
+  });
+
+  it('lists exactly the allowlist, explaining * only when an entry has one', () => {
+    expect(prompt).toContain(
+      'Only these are allowed: `pnpm test`, `pnpm lint *`, `pnpm typecheck`, `git status`, `git diff` (`*`: you may add arguments there)'
+    );
+    const exact = buildSessionPrompt({ projectName: 'demo', tree, allowlist: ['pnpm test'] });
+    expect(exact).toContain('Only these are allowed: `pnpm test`\n');
+  });
+
+  it('tells the chat not to ask for commands when none are allowed', () => {
+    const none = buildSessionPrompt({ projectName: 'demo', tree: [file('a.ts')] });
+    expect(none).not.toContain('@@RUN');
+    expect(none).toContain("Bridge can't run commands in this project");
+  });
+
+  it('says when folders are summarised', () => {
+    const cut = buildSessionPrompt({ projectName: 'demo', tree, truncated: true });
+    expect(cut).toContain('PROJECT FILES (some folders are summarised');
+  });
+
+  it('never names a vendor', () => {
+    expect(prompt).not.toMatch(/openai|chatgpt|codex|gpt/i);
+  });
+
+  it('pins what an echoed prompt would parse as', () => {
+    // A user message, which Bridge never parses. If it were, only the FILE example (on its
+    // own line, with a block) would count; the other examples sit inside sentences.
+    const parsed = parseChat(prompt);
+    expect(parsed.edits.map((e) => e.path)).toEqual(['src/app.ts']);
+    expect(parsed).toMatchObject({ reads: [], runs: [], deletes: [], renames: [], done: false });
+    expect(parsed.issues).toEqual([]);
+  });
+});
+
+describe('FORMAT_FOOTER', () => {
+  it('ends every message Bridge inserts for the chat', () => {
+    const context = buildContextMessage([{ path: 'a.ts', content: 'a\n' }]).text;
+    expect(context.endsWith(`\n\n${FORMAT_FOOTER}`)).toBe(true);
+    expect(buildRunMessage(result).text).toBe(
+      `${formatRunResult(result).text}\n\n${FORMAT_FOOTER}`
+    );
+    const followUp = buildFollowUp({
+      applied: ['a.ts'],
+      skipped: [],
+      files: [{ path: 'b.ts', content: 'b\n' }],
+      refused: [],
+      runs: [{ command: 'pnpm test', result }]
+    });
+    expect(followUp?.text.endsWith(`\n\n${FORMAT_FOOTER}`)).toBe(true);
+    // Once, even though the follow-up holds files and a command result.
+    expect(followUp?.text.split(FORMAT_FOOTER)).toHaveLength(2);
+  });
+
+  it('is the exact line, and adds nothing to an empty message', () => {
+    expect(FORMAT_FOOTER).toBe(
+      'Bridge format: @@FILE path@@ + full code block · @@READ path@@ · @@RUN cmd@@ · @@DONE@@. Markers start and end with @@, in backticks.'
+    );
+    expect(buildContextMessage([]).text).toBe('');
+  });
+
+  it('counts toward the follow-up budget', () => {
+    const input = {
+      applied: [],
+      skipped: [],
+      files: [{ path: 'a.ts', content: 'x'.repeat(100) }],
+      refused: [],
+      runs: []
+    };
+    const fits = buildFollowUp(input)!;
+    expect(buildFollowUp(input, fits.text.length)?.trimmed).toBe(false);
+    expect(buildFollowUp(input, fits.text.length - 1)?.trimmed).toBe(true);
+  });
+
+  it('neither the footer nor the reminder reads as a request or a format issue', () => {
+    for (const text of [FORMAT_FOOTER, FORMAT_REMINDER]) {
+      expect(parseChat(text)).toMatchObject({
+        edits: [],
+        reads: [],
+        runs: [],
+        done: false,
+        issues: []
+      });
+    }
+  });
+});
 
 describe('formatRunResult', () => {
   it('shows the command, how it ended and the output in a fence', () => {

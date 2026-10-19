@@ -11,6 +11,19 @@ export const SESSION_TREE_MAX_ENTRIES = 1_500;
 /** Above this many characters the chat may turn a paste into an attachment or cut it. */
 export const COMPOSER_WARN_CHARS = 30_000;
 
+/**
+ * The last line of every message Bridge inserts on the chat's behalf (files, command
+ * output, Full auto follow-ups), so the format stays in front of it.
+ */
+export const FORMAT_FOOTER =
+  'Bridge format: @@FILE path@@ + full code block · @@READ path@@ · @@RUN cmd@@ · @@DONE@@. Markers start and end with @@, in backticks.';
+
+/** What **Send format reminder** (and Full auto) inserts when a reply missed the format. */
+export const FORMAT_REMINDER =
+  "Please redo your last reply using Bridge's exact format: @@FILE path@@ followed by one complete code block, @@READ path@@, @@RUN cmd@@, @@DONE@@. Every marker starts and ends with @@ and is wrapped in backticks.";
+
+const withFooter = (text: string) => (text ? `${text}\n\n${FORMAT_FOOTER}` : '');
+
 /** A backtick fence longer than any run of backticks in `content`, and at least 3. */
 export function pickFence(content: string): string {
   let longest = 0;
@@ -55,12 +68,21 @@ export interface RefusedFile {
 }
 
 /**
- * Files sent to the chat, plus a line for any Bridge refused to send. Likely secrets are
- * `[redacted]`; `redacted` says how many.
+ * Files sent to the chat, plus a line for any Bridge refused to send, then
+ * `FORMAT_FOOTER`. Likely secrets are `[redacted]`; `redacted` says how many.
  */
 export function buildContextMessage(
   files: ContextFile[],
   refused: RefusedFile[] = []
+): { text: string; redacted: number } {
+  const context = contextMessage(files, refused);
+  return { text: withFooter(context.text), redacted: context.redacted };
+}
+
+/** `buildContextMessage` without the footer, for messages that hold more than files. */
+function contextMessage(
+  files: readonly ContextFile[],
+  refused: readonly RefusedFile[]
 ): { text: string; redacted: number } {
   const parts: string[] = [];
   let redacted = 0;
@@ -160,26 +182,18 @@ export interface SessionPromptInput {
   allowlist?: readonly string[];
 }
 
-function commandRules(allowlist: readonly string[]): string {
+function commandRule(allowlist: readonly string[]): string {
   if (allowlist.length === 0) {
-    return "8. Bridge can't run commands in this project. Don't ask it to; tell me what to run instead.";
+    return "3. Bridge can't run commands in this project. Tell me what to run instead.";
   }
-  return [
-    '8. To run a command, write one marker per command on its own line, then wait for my reply with the output:',
-    '',
-    '`@@RUN pnpm test@@`',
-    '',
-    'Only these commands are allowed, exactly as written. Where one ends in `*`, you may add arguments in place of the `*`; otherwise add nothing. Bridge refuses anything else, options that run other code or change folder (such as `node -e` or `git -C`), and any shell syntax (pipes, &&, ;, redirects, $, wildcards, VAR=value):',
-    '',
-    ...allowlist.map((entry) => `- \`${entry}\``),
-    '',
-    '9. When the task is finished and you need nothing more from me, end your reply with:',
-    '',
-    '`@@DONE@@`'
-  ].join('\n');
+  const listed = allowlist.map((entry) => `\`${entry}\``).join(', ');
+  const star = allowlist.some((entry) => entry.endsWith('*'))
+    ? ' (`*`: you may add arguments there)'
+    : '';
+  return `3. Run a command: \`@@RUN npm test@@\`. Only these are allowed: ${listed}${star}`;
 }
 
-/** The instructions "Start session" puts in the composer. */
+/** The instructions "Start session" puts in the composer: the rules first, then the tree. */
 export function buildSessionPrompt({
   projectName,
   tree,
@@ -191,39 +205,29 @@ export function buildSessionPrompt({
   const fence = pickFence(listing);
   const trimmed =
     summary.shown < summary.total || truncated
-      ? ' Some folders are summarised; ask for what you need.'
+      ? ' (some folders are summarised; ask with @@READ for what you need)'
       : '';
   return [
-    `You're helping me edit my project "${projectName}". I use a tool called Bridge that applies your file edits to my computer after I review them.`,
-    'Rules for editing files:',
+    `You are connected to my local project "${projectName}" through Bridge. Bridge only understands the exact markers below. Anything else is ignored.`,
     [
-      '1. For each file you create or change, write a marker line in inline code, then one fenced code block with the complete new file:',
-      '',
-      '`@@FILE src/app.ts@@`',
-      '```ts',
-      '// the whole file, every line',
-      '```',
-      '',
-      '2. Always send the complete file. Never send partial files, diffs, or placeholders like "// ...rest unchanged" or "// existing code". Bridge replaces the whole file with what you send.',
-      '3. Use paths relative to the project root, with forward slashes. One block per file, and only for files that change.',
-      '4. If a file itself contains ``` lines, use a longer fence such as ```` for its block.',
-      "5. Don't guess what a file contains. To see files, ask for them with one marker per line, then wait for my reply:",
-      '',
-      '`@@READ src/app.ts@@`',
-      '`@@READ package.json@@`',
-      '',
-      "6. I'll send files as `@@CONTEXT path@@` blocks. Those are for reading, not edits.",
-      '7. To delete or move a file, write one marker per file on its own line, with no code block. I confirm each one myself:',
-      '',
-      '`@@DELETE src/old.ts@@`',
-      '`@@RENAME src/a.ts -> src/b.ts@@`',
-      '',
-      'A rename moves the file as it is. If its content should change too, send that `@@FILE` block in a later reply, after I confirm the rename.',
-      commandRules(allowlist)
+      'RULES',
+      '1. Edit or create a file: write the marker in backticks on its own line, then ONE code block with the COMPLETE file.',
+      '   `@@FILE src/app.ts@@`',
+      '   ```ts',
+      '   ...the entire file...',
+      '   ```',
+      '   Never send partial files, diffs, or "rest unchanged" comments.',
+      "2. See a file: `@@READ path@@` on its own line. Never guess what's in a file.",
+      commandRule(allowlist),
+      '4. Delete: `@@DELETE path@@`. Rename: `@@RENAME old/path -> new/path@@`',
+      '5. When the task is finished: `@@DONE@@`',
+      '6. Every marker starts AND ends with @@ and is wrapped in single backticks.',
+      '7. Paths are relative to the project root. One code block per file.',
+      "8. Files I send as `@@CONTEXT path@@` are for reference only. Don't edit them unless I ask."
     ].join('\n'),
-    `Project files (${summary.total} ${summary.total === 1 ? 'entry' : 'entries'}${truncated ? ', list cut short' : ''}).${trimmed}`,
-    `${fence}\n${listing}\n${fence}`,
-    'Reply with a short confirmation and wait for my first request. Ask for any files you need with @@READ before you edit them.'
+    'Before every reply, check that each marker matches these formats exactly.',
+    `PROJECT FILES${trimmed}\n${fence}\n${listing}\n${fence}`,
+    'Reply with only "Ready." to this message.'
   ].join('\n\n');
 }
 
@@ -253,6 +257,14 @@ export function formatRunResult(
     text: `Output of \`${formatArgv(result.argv)}\` (${ended}):\n${fence}text\n${output || '(no output)'}\n${fence}`,
     redacted: clean.count
   };
+}
+
+/** **Send output** on a RUN card: the result, then `FORMAT_FOOTER`. */
+export function buildRunMessage(
+  result: Pick<RunResult, 'argv' | 'status' | 'exitCode' | 'signal' | 'durationMs' | 'output'>
+): { text: string; redacted: number } {
+  const run = formatRunResult(result);
+  return { text: withFooter(run.text), redacted: run.redacted };
 }
 
 /** One command the loop dealt with: its result, or why it didn't run. */
@@ -289,7 +301,7 @@ function followUpText(
   }
   if (summary.length > 0) parts.push(summary.join('\n'));
   if (withFiles) {
-    const context = buildContextMessage([...input.files], [...input.refused]);
+    const context = contextMessage(input.files, input.refused);
     if (context.text) parts.push(context.text);
     redacted += context.redacted;
   } else if (input.files.length > 0 || input.refused.length > 0) {
@@ -312,22 +324,24 @@ function followUpText(
 
 /**
  * The message Full auto sends after acting on a reply: what was applied, the files the
- * chat asked for, and command results. If it's over `budget` characters, command output
- * is cut harder, then the files are left out with a note. Null if even that won't fit.
+ * chat asked for, and command results, then `FORMAT_FOOTER`. If it's over `budget`
+ * characters, command output is cut harder, then the files are left out with a note. Null
+ * if even that won't fit.
  */
 export function buildFollowUp(
   input: FollowUpInput,
   budget = COMPOSER_WARN_CHARS
 ): { text: string; trimmed: boolean; redacted: number } | null {
   const full = followUpText(input, CHAT_OUTPUT_CHARS, true);
-  if (full.text.length <= budget) return { ...full, trimmed: false };
+  const text = withFooter(full.text);
+  if (text.length <= budget) return { text, redacted: full.redacted, trimmed: false };
   const note = '\n\n(Bridge trimmed this message to fit.)';
   for (const [chars, files] of [
     [TRIMMED_OUTPUT_CHARS, true],
     [TRIMMED_OUTPUT_CHARS, false]
   ] as const) {
     const built = followUpText(input, chars, files);
-    const text = built.text + note;
+    const text = withFooter(built.text + note);
     if (text.length <= budget) return { text, trimmed: true, redacted: built.redacted };
   }
   return null;

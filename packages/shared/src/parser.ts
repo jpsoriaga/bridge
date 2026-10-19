@@ -12,6 +12,16 @@ const DONE = /^@@DONE\s*@@$/;
 const DELETE = /^@@DELETE\s+((?:(?!@@)[^`])+?)\s*@@$/;
 /** `@@RENAME old/path -> new/path@@` (or `→`): move a file. No fence follows. */
 const RENAME = /^@@RENAME\s+((?:(?!@@|->|→)[^`])+?)\s*(?:->|→)\s*([^\s`](?:(?!@@)[^`])*?)\s*@@$/;
+/**
+ * The same markers with the closing `@@` missing (or half there), as the chat sometimes
+ * writes them: `` `@@RUN npm test` ``. Only tried inside an inline-code span that holds
+ * nothing else, so prose that happens to start with `@@` never counts.
+ */
+const LOOSE_MARKER = /^@@(FILE|READ|RUN)\s+((?:(?!@@)[^`])+?)\s*@?$/;
+const LOOSE_DONE = /^@@DONE\s*@?$/;
+const LOOSE_DELETE = /^@@DELETE\s+((?:(?!@@)[^`])+?)\s*@?$/;
+const LOOSE_RENAME =
+  /^@@RENAME\s+((?:(?!@@|->|→)[^`])+?)\s*(?:->|→)\s*([^\s`](?:(?!@@)[^`])*?)\s*@?$/;
 const FENCE_OPEN = /^(`{3,}|~{3,})[^`]*$/;
 const BULLET = /^(?:[-*+]|\d{1,3}[.)])\s+/;
 /** A line made only of `@@READ path@@` markers, for when line breaks were lost. */
@@ -29,6 +39,8 @@ export interface ParsedEdit extends FileEdit {
   suspectedPartial: boolean;
   /** Which fenced block in the text holds the content, counting every fence from 0. */
   fence: number;
+  /** The marker was missing its closing `@@`; Bridge read it anyway. */
+  formatFixed?: true;
 }
 
 export interface ChatParse {
@@ -48,6 +60,37 @@ export interface ChatParse {
   deletes: string[];
   /** Files to move with `@@RENAME from -> to@@`, without repeats, in order. */
   renames: FileRename[];
+  /**
+   * Markers Bridge read although their closing `@@` was missing. Their cards say "format
+   * fixed". Edits carry `formatFixed` themselves.
+   */
+  fixed: FixedMarkers;
+  /** Lines that look meant for Bridge but that it couldn't read. See `FormatIssue`. */
+  issues: FormatIssue[];
+}
+
+export interface FixedMarkers {
+  reads: string[];
+  runs: string[];
+  deletes: string[];
+  renames: FileRename[];
+  done: boolean;
+}
+
+/**
+ * Something in a reply that looks meant for Bridge but isn't in its format:
+ * - `bad-marker`: a marker with a typo (`@@RUNS`, `@@ FILE`, `@RUN`, lower case), one that
+ *   isn't on its own line, or a plain one missing its closing `@@`
+ * - `no-marker`: a code block with a file path just above it but no `@@FILE` marker
+ * - `no-block`: a `@@FILE` marker with no code block after it
+ * - `placeholder`: an edit with a "rest unchanged"-style comment in it
+ */
+export type FormatIssueKind = 'bad-marker' | 'no-marker' | 'no-block' | 'placeholder';
+
+export interface FormatIssue {
+  kind: FormatIssueKind;
+  /** The line (or, for a placeholder, the path) it's about, cut to 120 characters. */
+  text: string;
 }
 
 export interface FileRename {
@@ -55,20 +98,109 @@ export interface FileRename {
   to: string;
 }
 
-type Marker = { kind: 'FILE' | 'READ' | 'CONTEXT' | 'RUN'; path: string };
+type Marker = { kind: 'FILE' | 'READ' | 'CONTEXT' | 'RUN'; path: string; fixed?: true };
+
+/** The inline-code span that is the whole line (bar a list bullet), or null. */
+function codeSpan(line: string): string | null {
+  const code = /^(`+)(.*)\1$/.exec(line.trim().replace(BULLET, ''));
+  return code ? (code[2] ?? '').trim() : null;
+}
 
 /** The line without a list bullet and inline-code backticks around the whole of it. */
 function unwrap(line: string): string {
-  const text = line.trim().replace(BULLET, '');
-  const code = /^(`+)(.*)\1$/.exec(text);
-  return code ? (code[2] ?? '').trim() : text;
+  return codeSpan(line) ?? line.trim().replace(BULLET, '');
 }
 
+/**
+ * A marker on its own line, or, inside an inline-code span, one missing its closing `@@`
+ * (`fixed`). `@@CONTEXT` is Bridge's own, so it's never read loosely.
+ */
 function markerOf(line: string): Marker | null {
   const match = MARKER.exec(unwrap(line));
-  if (!match?.[1] || !match[2]) return null;
-  return { kind: match[1] as Marker['kind'], path: match[2] };
+  if (match?.[1] && match[2]) return { kind: match[1] as Marker['kind'], path: match[2] };
+  const loose = LOOSE_MARKER.exec(codeSpan(line) ?? '');
+  if (!loose?.[1] || !loose[2]) return null;
+  return { kind: loose[1] as Marker['kind'], path: loose[2], fixed: true };
 }
+
+/** A strict match on the unwrapped line, else a loose one inside an inline-code span. */
+function matchMarker(
+  line: string,
+  strict: RegExp,
+  loose: RegExp
+): { match: RegExpExecArray; fixed: boolean } | null {
+  const match = strict.exec(unwrap(line));
+  if (match) return { match, fixed: false };
+  const code = codeSpan(line);
+  const fixed = code === null ? null : loose.exec(code);
+  return fixed ? { match: fixed, fixed: true } : null;
+}
+
+const MARKER_WORDS = ['FILE', 'READ', 'RUN', 'DELETE', 'RENAME', 'DONE'];
+
+const sorted = (word: string) => [...word].sort().join('');
+
+/**
+ * True if `word` is a marker name give or take a letter: RUNS, DELET, FILR, FIEL (swapped),
+ * or `file` (any case).
+ */
+function nearMarkerWord(word: string): boolean {
+  const upper = word.toUpperCase();
+  return MARKER_WORDS.some(
+    (name) =>
+      upper.startsWith(name) ||
+      (upper.length >= 3 && name.startsWith(upper)) ||
+      (upper.length === name.length &&
+        ([...upper].filter((c, i) => c !== name[i]).length === 1 || sorted(upper) === sorted(name)))
+  );
+}
+
+/**
+ * A line Bridge didn't read that looks like a marker attempt: it (or the inline-code span
+ * it starts with) begins with `@@` and a marker-like word, or with one `@` and a marker
+ * name exactly (`@RUN npm test`), so `@readonly` or an `@user` mention don't count. Prose
+ * that only mentions a marker mid-sentence doesn't count either.
+ */
+function looksLikeMarker(line: string): boolean {
+  const text = line.trim().replace(BULLET, '');
+  const lead = /^(`+)(.*?)\1/.exec(text)?.[2]?.trim() ?? text;
+  const fuzzy = /^@{2,3}\s*([A-Za-z]+)/.exec(lead)?.[1];
+  if (fuzzy !== undefined) return nearMarkerWord(fuzzy);
+  const single = /^@([A-Z]+)(?=[\s@]|$)/.exec(lead)?.[1];
+  return single !== undefined && MARKER_WORDS.includes(single);
+}
+
+/** A file path and nothing else: has a folder or an extension, and no spaces. */
+const PATH = /^(?=[^\s]*(?:\/|\.[A-Za-z0-9]{1,10}$))[\w@~+-][\w@~+.\-/]*$/;
+
+/**
+ * True if `line` names a file the way the chat labels a code block it forgot to mark:
+ * `src/app.ts`, `**src/app.ts**`, `### src/app.ts`, `File: src/app.ts`, or prose ending in
+ * one in inline code, like "Update `src/app.ts`:".
+ */
+function looksLikePathLabel(line: string): boolean {
+  const text = line.trim().replace(BULLET, '');
+  const ending = /`([^`\s]+)`\s*:?$/.exec(text)?.[1];
+  if (ending && PATH.test(ending)) return true;
+  const bare = text
+    .replace(/^#{1,6}\s+/, '')
+    .replace(/^(?:__|_|\*\*)(.*)(?:__|_|\*\*)$/, '$1')
+    .replace(/:$/, '')
+    .replace(/^(?:file|path|filename)\s*:\s*/i, '')
+    .replace(/^`+(.*?)`+$/, '$1')
+    .trim();
+  return PATH.test(bare);
+}
+
+/** The nearest non-blank line above `index`, at most `MAX_GAP` blank lines up. */
+function lineAbove(lines: readonly string[], index: number): string | null {
+  for (let j = index - 1; j >= 0 && index - j <= MAX_GAP + 1; j -= 1) {
+    if (lines[j]?.trim()) return lines[j] ?? null;
+  }
+  return null;
+}
+
+const clip = (text: string) => text.trim().slice(0, 120);
 
 function readsOn(line: string): string[] {
   if (!READ_LINE.test(line)) return [];
@@ -115,6 +247,10 @@ function readFence(lines: string[], open: number): { body: string[]; close: numb
  * `@@CONTEXT` blocks (files sent to the chat), are skipped, so a marker line inside them
  * (an example, or a file that mentions `@@RUN`) is never an edit, a request or a command.
  * Paths and commands are returned as written; checking them is the desktop's job.
+ *
+ * The chat sometimes drops a marker's closing `@@`. Inside an inline-code span that holds
+ * only the marker, that's read anyway (a FILE one only when a code block follows) and
+ * listed in `fixed`. What still looks meant for Bridge but can't be read is in `issues`.
  */
 export function parseChat(text: string): ChatParse {
   const lines = text.replace(/\r\n?/g, '\n').split('\n');
@@ -123,6 +259,8 @@ export function parseChat(text: string): ChatParse {
   const runs: string[] = [];
   const deletes: string[] = [];
   const renames: FileRename[] = [];
+  const fixed: FixedMarkers = { reads: [], runs: [], deletes: [], renames: [], done: false };
+  const issues: FormatIssue[] = [];
   let done = false;
   let fences = 0;
 
@@ -134,35 +272,50 @@ export function parseChat(text: string): ChatParse {
     const requested =
       marker?.kind === 'READ' ? [marker.path] : readsOn(line.trim().replace(BULLET, ''));
     if (requested.length > 0) {
-      for (const path of requested) if (!reads.includes(path)) reads.push(path);
+      for (const path of requested) {
+        if (reads.includes(path)) continue;
+        reads.push(path);
+        if (marker?.fixed) fixed.reads.push(path);
+      }
       i += 1;
       continue;
     }
 
     if (marker?.kind === 'RUN') {
-      if (!runs.includes(marker.path)) runs.push(marker.path);
+      if (!runs.includes(marker.path)) {
+        runs.push(marker.path);
+        if (marker.fixed) fixed.runs.push(marker.path);
+      }
       i += 1;
       continue;
     }
 
-    if (DONE.test(unwrap(line))) {
+    const doneMarker = matchMarker(line, DONE, LOOSE_DONE);
+    if (doneMarker) {
+      // A strict DONE anywhere in the reply means the format was fine for it.
+      fixed.done = done ? fixed.done && doneMarker.fixed : doneMarker.fixed;
       done = true;
       i += 1;
       continue;
     }
 
-    const deleted = DELETE.exec(unwrap(line))?.[1];
-    if (deleted) {
-      if (!deletes.includes(deleted)) deletes.push(deleted);
+    const deleteMarker = matchMarker(line, DELETE, LOOSE_DELETE);
+    const deleted = deleteMarker?.match[1];
+    if (deleteMarker && deleted) {
+      if (!deletes.includes(deleted)) {
+        deletes.push(deleted);
+        if (deleteMarker.fixed) fixed.deletes.push(deleted);
+      }
       i += 1;
       continue;
     }
 
-    const renamed = RENAME.exec(unwrap(line));
-    if (renamed?.[1] && renamed[2]) {
-      const [from, to] = [renamed[1], renamed[2]];
+    const renameMarker = matchMarker(line, RENAME, LOOSE_RENAME);
+    const [, from, to] = renameMarker?.match ?? [];
+    if (renameMarker && from && to) {
       if (from !== to && !renames.some((r) => r.from === from && r.to === to)) {
         renames.push({ from, to });
+        if (renameMarker.fixed) fixed.renames.push({ from, to });
       }
       i += 1;
       continue;
@@ -172,7 +325,8 @@ export function parseChat(text: string): ChatParse {
       let open = i + 1;
       while (open < lines.length && open - i <= MAX_GAP && !lines[open]?.trim()) open += 1;
       if (!FENCE_OPEN.test(lines[open]?.trim() ?? '')) {
-        // A marker with no fence after it isn't a block. Ignore the line.
+        // A marker with no fence after it isn't a block. A FILE one should have had one.
+        if (marker.kind === 'FILE') issues.push({ kind: 'no-block', text: clip(line) });
         i += 1;
         continue;
       }
@@ -180,12 +334,15 @@ export function parseChat(text: string): ChatParse {
       if (!block) break;
       if (marker.kind === 'FILE') {
         const content = block.body.length > 0 ? `${block.body.join('\n')}\n` : '';
+        const suspectedPartial = looksPartial(content);
         edits.push({
           path: marker.path,
           content,
-          suspectedPartial: looksPartial(content),
-          fence: fences
+          suspectedPartial,
+          fence: fences,
+          ...(marker.fixed && { formatFixed: true as const })
         });
+        if (suspectedPartial) issues.push({ kind: 'placeholder', text: clip(marker.path) });
       }
       fences += 1;
       i = block.close + 1;
@@ -195,15 +352,32 @@ export function parseChat(text: string): ChatParse {
     if (FENCE_OPEN.test(line.trim())) {
       const block = readFence(lines, i);
       if (!block) break;
+      const above = lineAbove(lines, i);
+      if (
+        above !== null &&
+        looksLikePathLabel(above) &&
+        block.body.filter((l) => l.trim()).length >= 2
+      ) {
+        issues.push({ kind: 'no-marker', text: clip(above) });
+      }
       fences += 1;
       i = block.close + 1;
       continue;
     }
 
+    if (looksLikeMarker(line)) issues.push({ kind: 'bad-marker', text: clip(line) });
     i += 1;
   }
 
-  return { edits, reads, runs, done, deletes, renames };
+  return { edits, reads, runs, done, deletes, renames, fixed, issues };
+}
+
+/**
+ * What in `text` looks meant for Bridge but isn't in its format (see `FormatIssue`).
+ * Markers Bridge read anyway, missing their closing `@@`, aren't issues.
+ */
+export function findFormatIssues(text: string): FormatIssue[] {
+  return parseChat(text).issues;
 }
 
 /** The `@@FILE` edits in `text`. See `parseChat`. */

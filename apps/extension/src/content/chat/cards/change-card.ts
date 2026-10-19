@@ -12,6 +12,7 @@ import type { CardState, ChangeCardRecord, RequestOutcome } from '../../../messa
 import { failureText, modeTag, type Ask } from './diff-card';
 import {
   copyButton,
+  formatFixedBadge,
   formatSize,
   formatTime,
   h,
@@ -63,6 +64,8 @@ export class ChangeCard {
   private appliedAt: number | undefined;
   private mode: Mode | null = null;
   private checking: Promise<void> = Promise.resolve();
+  /** The marker was missing its closing `@@`. Set before `init`. */
+  formatFixed = false;
 
   constructor(
     readonly key: string,
@@ -436,6 +439,7 @@ export class ChangeCard {
           this.title(),
           copyButton(this.path),
           ...this.badgeElements(),
+          this.formatFixed ? formatFixedBadge() : null,
           this.meta(),
           h('span', { class: 'spacer' })
         ),

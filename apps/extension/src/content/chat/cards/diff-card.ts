@@ -19,6 +19,7 @@ import type { CardState, DiffCardRecord, RequestOutcome, WorkerRequest } from '.
 import {
   copyButton,
   formatCount,
+  formatFixedBadge,
   formatTime,
   h,
   icon,
@@ -596,6 +597,7 @@ export class DiffCard {
           path,
           copy,
           ...this.badgeElements(),
+          this.edit.formatFixed ? formatFixedBadge() : null,
           this.meta(),
           h('span', { class: 'spacer' }),
           toggle

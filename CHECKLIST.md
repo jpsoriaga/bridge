@@ -328,3 +328,16 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [x] Installed from the dmg and launched through LaunchServices (`open`, as the Dock does): Settings shows PATH from the login shell, a `pnpm` RUN card runs (exit 0), pairing with the fingerprint works with the release's unpacked extension, `verify:fuses` passes on the installed app
 - [x] Windows and Linux packages cross-built on macOS pass `check:package` (fuses, asar)
 - [ ] Gatekeeper's right-click → Open on a downloaded (quarantined) unsigned dmg, and SmartScreen on Windows, by hand
+
+## 1.0.1: Make the chat format stick
+
+- [x] `buildSessionPrompt` rewritten from the template: rules before the tree, allowlist and tree filled in, under 1,500 characters before the tree (snapshot and length tests)
+- [x] `FORMAT_FOOTER` ends context files, Send these files, Send output (`buildRunMessage`), Resend changed and Full auto follow-ups, once per message, inside the budget
+- [x] Lenient parsing in inline code: `RUN`, `READ`, `DELETE`, `RENAME`, `DONE` without the closing `@@`; `FILE` only with a code block after it; `ChatParse.fixed` / `formatFixed`; `format fixed` badge on every card kind
+- [x] Format issues (`ChatParse.issues`, `findFormatIssues`): typo'd or misplaced markers, unmarked blocks under a path, `@@FILE` without a block, placeholders; no false positives on prose, diffs, decorators or Bridge's own messages (tests)
+- [x] Format card under the reply: "The chat didn’t use Bridge’s format" → **Send format reminder** inserts `FORMAT_REMINDER` without sending (tests)
+- [x] Full auto: reminder instead of acting, once per step, twice per run, then pause `format-issues`; Resume acts on what was readable (tests); protocol v6 for the new pause reason
+- [x] `.DS_Store`, `Thumbs.db`, `desktop.ini` hidden from `tree` and `list` through the default ignore list (tests)
+- [x] `e2e/format.cjs` (in CI); `chat.cjs` and `phase6.cjs` follow the new prompt
+- [x] Version 1.0.1 (`pnpm version:set 1.0.1`), CHANGELOG, PLAN.md "1.0.1 decisions", DESIGN.md "Format card"
+- [ ] Manual run on the real chatgpt.com (e2e README "1.0.1 on the real chatgpt.com")

@@ -105,7 +105,7 @@ const CONV = 'e2e00000-0000-4000-8000-000000000001';
     throw new Error('session prompt not inserted: ' + prompt.slice(0, 200));
   }
   if (/openai|chatgpt|codex/i.test(prompt)) throw new Error('vendor name in prompt');
-  if (!prompt.includes('`@@RUN pnpm test@@`') || !prompt.includes('- `node check.js`')) {
+  if (!prompt.includes('`@@RUN npm test@@`') || !prompt.includes('`node check.js`')) {
     throw new Error('allowlist not in prompt: ' + prompt.slice(-600));
   }
   if (await chat.evaluate(() => window.__submitted === true)) throw new Error('form submitted');
