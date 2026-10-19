@@ -3,7 +3,7 @@
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
-const { ROOT, tempDir, launchApp, launchChrome } = require('./lib.cjs');
+const { ROOT, tempDir, launchApp, launchChrome, enterCode } = require('./lib.cjs');
 
 const step = (m) => console.log('•', m);
 const SHOTS = process.env.E2E_SCREENSHOTS;
@@ -57,8 +57,7 @@ const SHOTS = process.env.E2E_SCREENSHOTS;
   await panel.goto(`chrome-extension://${extId}/src/sidepanel/index.html`);
   await win.getByRole('button', { name: 'Pair extension' }).click();
   const code = (await win.locator('.pairing-code').innerText()).replace(/\D/g, '');
-  await panel.fill('#pair-code', code);
-  await panel.getByRole('button', { name: 'Pair' }).click();
+  await enterCode(win, panel, code);
   await panel
     .locator('header .status')
     .filter({ hasText: 'Connected' })

@@ -33,6 +33,8 @@ export const FILE_ERROR_CODES = [
   'traversal',
   'denied',
   'outside-root',
+  /** A file with more than one hard link: it may be a file outside the project. */
+  'hardlink',
   // The file.
   'not-found',
   'not-a-file',
@@ -47,12 +49,16 @@ export const FILE_ERROR_CODES = [
   'unknown-op',
   'already-undone',
   'io-error',
+  /** Too many requests of this kind in the last second (`OP_RATE_LIMITS` in the desktop). */
+  'rate-limited',
   // Modes: an automatic write or run the current mode doesn't allow, or a gated file.
   'mode',
   'gated',
   // Commands.
   'invalid-command',
   'not-allowlisted',
+  /** An allowlisted program with an option Bridge never allows (`DENIED_FLAGS`). */
+  'denied-flag',
   'command-not-found',
   'project-binary',
   'busy',
@@ -242,6 +248,8 @@ export const FILE_ERROR_MESSAGES: Record<FileErrorCode, string> = {
   traversal: 'Paths may not contain "." or ".." segments.',
   denied: 'That file is protected and Bridge will not touch it.',
   'outside-root': 'That path leads outside the project folder.',
+  hardlink:
+    'That file has more than one hard link, so it may be a file outside the project. Bridge won’t touch it.',
   'not-found': 'That file does not exist.',
   'not-a-file': 'That path is not a regular file.',
   binary: 'That file looks binary. Bridge only reads text files.',
@@ -252,10 +260,13 @@ export const FILE_ERROR_MESSAGES: Record<FileErrorCode, string> = {
   'unknown-op': 'Bridge has no record of that change. Its backup may have expired.',
   'already-undone': 'That change was already undone.',
   'io-error': 'Bridge couldn’t complete the file operation. Check the disk and try again.',
+  'rate-limited': 'Too many requests of this kind at once. Wait a moment and try again.',
   mode: 'Bridge doesn’t do that on its own in this mode. Click to do it.',
   gated: 'That file can change what commands do, so it needs a click in every mode.',
   'invalid-command': 'Bridge runs single commands only, with no shell features.',
   'not-allowlisted': 'That command isn’t on the allowlist. Add it in the Bridge app.',
+  'denied-flag':
+    'That command uses an option Bridge never allows, because it could run other code, write files or change folders.',
   'command-not-found': 'That program isn’t installed or isn’t on the PATH.',
   'project-binary':
     'Bridge doesn’t run programs from inside the project unless they’re allowlisted.',
@@ -272,6 +283,7 @@ export const FILE_ERROR_LABELS: Record<FileErrorCode, string> = {
   traversal: '"." or ".." in path',
   denied: 'protected file',
   'outside-root': 'outside the project',
+  hardlink: 'hard-linked file',
   'not-found': 'not found',
   'not-a-file': 'not a file',
   binary: 'binary file',
@@ -282,10 +294,12 @@ export const FILE_ERROR_LABELS: Record<FileErrorCode, string> = {
   'unknown-op': 'unknown change',
   'already-undone': 'already undone',
   'io-error': 'disk error',
+  'rate-limited': 'too many requests',
   mode: 'needs a click',
   gated: 'gated file',
   'invalid-command': 'invalid command',
   'not-allowlisted': 'not allowed',
+  'denied-flag': 'option not allowed',
   'command-not-found': 'not found',
   'project-binary': 'project program',
   busy: 'busy',

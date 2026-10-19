@@ -163,3 +163,7 @@ export function resultWord(kind: ResultKind, auto = false): HTMLElement[] {
     ...(auto ? [h('span', { class: 'word-note' }, 'auto')] : [])
   ];
 }
+
+/** A card's note when likely secrets were replaced in what it inserts. */
+export const redactionNote = (count: number): string =>
+  `${count} likely ${count === 1 ? 'secret was' : 'secrets were'} replaced with [redacted].`;

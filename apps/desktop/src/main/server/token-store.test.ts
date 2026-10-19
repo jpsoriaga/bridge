@@ -2,7 +2,8 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { fileTokenStore, type Cipher } from './token-store';
+import { createPrivateKey } from 'node:crypto';
+import { fileTokenStore, loadServerKey, type Cipher } from './token-store';
 
 // Reversible stand-in for safeStorage.
 const fakeCipher = (available: boolean): Cipher => ({
@@ -26,7 +27,7 @@ describe('fileTokenStore', () => {
     fileTokenStore(path, fakeCipher(true)).save(hash);
     const raw = readFileSync(path, 'utf8');
     expect(raw).not.toContain(hash.toString('hex'));
-    expect(JSON.parse(raw)).toMatchObject({ v: 1, encrypted: true });
+    expect(JSON.parse(raw)).toMatchObject({ v: 2, encrypted: true });
     expect(fileTokenStore(path, fakeCipher(true)).load()).toEqual(hash);
   });
 
@@ -52,7 +53,39 @@ describe('fileTokenStore', () => {
     expect(fileTokenStore(path, fakeCipher(true)).load()).toBeNull();
     writeFileSync(path, '{not json');
     expect(fileTokenStore(path, fakeCipher(true)).load()).toBeNull();
-    writeFileSync(path, JSON.stringify({ v: 1, encrypted: false, data: 'zz' }));
+    writeFileSync(path, JSON.stringify({ v: 2, encrypted: false, data: 'zz' }));
     expect(fileTokenStore(path, fakeCipher(true)).load()).toBeNull();
+  });
+
+  it('reads a key from before Phase 7 (a token hash) as unpaired', () => {
+    writeFileSync(path, JSON.stringify({ v: 1, encrypted: false, data: hash.toString('hex') }));
+    expect(fileTokenStore(path, fakeCipher(true)).load()).toBeNull();
+  });
+});
+
+describe('loadServerKey', () => {
+  const keyPath = () => join(dir, 'server-key.json');
+
+  it('makes the app key once, encrypted, then reads the same one back', () => {
+    const first = loadServerKey(keyPath(), fakeCipher(true));
+    const raw = readFileSync(keyPath(), 'utf8');
+    expect(raw).not.toContain('PRIVATE KEY');
+    expect(JSON.parse(raw)).toMatchObject({ v: 2, encrypted: true });
+    expect(first.publicKey).toMatch(/^B[A-P][A-Za-z0-9_-]{85}$/);
+    expect(loadServerKey(keyPath(), fakeCipher(true)).publicKey).toBe(first.publicKey);
+    expect(() =>
+      createPrivateKey(fakeCipher(true).decryptString(Buffer.from(JSON.parse(raw).data, 'base64')))
+    ).not.toThrow();
+  });
+
+  it.skipIf(process.platform === 'win32')('writes it owner-only', () => {
+    loadServerKey(keyPath(), fakeCipher(false));
+    expect(statSync(keyPath()).mode & 0o777).toBe(0o600);
+  });
+
+  it('makes a new one if the stored one is unreadable', () => {
+    const first = loadServerKey(keyPath(), fakeCipher(true));
+    writeFileSync(keyPath(), '{broken');
+    expect(loadServerKey(keyPath(), fakeCipher(true)).publicKey).not.toBe(first.publicKey);
   });
 });

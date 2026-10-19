@@ -1,7 +1,8 @@
 import {
   COMMAND_REJECTION_TEXT,
   formatRunResult,
-  matchAllowlist,
+  commandRefusal,
+  deniedArgument,
   parseCommand,
   type BridgeConfig,
   type CommandParse,
@@ -12,7 +13,7 @@ import {
 import type { RequestOutcome } from '../../../messages';
 import { insertIntoComposer } from '../composer';
 import { DIFF_RENDER_LIMIT, failureText, modeTag, type Ask } from './diff-card';
-import { copyButton, formatCount, formatTime, h, icon, renderCard } from './dom';
+import { copyButton, formatCount, formatTime, h, icon, redactionNote, renderCard } from './dom';
 import { createHost } from './host';
 
 export type RunBadge =
@@ -92,10 +93,14 @@ export class RunCard {
   refusal(): string | null {
     if (!this.parsed.ok) return COMMAND_REJECTION_TEXT[this.parsed.reason];
     if (!this.config) return 'the Bridge app isn’t connected';
-    if (!matchAllowlist(this.parsed.argv, this.config.allowlist)) {
-      return 'it isn’t on the allowlist in the Bridge app';
+    switch (commandRefusal(this.parsed.argv, this.config.allowlist)) {
+      case 'not-allowlisted':
+        return 'it isn’t on the allowlist in the Bridge app';
+      case 'denied-flag':
+        return `Bridge never allows ${deniedArgument(this.parsed.argv) ?? 'that option'} here: it could run other code, write files or change folders`;
+      default:
+        return null;
     }
-    return null;
   }
 
   get running(): boolean {
@@ -116,7 +121,9 @@ export class RunCard {
           return this.result.exitCode === 0 ? 'exit 0' : `exit ${this.result.exitCode ?? 1}`;
       }
     }
-    return this.parsed.ok && this.config && matchAllowlist(this.parsed.argv, this.config.allowlist)
+    return this.parsed.ok &&
+      this.config &&
+      commandRefusal(this.parsed.argv, this.config.allowlist) === null
       ? 'allowlisted'
       : 'not allowed';
   }
@@ -196,13 +203,20 @@ export class RunCard {
     await this.ask({ type: 'chat-run-cancel', runId: this.runId });
   }
 
-  /** The text Send output inserts. */
-  message(): string | null {
-    return this.result ? formatRunResult(this.result) : null;
+  /** The text Send output inserts, and how many likely secrets in it are `[redacted]`. */
+  message(): { text: string; redacted: number } | null {
+    if (!this.result) return null;
+    // Redacting up to 200 KB of output is worth doing once per result, not per render.
+    if (this.built?.result !== this.result) {
+      this.built = { result: this.result, value: formatRunResult(this.result) };
+    }
+    return this.built.value;
   }
 
+  private built: { result: RunResult; value: { text: string; redacted: number } } | null = null;
+
   private sendOutput(): void {
-    const text = this.message();
+    const text = this.message()?.text;
     if (!text) return;
     const result = insertIntoComposer(text);
     if (!result.ok) {
@@ -251,9 +265,11 @@ export class RunCard {
     if (!this.config) return { text: 'Connect the Bridge app to run commands.' };
     if (this.running) return { text: this.cancelling ? 'Stopping…' : 'Running in your project.' };
     if (this.result) {
+      const redacted = this.message()?.redacted ?? 0;
+      const note = redacted > 0 ? ` ${redactionNote(redacted)}` : '';
       return this.sent
-        ? { text: 'Added to the message box. Review it and press send.' }
-        : { text: 'Send output puts the result in the message box; you press send.' };
+        ? { text: `Added to the message box. Review it and press send.${note}` }
+        : { text: `Send output puts the result in the message box; you press send.${note}` };
     }
     if (this.badge === 'not allowed') return { text: 'Add it to the allowlist in the Bridge app.' };
     return { text: 'Runs in your project with your permissions.' };

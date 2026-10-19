@@ -14,6 +14,8 @@ export const ERROR_TEXT: Record<FileErrorCode | 'cancelled', string> = {
   traversal: 'The path tried to leave the project with “..”, so Bridge refused it.',
   denied: 'That file is protected, so Bridge won’t touch it. See Settings → Project.',
   'outside-root': 'That path leads outside the project, so Bridge won’t change it.',
+  hardlink:
+    'That file has another hard link, so it could be a file outside the project. Bridge won’t touch it.',
   'not-found': 'That file isn’t there any more.',
   'not-a-file': 'Something other than a file is at that path now.',
   binary: 'That file isn’t text, so Bridge won’t read or write it.',
@@ -24,10 +26,13 @@ export const ERROR_TEXT: Record<FileErrorCode | 'cancelled', string> = {
   'unknown-op': 'There’s nothing to undo. The backup may have expired.',
   'already-undone': 'That change was already undone.',
   'io-error': 'Bridge couldn’t finish the file operation. Check the disk and try again.',
+  'rate-limited': 'The extension asked for too much at once, so Bridge slowed it down. Try again.',
   mode: 'This mode doesn’t do that on its own. It waits for a click.',
   gated: 'That file can change what commands do, so it always needs a click.',
   'invalid-command': 'Bridge runs single commands only, with no shell features.',
   'not-allowlisted': 'That command isn’t on the allowlist. Add it in Settings → Commands.',
+  'denied-flag':
+    'That command uses an option Bridge never allows (it could run other code, write files or change folders).',
   'command-not-found':
     'That program wasn’t found on the PATH. Check Settings → Commands → PATH for commands.',
   'project-binary': 'Bridge doesn’t run programs from inside the project unless allowlisted.',

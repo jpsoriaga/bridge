@@ -17,10 +17,11 @@ import {
   WriteParams,
   PairingCode,
   RenameParams,
+  CONNECTION_STATUSES,
+  ProjectInfo,
   type ConnectionStatus,
   type FileErrorCode,
-  type FileOutcome,
-  type ProjectInfo
+  type FileOutcome
 } from '@bridge/shared';
 
 /** A path from the chat. The desktop sandbox decides; this only bounds the size. */
@@ -117,6 +118,9 @@ export type PendingRequest = z.infer<typeof PendingRequest>;
 export const WorkerRequest = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('get-status') }),
   z.strictObject({ type: z.literal('pair'), code: PairingCode }),
+  // The fingerprints match (or don't): finish or drop the pairing in progress.
+  z.strictObject({ type: z.literal('pair-confirm') }),
+  z.strictObject({ type: z.literal('pair-cancel') }),
   z.strictObject({ type: z.literal('unpair') }),
   z.strictObject({ type: z.literal('retry') }),
 
@@ -254,6 +258,8 @@ export const CONTENT_SCRIPT_REQUESTS: ReadonlySet<WorkerRequest['type']> = new S
 export const EXTENSION_PAGE_REQUESTS: ReadonlySet<WorkerRequest['type']> = new Set([
   'get-status',
   'pair',
+  'pair-confirm',
+  'pair-cancel',
   'unpair',
   'retry',
   'session-preview',
@@ -329,9 +335,13 @@ export interface ChatSyncReply {
 }
 
 export type PairResult =
-  | { ok: true }
+  | { ok: true; fingerprint: string }
   | { ok: false; error: 'app-not-running' | 'invalid_code' | 'failed' }
   | { ok: false; error: 'locked'; retryAfterMs: number };
+
+/** After the user confirmed the fingerprint in the side panel. */
+export type PairConfirmResult =
+  { ok: true } | { ok: false; error: 'not-confirmed' | 'expired' | 'app-not-running' };
 
 export type SessionError =
   | 'not-connected'
@@ -349,61 +359,88 @@ export type SessionPreview =
 export type SessionStartResult = { ok: true; chars: number } | { ok: false; error: SessionError };
 
 export type SendFilesResult =
-  | { ok: true; chars: number; sent: string[]; refused: { path: string; code: FileErrorCode }[] }
+  | {
+      ok: true;
+      chars: number;
+      sent: string[];
+      refused: { path: string; code: FileErrorCode }[];
+      /** Likely secrets replaced with `[redacted]` in what was inserted. */
+      redacted: number;
+    }
   | { ok: false; error: SessionError };
 
-/** What the side panel shows about the chat in the active tab. */
-export interface ChatPanelState {
-  /** The active tab, if it's a chatgpt.com tab with the content script running. */
-  tab: { conversationId: string | null; layout: z.infer<typeof LayoutHealth> } | null;
-  session: {
-    state: SessionState;
-    /** Null while a new chat waits for its first message. */
-    conversationId: string | null;
-    startedAt: number;
-    /** Files sent to the chat this session, newest last, with whether they changed since. */
-    context: ContextEntry[];
-    applied: number;
-    pending: number;
-  } | null;
-  /** The Full auto loop in this tab, as it last reported. */
-  loop: LoopReport | null;
-  /** READ and RUN cards in this tab still waiting for a click. */
-  requests: PendingRequest[];
-  /** How the app watches the project: every change, or only the files in context. */
-  watch: 'watch' | 'poll' | null;
-}
-
 /** One file in context, as the side panel shows it. */
-export interface ContextEntry extends SentFile {
+export const ContextEntry = SentFile.extend({
   /** Changed on disk since it was sent. */
-  stale: boolean;
+  stale: z.boolean(),
   /** Gone from disk since it was sent. */
-  missing: boolean;
-}
+  missing: z.boolean()
+});
+export type ContextEntry = z.infer<typeof ContextEntry>;
+
+export const SessionStateSchema = z.enum(['active', 'ended', 'elsewhere']);
+
+/** What the side panel shows about the chat in the active tab. */
+export const ChatPanelState = z.strictObject({
+  /** The active tab, if it's a chatgpt.com tab with the content script running. */
+  tab: z
+    .strictObject({ conversationId: ConversationId.nullable(), layout: LayoutHealth })
+    .nullable(),
+  session: z
+    .strictObject({
+      state: SessionStateSchema,
+      /** Null while a new chat waits for its first message. */
+      conversationId: ConversationId.nullable(),
+      startedAt: z.number(),
+      /** Files sent to the chat this session, newest last, with whether they changed since. */
+      context: z.array(ContextEntry).max(1000),
+      applied: z.number().int().nonnegative(),
+      pending: z.number().int().nonnegative()
+    })
+    .nullable(),
+  /** The Full auto loop in this tab, as it last reported. */
+  loop: LoopReport.nullable(),
+  /** READ and RUN cards in this tab still waiting for a click. */
+  requests: z.array(PendingRequest).max(100),
+  /** How the app watches the project: every change, or only the files in context. */
+  watch: z.enum(['watch', 'poll']).nullable()
+});
+export type ChatPanelState = z.infer<typeof ChatPanelState>;
 
 export type ContextResendResult =
-  | { ok: true; sent: string[]; refused: { path: string; code: FileErrorCode }[] }
+  | {
+      ok: true;
+      sent: string[];
+      refused: { path: string; code: FileErrorCode }[];
+      redacted: number;
+    }
   | { ok: false; error: SessionError };
 
 /** Pushed to the side panel over its `chrome.runtime` port. */
-export interface StatusUpdate {
-  type: 'status';
-  status: ConnectionStatus;
+export const StatusUpdate = z.strictObject({
+  type: z.literal('status'),
+  status: z.enum(CONNECTION_STATUSES as [ConnectionStatus, ...ConnectionStatus[]]),
   /** The desktop's open project while connected, else null. */
-  project: ProjectInfo | null;
+  project: ProjectInfo.nullable(),
   /** The app's mode, allowlist and running command while connected, else null. */
-  config: BridgeConfig | null;
+  config: BridgeConfig.nullable(),
   /** A session starting or ending turned Full auto off. Cleared when it's on again. */
-  fullAutoOff: boolean;
-  chat: ChatPanelState;
-}
+  fullAutoOff: z.boolean(),
+  chat: ChatPanelState
+});
+export type StatusUpdate = z.infer<typeof StatusUpdate>;
 
-/** Live command output for the side panel, over the same port. */
-export type PanelRunMessage =
-  { type: 'run-output'; runId: string; chunk: string } | { type: 'run-exit'; result: RunResult };
-
-export type PanelMessage = StatusUpdate | PanelRunMessage;
+/**
+ * Everything the worker sends the side panel: status, and live command output. The panel
+ * checks each message against this, like every other listener in the extension.
+ */
+export const PanelMessage = z.discriminatedUnion('type', [
+  StatusUpdate,
+  z.strictObject({ type: z.literal('run-output'), runId: RunId, chunk: z.string() }),
+  z.strictObject({ type: z.literal('run-exit'), result: RunResult })
+]);
+export type PanelMessage = z.infer<typeof PanelMessage>;
+export type PanelRunMessage = Exclude<PanelMessage, StatusUpdate>;
 
 /** A file request's outcome, plus the ways it can fail before the desktop answers. */
 export type RequestOutcome<T> =

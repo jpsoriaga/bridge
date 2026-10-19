@@ -109,22 +109,123 @@ export function formatArgv(argv: readonly string[]): string {
 }
 
 /**
- * An allowlist entry is an executable plus an argument prefix, written as a command:
- * `pnpm test` allows `pnpm test` and `pnpm test -- --run`, but not `pnpm testx`.
+ * An allowlist entry is a command, matched word for word. By default it allows exactly that
+ * command: `pnpm test` allows `pnpm test` and nothing more. A last word of `*` also allows
+ * extra arguments after it: `pnpm test *` allows `pnpm test -- --run`, never `pnpm testx`.
  */
-export function parseAllowlistEntry(entry: string): string[] | null {
-  const parsed = parseCommand(entry.trim());
-  return parsed.ok ? parsed.argv : null;
+export interface AllowlistRule {
+  words: string[];
+  /** Ends in `*`: more arguments may follow. */
+  extra: boolean;
 }
 
-/** The first entry whose words are a prefix of `argv`, word for word, or null. */
+/** The marker for "and any arguments after these". Only ever the last word. */
+export const ALLOWLIST_ANY = '*';
+
+export function parseAllowlistEntry(entry: string): AllowlistRule | null {
+  const trimmed = entry.trim();
+  const extra = trimmed === ALLOWLIST_ANY || /\s\*$/.test(trimmed);
+  const parsed = parseCommand(extra ? trimmed.slice(0, -1).trimEnd() : trimmed);
+  return parsed.ok ? { words: parsed.argv, extra } : null;
+}
+
+/**
+ * The first entry that allows `argv`, or null: the same words exactly, or (with `*`) the
+ * entry's words followed by anything.
+ */
 export function matchAllowlist(argv: readonly string[], entries: readonly string[]): string | null {
   for (const entry of entries) {
-    const prefix = parseAllowlistEntry(entry);
-    if (prefix && prefix.length <= argv.length && prefix.every((word, i) => argv[i] === word)) {
-      return entry;
-    }
+    const rule = parseAllowlistEntry(entry);
+    if (!rule) continue;
+    const { words, extra } = rule;
+    const fits = extra ? words.length <= argv.length : words.length === argv.length;
+    if (fits && words.every((word, i) => argv[i] === word)) return entry;
   }
+  return null;
+}
+
+/**
+ * Options that let an allowlisted program do far more than the entry suggests (run other
+ * code, write files, change folder or config), refused even when the allowlist entry
+ * would match. One table, by program name (lowercase, no `.exe`/`.cmd`/`.bat`). `null`
+ * refuses the program entirely. Single words (no dash) are subcommands, refused anywhere.
+ */
+export const DENIED_FLAGS: Readonly<Record<string, readonly string[] | null>> = {
+  git: [
+    '--output',
+    '-o',
+    '-c',
+    '--config-env',
+    '--exec',
+    '--upload-pack',
+    '--receive-pack',
+    '-C',
+    '--git-dir',
+    '--work-tree'
+  ],
+  node: [
+    '-e',
+    '--eval',
+    '-p',
+    '--print',
+    '-r',
+    '--require',
+    '--import',
+    '--loader',
+    '--experimental-loader'
+  ],
+  npm: ['-C', '--dir', '--prefix', '--global', '-g', 'exec', 'dlx', 'x'],
+  pnpm: ['-C', '--dir', '--prefix', '--global', '-g', 'exec', 'dlx', 'x'],
+  // Yarn's own word for changing folder is --cwd.
+  yarn: ['-C', '--dir', '--cwd', '--prefix', '--global', '-g', 'exec', 'dlx', 'x'],
+  npx: null,
+  pnpx: null,
+  bunx: null
+};
+
+/** A program's name as the table keys it: the last path part, lowercase, no Windows suffix. */
+export function programName(file: string): string {
+  const base = file.split(/[\\/]/).pop() ?? file;
+  return base.toLowerCase().replace(/\.(exe|cmd|bat|com|ps1)$/, '');
+}
+
+/**
+ * The first argument `argv` may not use, or null. For each denied option: the option
+ * itself, `--option=value`, an abbreviation git and others accept (`--outp` for
+ * `--output`), a short option with its value attached (`-Cdir`), and a short option in a
+ * cluster (`-pe`). A refused program returns its own name.
+ */
+export function deniedArgument(argv: readonly string[], table = DENIED_FLAGS): string | null {
+  const program = programName(argv[0] ?? '');
+  if (!(program in table)) return null;
+  const denied = table[program];
+  if (denied === null || denied === undefined) return argv[0] ?? program;
+  const longs = denied.filter((f) => f.startsWith('--'));
+  const shorts = denied.filter((f) => /^-[^-]$/.test(f)).map((f) => f[1]!);
+  const words = denied.filter((f) => !f.startsWith('-'));
+  for (const arg of argv.slice(1)) {
+    // After `--`, the rest is the script's own arguments, not the program's options.
+    if (arg === '--') break;
+    if (words.includes(arg)) return arg;
+    if (arg.startsWith('--')) {
+      const name = arg.split('=')[0]!;
+      if (name.length > 3 && longs.some((flag) => flag.startsWith(name))) return arg;
+      continue;
+    }
+    if (/^-[^-]/.test(arg) && [...arg.slice(1)].some((c) => shorts.includes(c))) return arg;
+  }
+  return null;
+}
+
+export type CommandRefusal = 'not-allowlisted' | 'denied-flag';
+
+/** Why `argv` may not run under `allowlist`, or null. The app and the RUN card share it. */
+export function commandRefusal(
+  argv: readonly string[],
+  allowlist: readonly string[]
+): CommandRefusal | null {
+  if (matchAllowlist(argv, allowlist) === null) return 'not-allowlisted';
+  if (deniedArgument(argv) !== null) return 'denied-flag';
   return null;
 }
 

@@ -234,8 +234,10 @@ async function resendContext(windowId: number): Promise<ContextResendResult> {
       refused.push({ path, code: read.error.code });
     }
   }
-  if (files.length === 0 && refused.length === 0) return { ok: true, sent: [], refused };
-  const text = buildContextMessage(
+  if (files.length === 0 && refused.length === 0) {
+    return { ok: true, sent: [], refused, redacted: 0 };
+  }
+  const { text, redacted } = buildContextMessage(
     files,
     refused.map(({ path, code }) => ({ path, reason: FILE_ERROR_LABELS[code] }))
   );
@@ -246,7 +248,7 @@ async function resendContext(windowId: number): Promise<ContextResendResult> {
     files.map((f) => sentFile(f.path, f.content, f.hash))
   );
   // A file that's gone stays listed as missing until removed; the chat was told.
-  return { ok: true, sent: files.map((f) => f.path), refused };
+  return { ok: true, sent: files.map((f) => f.path), refused, redacted };
 }
 
 async function sessionPrompt(): Promise<
@@ -334,8 +336,8 @@ async function sendFiles(paths: string[], windowId: number): Promise<SendFilesRe
       refused.push({ path, code: read.error.code });
     }
   }
-  if (files.length === 0) return { ok: true, chars: 0, sent: [], refused };
-  const text = buildContextMessage(
+  if (files.length === 0) return { ok: true, chars: 0, sent: [], refused, redacted: 0 };
+  const { text, redacted } = buildContextMessage(
     files,
     refused.map(({ path, code }) => ({ path, reason: FILE_ERROR_LABELS[code] }))
   );
@@ -347,7 +349,7 @@ async function sendFiles(paths: string[], windowId: number): Promise<SendFilesRe
     files.map((f) => sentFile(f.path, f.content, f.hash))
   );
   void syncWatch();
-  return { ok: true, chars: inserted.chars, sent, refused };
+  return { ok: true, chars: inserted.chars, sent, refused, redacted };
 }
 
 /** File and command requests from a card in the chat. Refused unless that tab's session is active. */
@@ -533,6 +535,11 @@ async function handlePanel(
       return connection.current;
     case 'pair':
       return connection.pair(request.code);
+    case 'pair-confirm':
+      return connection.confirmPair();
+    case 'pair-cancel':
+      connection.cancelPair();
+      return null;
     case 'unpair':
       await connection.unpair();
       return null;

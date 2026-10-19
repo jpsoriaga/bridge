@@ -1,7 +1,8 @@
 import {
   checkArgv,
+  commandRefusal,
+  deniedArgument,
   FILE_ERROR_MESSAGES,
-  matchAllowlist,
   type FileErrorCode,
   type FileOutcome,
   type Mode,
@@ -52,15 +53,18 @@ export class CommandService {
     if (root === null) return refuse('no-project');
     if (params.trigger === 'auto' && this.options.mode() !== 'full-auto') return refuse('mode');
     if (checkArgv(params.argv) !== null) return refuse('invalid-command');
-    if (matchAllowlist(params.argv, this.options.allowlist()) === null) {
-      return refuse('not-allowlisted');
-    }
+    const refusal = commandRefusal(params.argv, this.options.allowlist());
+    if (refusal) return refuse(refusal);
     if (this.options.runner.current) return fail('busy');
 
     const platform = this.options.platform ?? process.platform;
     const env = filterEnv((await this.options.env?.()) ?? process.env, this.options.envPatterns());
     const resolved = await resolveExecutable(params.argv[0]!, { root, env, platform });
     if (!resolved.ok) return refuse(resolved.code);
+    // The program as it really is on disk, too: an allowlisted path to a copy of npx is npx.
+    if (deniedArgument([resolved.file, ...params.argv.slice(1)]) !== null) {
+      return refuse('denied-flag');
+    }
     if (
       platform === 'win32' &&
       isBatchFile(resolved.file) &&

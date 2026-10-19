@@ -5,7 +5,10 @@ import {
   MAX_RUN_TIMEOUT_MS,
   MAX_STEP_LIMIT,
   MIN_RUN_TIMEOUT_MS,
-  parseCommand
+  deniedArgument,
+  parseAllowlistEntry,
+  parseCommand,
+  programName
 } from '@bridge/shared';
 import type { CommandPath, DesktopState, RunSettings } from '../../preload/api';
 
@@ -34,9 +37,22 @@ function useRunOutput(runId: string | null): string {
   return runId !== null && output.runId === runId ? output.text : '';
 }
 
-function commandError(entry: string): string | null {
-  const parsed = parseCommand(entry);
-  return parsed.ok ? null : COMMAND_REJECTION_TEXT[parsed.reason];
+/** Why an allowlist entry can't be saved, or null. A trailing `*` allows extra arguments. */
+export function commandError(entry: string): string | null {
+  const rule = parseAllowlistEntry(entry);
+  if (!rule) {
+    const parsed = parseCommand(entry.replace(/\s\*$/, ''));
+    return parsed.ok
+      ? 'Use * only as the last word, to allow extra arguments.'
+      : COMMAND_REJECTION_TEXT[parsed.reason];
+  }
+  const denied = deniedArgument(rule.words);
+  if (denied !== null) {
+    return programName(rule.words[0] ?? '') === denied.toLowerCase() || rule.words[0] === denied
+      ? `Bridge never runs ${denied}: it downloads and runs other programs.`
+      : `Bridge never allows ${denied} with this program: it could run other code, write files or change folders.`;
+  }
+  return null;
 }
 
 /** First open: the suggested commands, each with a checkbox, and Allow. */
@@ -87,7 +103,7 @@ function Suggestions({ suggestions }: { suggestions: string[] }) {
 }
 
 /** The project's allowlist. Only the app edits it; the chat and the extension can't. */
-function Allowlist({ entries }: { entries: string[] }) {
+function Allowlist({ entries, note }: { entries: string[]; note: boolean }) {
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
 
@@ -116,9 +132,28 @@ function Allowlist({ entries }: { entries: string[] }) {
   return (
     <>
       <p className="hint">
-        The chat can ask for these, plus extra arguments after them. Anything else is refused, and
-        so is any shell syntax.
+        The chat can run exactly these. End one with <span className="mono">*</span> to allow extra
+        arguments after it (<span className="mono">pnpm test *</span>). Anything else is refused,
+        and so are shell syntax and options that run other code or change folders (such as{' '}
+        <span className="mono">node -e</span> or <span className="mono">git -C</span>), even with{' '}
+        <span className="mono">*</span>.
       </p>
+      {note && (
+        <div className="notice" role="status">
+          <p>
+            Allowlist entries now match exactly. Your saved ones got a{' '}
+            <span className="mono">*</span>, so they still allow extra arguments as before. Remove
+            the <span className="mono">*</span> from any that don’t need it.
+          </p>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => void window.bridge.dismissAllowlistNote()}
+          >
+            Got it
+          </button>
+        </div>
+      )}
       {entries.length === 0 ? (
         <p className="empty">No commands allowed in this project. Add one below.</p>
       ) : (
@@ -364,6 +399,6 @@ export function AllowlistEditor({ state }: { state: DesktopState }) {
       suggestions={state.allowlistSuggestions}
     />
   ) : (
-    <Allowlist entries={state.allowlist} />
+    <Allowlist entries={state.allowlist} note={state.allowlistNote} />
   );
 }

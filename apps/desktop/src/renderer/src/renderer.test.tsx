@@ -392,4 +392,41 @@ describe('App shell', () => {
       within(toast).getByText('Auto-apply and Manual carry over between sessions.')
     ).toBeTruthy();
   });
+
+  it('shows the fingerprint to compare, and confirms or cancels it', async () => {
+    const t = installBridge(
+      makeState({
+        paired: false,
+        status: 'not-paired',
+        pairing: {
+          phase: 'compare',
+          fingerprint: 'a1b2 c3d4',
+          expiresAt: Date.now() + 60_000,
+          confirmed: false
+        }
+      })
+    );
+    render(<App />);
+    expect(await screen.findByLabelText('Fingerprint a 1 b 2 c 3 d 4')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'They match' }));
+    expect(t.bridge.confirmPairing).toHaveBeenCalled();
+    act(() =>
+      t.push(
+        makeState({
+          paired: false,
+          status: 'not-paired',
+          pairing: {
+            phase: 'compare',
+            fingerprint: 'a1b2 c3d4',
+            expiresAt: Date.now() + 60_000,
+            confirmed: true
+          }
+        })
+      )
+    );
+    expect(await screen.findByText(/Now confirm it in the side panel/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'They match' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(t.bridge.cancelPairing).toHaveBeenCalled();
+  });
 });

@@ -49,6 +49,13 @@ export interface Settings {
    * with no entry hasn't been confirmed yet, and the app suggests defaults.
    */
   allowlists: Record<string, string[]>;
+  /**
+   * Allowlist entries are exact unless they end in ` *` (since Phase 7). Lists saved before
+   * that allowed extra arguments everywhere, so reading one adds ` *` to every entry once
+   * and sets `allowlistNote` until the user has seen it in Settings.
+   */
+  allowlistFormat: 2;
+  allowlistNote: boolean;
   /** The user's additions to the gated files, in .gitignore syntax. */
   gatedPatterns: string[];
   /** The user's additions to the environment filter. */
@@ -91,6 +98,10 @@ export function isValidAllowlistEntry(value: unknown): value is string {
   );
 }
 
+/** An entry from before exact matching, as it behaved then: extra arguments allowed. */
+export const withAnyArguments = (entry: string): string =>
+  parseAllowlistEntry(entry)?.extra ? entry : `${entry} *`;
+
 export function isValidAllowlist(value: unknown): value is string[] {
   return (
     Array.isArray(value) &&
@@ -131,9 +142,14 @@ export function settingsFile(path: string) {
     const patterns = (value: unknown, valid: (v: unknown) => boolean, max: number) =>
       Array.isArray(value) ? (value.filter(valid) as string[]).slice(0, max) : [];
     const allowlists: Record<string, string[]> = {};
+    const migrate = data.allowlistFormat !== 2;
+    let migrated = false;
     if (typeof data.allowlists === 'object' && data.allowlists !== null) {
       for (const [id, list] of Object.entries(data.allowlists)) {
-        if (/^[0-9a-f]{16}$/.test(id) && isValidAllowlist(list)) allowlists[id] = list;
+        if (!/^[0-9a-f]{16}$/.test(id) || !isValidAllowlist(list)) continue;
+        const next = migrate ? list.map(withAnyArguments).filter(isValidAllowlistEntry) : list;
+        migrated ||= migrate && next.some((entry, i) => entry !== list[i]);
+        allowlists[id] = next;
       }
     }
     const settings: Settings = {
@@ -143,6 +159,8 @@ export function settingsFile(path: string) {
       denyPatterns: patterns(data.denyPatterns, isValidDenyPattern, MAX_DENY_PATTERNS),
       mode: data.mode === 'auto-apply' ? 'auto-apply' : 'manual',
       allowlists,
+      allowlistFormat: 2,
+      allowlistNote: migrated || (!migrate && data.allowlistNote === true),
       gatedPatterns: patterns(data.gatedPatterns, isValidDenyPattern, MAX_DENY_PATTERNS),
       envPatterns: patterns(data.envPatterns, isValidEnvPattern, MAX_ENV_PATTERNS),
       runTimeoutMs: clampInt(
@@ -174,8 +192,8 @@ export function settingsFile(path: string) {
     read,
     update(patch: Partial<Settings>): void {
       const next = { ...read(), ...patch };
-      mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(`${path}.tmp`, JSON.stringify(next, null, 2));
+      mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+      writeFileSync(`${path}.tmp`, JSON.stringify(next, null, 2), { mode: 0o600 });
       renameSync(`${path}.tmp`, path);
     }
   };

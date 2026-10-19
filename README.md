@@ -6,7 +6,7 @@ Bridge lets the ChatGPT web chat edit a project on your computer. The chat write
 
 It runs entirely on your machine. The desktop app listens only on `127.0.0.1`, and nothing is sent anywhere else.
 
-> **Status:** Phase 6 of 8 (app polish, delete and rename, files in context, edge cases) is done. Edits show as diff cards with Apply, Reject and Undo; deletes and renames get their own cards and always need a click; Auto-apply writes edits for you with undo; commands on your allowlist run from RUN cards; and the opt-in Full auto mode can carry a task across several messages on its own, within a step limit. Security hardening is next. See [CHECKLIST.md](CHECKLIST.md).
+> **Status:** Phase 7 of 8 (security hardening) is done. Edits show as diff cards with Apply, Reject and Undo; deletes and renames get their own cards and always need a click; Auto-apply writes edits for you with undo; commands on your allowlist run from RUN cards; and the opt-in Full auto mode can carry a task across several messages on its own, within a step limit. Pairing checks a fingerprint on both sides, and secrets are redacted before they reach the chat. Packaging is next. See [CHECKLIST.md](CHECKLIST.md) and [SECURITY.md](SECURITY.md).
 
 | Light                                                                                                   | Dark                                                                          |
 | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
@@ -40,7 +40,7 @@ chatgpt.com ──▶ Chrome extension ──WebSocket (127.0.0.1)──▶ Brid
 5. The chat can also ask to run a command with `` `@@RUN pnpm test@@` ``. Only commands on the allowlist you set in the app ever run.
 6. Three modes control how much happens on its own: **Manual**, **Auto-apply** and **Full auto** (see [Modes](#modes)).
 
-[PLAN.md](PLAN.md) has the full architecture and security model.
+[PLAN.md](PLAN.md) has the full architecture. [SECURITY.md](SECURITY.md) has the threat model, every control and the known limits.
 
 ## Requirements
 
@@ -78,11 +78,14 @@ You pair once. After that the extension reconnects on its own whenever both are 
 1. Start the Bridge desktop app. Its status reads **Not paired**, and Settings shows the local server address (normally `127.0.0.1:47821`).
 2. Click **Pair extension**. The app shows a 6-digit code that works once and expires in 2 minutes.
 3. Open the Bridge side panel in Chrome (the toolbar icon), type the code and click **Pair**.
-4. Both status pills turn to **Connected**.
+4. **Check the fingerprint.** The app and the side panel each show a short fingerprint like `a1b2 c3d4`. If they're the same, click **They match** in the app, then **They match** in the side panel. If they differ, something other than the Bridge app answered the extension: click **Cancel** on both and start again.
+5. Both status pills turn to **Connected**.
 
-To unpair, click **Unpair** in either the app or the side panel. That revokes the pairing, and the other side shows **Not paired**. Pairing again from the app also replaces the old one.
+To unpair, click **Unpair** in either the app or the side panel. That revokes the pairing, and the other side shows **Not paired**. Pairing again from the app replaces the old pairing once the new one is confirmed.
 
-After pairing, neither side sends the token again. They prove to each other that they hold its hash with an HMAC challenge, the app first, so a program pretending to be Bridge on one of its ports learns nothing. The extension remembers which port the real app was on and tries that one first.
+The key both sides keep comes from a key exchange during pairing; it never crosses the wire. After pairing they prove to each other that they hold it with an HMAC challenge, the app first, so a program pretending to be Bridge on one of its ports learns nothing. The extension remembers which port the real app was on and tries that one first.
+
+Updating from a build before Phase 7: pairing changed, so pair again once (both sides show **Not paired**, or the side panel shows **Can't reach Bridge**; click **Unpair** there first).
 
 After 5 wrong codes, pairing is locked for 60 seconds and the current code is cancelled. Start a new code once the lock ends.
 
@@ -138,19 +141,22 @@ You switch modes in the desktop app. The side panel and every card show the curr
 
 In every mode, Bridge leaves these for your click: deletes and renames, files that look partial, that changed on disk, that the sandbox refuses, that are over 1 MB, and **gated files**. Gated files can change what a command does: `package.json`, lockfiles, `.npmrc`, `.yarnrc*`, `pnpm-workspace.yaml`, `.github/workflows/`, `.husky/` and other hook folders, `Dockerfile`, `Makefile`. Add your own under **Settings → Gated files**. This only blocks the most direct routes: running the tests still runs test code the chat wrote.
 
-Auto-apply is remembered. Full auto is not: it turns off when you restart Bridge, end the session, unpair or switch projects.
+Auto-apply is remembered across sessions. Full auto is not: it turns off when you restart Bridge, start or end a session (the app and the side panel say "Full auto turned off: it's per session."), unpair or switch projects. Moving a tab to another chat ends that tab's session.
 
 ## Commands and the allowlist
 
 The first time you open a project, **Settings → Commands** suggests commands from its `package.json` scripts (`pnpm test`, `pnpm lint`, …) plus `git status` and `git diff`. Tick the ones you want and click **Allow**. Nothing runs until you do. You can add and remove commands there at any time. Nothing in the chat or the extension can change the list.
 
-- An entry is a program plus the start of its arguments: `pnpm test` also allows `pnpm test -- --run src/a.test.ts`, but not `pnpm testx`. Extra arguments are passed as they are, so allow only programs whose arguments you're comfortable with (some, like `git diff --output=<file>`, can write files).
+- An entry matches exactly: `pnpm test` allows `pnpm test` and nothing more. End it with `*` to allow extra arguments: `pnpm test *` also allows `pnpm test -- --run src/a.test.ts`, never `pnpm testx`. Lists saved before Phase 7 got a `*` on every entry, since that's how they behaved; Settings says so once. Prefer exact entries.
+- Some options are refused even with `*`, because they'd let an allowed program run other code, write files or change folder: `git -C`, `-c`, `--output`, `--exec`, `--git-dir`, …; `node -e`, `-p`, `-r`, `--import`, …; `npm`/`pnpm`/`yarn` `--dir`, `--prefix`, `-g`, `exec`, `dlx`; and `npx`, `pnpx` and `bunx` altogether. The full table is in [SECURITY.md](SECURITY.md).
 - There is no shell. Pipes, `&&`, `;`, redirects, `$`, backticks, wildcards and `FOO=1 cmd` are refused, and so is anything longer than 1,000 characters.
 - Programs are found on your `PATH`. One that resolves inside the project (say `node_modules/.bin` on your `PATH`) is refused; to run a project script, allowlist its exact path, like `./scripts/check.sh`.
 - Commands run in the project folder with your environment, minus anything that looks like a secret (`*TOKEN*`, `*SECRET*`, `*KEY*`, `*PASSWORD*`, `AWS_*`, `OPENAI_*`, …; add more under **Settings → Hidden from commands**), with `CI=1` and `FORCE_COLOR=0`.
 - One command at a time. The timeout is 120 seconds by default (up to 10 minutes) and kills everything the command started. Output is kept up to 200 KB (start and end), and the chat gets about 8,000 characters of it.
 
 Output streams live on the RUN card, in the side panel and in the app, where **Cancel** stops it.
+
+Before command output or file contents go into the message box, likely secrets (API keys, tokens, private keys, JWTs, high-entropy values next to words like `key` or `secret`) are replaced with `[redacted]`, and the card says how many. It's best effort: keep secrets in `.env` files, which Bridge never reads.
 
 ## Full auto
 
@@ -187,19 +193,21 @@ archive/prototype/  earlier server/pairing prototype, kept for reference (not bu
 
 ## Scripts
 
-| Command             | What it does                                                                              |
-| ------------------- | ----------------------------------------------------------------------------------------- |
-| `pnpm dev`          | Desktop app with hot reload + extension watch build                                       |
-| `pnpm build`        | Production build of both apps                                                             |
-| `pnpm lint`         | ESLint over the whole repo                                                                |
-| `pnpm format`       | Prettier write                                                                            |
-| `pnpm format:check` | Prettier check (CI)                                                                       |
-| `pnpm typecheck`    | `tsc --noEmit` in every package                                                           |
-| `pnpm test`         | Vitest (shared, desktop, renderer with Testing Library and axe, extension with happy-dom) |
-| `pnpm package:mac`  | Build a macOS dmg/zip with electron-builder                                               |
-| `pnpm package:win`  | Build a Windows installer with electron-builder                                           |
+| Command                                            | What it does                                                                              |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `pnpm dev`                                         | Desktop app with hot reload + extension watch build                                       |
+| `pnpm build`                                       | Production build of both apps                                                             |
+| `pnpm lint`                                        | ESLint over the whole repo                                                                |
+| `pnpm format`                                      | Prettier write                                                                            |
+| `pnpm format:check`                                | Prettier check (CI)                                                                       |
+| `pnpm typecheck`                                   | `tsc --noEmit` in every package                                                           |
+| `pnpm test`                                        | Vitest (shared, desktop, renderer with Testing Library and axe, extension with happy-dom) |
+| `pnpm test:coverage`                               | The same, with coverage; fails below the thresholds in `vitest.config.ts` (CI)            |
+| `pnpm --filter @bridge/desktop verify:fuses <app>` | Checks a packaged app's Electron fuses                                                    |
+| `pnpm package:mac`                                 | Build a macOS dmg/zip with electron-builder                                               |
+| `pnpm package:win`                                 | Build a Windows installer with electron-builder                                           |
 
-Manual end-to-end scripts (Playwright, not in CI) live in [`e2e/`](e2e/README.md).
+End-to-end scripts (Playwright, against the built app and a stand-in chat page; CI runs them on Linux) live in [`e2e/`](e2e/README.md).
 
 ## Troubleshooting
 
@@ -218,6 +226,7 @@ Manual end-to-end scripts (Playwright, not in CI) live in [`e2e/`](e2e/README.md
 
 ## Docs
 
+- [SECURITY.md](SECURITY.md): threat model, controls, known limits, reporting a problem
 - [PLAN.md](PLAN.md): architecture, modes, security model, phases
 - [CHECKLIST.md](CHECKLIST.md): task-level progress
 - [DESIGN.md](DESIGN.md): design tokens and component specs

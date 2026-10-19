@@ -6,6 +6,7 @@ import {
   HealthResponse,
   PairFailure,
   PairSuccess,
+  pairTranscript,
   parseMessage,
   PROTOCOL_VERSION,
   ServerMessage,
@@ -18,11 +19,14 @@ import {
   type ProjectInfo,
   type RunResult
 } from '@bridge/shared';
-import type { PairResult, RequestOutcome } from '../messages';
+import type { PairConfirmResult, PairResult, RequestOutcome } from '../messages';
 import { Reconnector } from './backoff';
-import { randomNonce, sha256Hex, signProof, verifyProof } from './proof';
+import { derivePairing, pairingKeyPair, randomNonce, signProof, verifyProof } from './proof';
 
 export const PING_INTERVAL_MS = 20_000;
+/** After `rate-limited`, wait out the app's one-second window, then try again. */
+export const RATE_LIMIT_RETRY_MS = 1_100;
+export const RATE_LIMIT_RETRIES = 5;
 /** No message from the desktop for this long and the socket is treated as dead. */
 export const STALE_AFTER_MS = 50_000;
 /** hello → challenge → auth → auth_ok must finish within this. */
@@ -96,6 +100,9 @@ export class Connection {
   private lastMessageAt = 0;
   /** Bumped by pair/unpair so an attempt that was already running gives up its result. */
   private generation = 0;
+  /** A code redeemed: the key and fingerprint, waiting for the user to confirm. Memory only. */
+  private pendingPair: { port: number; key: string; nonce: string; fingerprint: string } | null =
+    null;
   private paired = false;
   private alarmSet = false;
   private projectInfo: ProjectInfo | null = null;
@@ -171,9 +178,28 @@ export class Connection {
    * Sends a file request and resolves with the desktop's answer, checked against the
    * result schema for `type`. Never rejects.
    */
-  request<T extends FileRequestType>(
+  /**
+   * Sends a request and waits for its reply. The app caps how many of each kind it takes a
+   * second; a `rate-limited` reply is retried after the window passes (a few times), so a
+   * burst (Apply all, re-checking files in context) slows down instead of failing.
+   */
+  async request<T extends FileRequestType>(
     type: T,
     payload: Extract<ClientMessage, { type: T }>['payload']
+  ): Promise<RequestOutcome<FileResult<T>>> {
+    for (let attempt = 0; ; attempt += 1) {
+      const outcome = await this.requestOnce(type, payload);
+      if (outcome.ok || outcome.error.code !== 'rate-limited' || attempt >= RATE_LIMIT_RETRIES) {
+        return outcome;
+      }
+      await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_RETRY_MS));
+    }
+  }
+
+  /** One try. `payload` is already typed by `request`, which is the only caller. */
+  private requestOnce<T extends FileRequestType>(
+    type: T,
+    payload: unknown
   ): Promise<RequestOutcome<FileResult<T>>> {
     const socket = this.socket;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
@@ -232,21 +258,29 @@ export class Connection {
     return this.connect();
   }
 
+  /**
+   * Step 1 of pairing: sends the code and a one-time public key to the first Bridge that
+   * answers, checks its proof, and returns the fingerprint to compare with the app's.
+   * Nothing is stored until `confirmPair`.
+   */
   async pair(code: string): Promise<PairResult> {
+    this.pendingPair = null;
     // Nothing can prove itself before pairing, so this takes the first Bridge that answers.
+    // The fingerprint is what catches anything else listening there.
     const port = await this.findApp();
     if (port === null) {
       this.setStatus('app-not-running');
       return { ok: false, error: 'app-not-running' };
     }
 
+    const own = await pairingKeyPair();
     let response: Response;
     let body: unknown;
     try {
       response = await this.deps.fetch(`http://${base(port)}/pair`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ code }),
+        body: JSON.stringify({ code, publicKey: own.publicKey }),
         signal: AbortSignal.timeout(PAIR_TIMEOUT_MS)
       });
       body = await response.json().catch(() => null);
@@ -256,14 +290,21 @@ export class Connection {
 
     const success = response.ok ? PairSuccess.safeParse(body) : null;
     if (success?.success) {
-      // Keep only the hash. It is the HMAC key; the token is dropped here.
-      await this.deps.storage.setTokenHash(await sha256Hex(success.data.token));
-      await this.deps.storage.setPort(port);
-      this.setPaired(true);
-      this.generation += 1;
-      this.dropSocket();
-      await this.retry();
-      return { ok: true };
+      const transcript = pairTranscript(port, code, success.data.publicKey, own.publicKey);
+      let derived;
+      try {
+        derived = await derivePairing(own.privateKey, success.data.publicKey, transcript);
+      } catch {
+        return { ok: false, error: 'failed' };
+      }
+      // The app must show it derived the same key before the user is asked anything.
+      if (
+        !(await verifyProof(derived.key, success.data.proof, 'server', 'pair', port, derived.nonce))
+      ) {
+        return { ok: false, error: 'failed' };
+      }
+      this.pendingPair = { port, ...derived };
+      return { ok: true, fingerprint: derived.fingerprint };
     }
 
     const failure = PairFailure.safeParse(body);
@@ -274,6 +315,52 @@ export class Connection {
       return { ok: false, error: 'invalid_code' };
     }
     return { ok: false, error: 'failed' };
+  }
+
+  /**
+   * Step 2, after the user saw the same fingerprint here and in the app: proves this
+   * extension holds the key, and keeps it once the app accepts. The app accepts only after
+   * its own user confirmed the fingerprint.
+   */
+  async confirmPair(): Promise<PairConfirmResult> {
+    const pending = this.pendingPair;
+    if (!pending) return { ok: false, error: 'expired' };
+    let response: Response;
+    let body: unknown;
+    try {
+      response = await this.deps.fetch(`http://${base(pending.port)}/pair/confirm`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          proof: await signProof(pending.key, 'client', 'pair', pending.port, pending.nonce)
+        }),
+        signal: AbortSignal.timeout(PAIR_TIMEOUT_MS)
+      });
+      body = await response.json().catch(() => null);
+    } catch {
+      return { ok: false, error: 'app-not-running' };
+    }
+    if (response.status === 204) {
+      this.pendingPair = null;
+      await this.deps.storage.setTokenHash(pending.key);
+      await this.deps.storage.setPort(pending.port);
+      this.setPaired(true);
+      this.generation += 1;
+      this.dropSocket();
+      await this.retry();
+      return { ok: true };
+    }
+    const failure = PairFailure.safeParse(body);
+    if (failure.success && failure.data.error === 'not_confirmed') {
+      return { ok: false, error: 'not-confirmed' };
+    }
+    this.pendingPair = null;
+    return { ok: false, error: 'expired' };
+  }
+
+  /** The fingerprints didn't match, or the user gave up: forget the exchange. */
+  cancelPair(): void {
+    this.pendingPair = null;
   }
 
   /** Revokes the pairing on the desktop (best effort) and forgets the key here. */

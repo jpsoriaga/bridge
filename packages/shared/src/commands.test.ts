@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   checkArgv,
   formatArgv,
+  commandRefusal,
+  deniedArgument,
   matchAllowlist,
+  programName,
   MAX_COMMAND_CHARS,
   parseAllowlistEntry,
   parseCommand,
@@ -109,7 +112,13 @@ describe('checkArgv', () => {
 });
 
 describe('matchAllowlist', () => {
-  const allowlist = ['pnpm test', 'pnpm lint', 'git status', 'git diff', './scripts/check.sh'];
+  const allowlist = [
+    'pnpm test *',
+    'pnpm lint',
+    'git status',
+    'git diff *',
+    './scripts/check.sh *'
+  ];
   const argv = (text: string) => {
     const parsed = parseCommand(text);
     if (!parsed.ok) throw new Error(parsed.reason);
@@ -117,12 +126,14 @@ describe('matchAllowlist', () => {
   };
 
   it.each([
-    ['pnpm test', 'pnpm test'],
-    ['pnpm test -- --run', 'pnpm test'],
-    ['pnpm test src/a.test.ts', 'pnpm test'],
-    ['git diff --stat', 'git diff'],
-    ['./scripts/check.sh --fast', './scripts/check.sh']
-  ])('allows %j by its prefix', (text, entry) => {
+    ['pnpm test', 'pnpm test *'],
+    ['pnpm test -- --run', 'pnpm test *'],
+    ['pnpm test src/a.test.ts', 'pnpm test *'],
+    ['pnpm lint', 'pnpm lint'],
+    ['git status', 'git status'],
+    ['git diff --stat', 'git diff *'],
+    ['./scripts/check.sh --fast', './scripts/check.sh *']
+  ])('allows %j', (text, entry) => {
     expect(matchAllowlist(argv(text), allowlist)).toBe(entry);
   });
 
@@ -140,7 +151,10 @@ describe('matchAllowlist', () => {
     'git push',
     'scripts/check.sh',
     './scripts/check.sh.bak',
-    'node_modules/.bin/vitest'
+    'node_modules/.bin/vitest',
+    // Exact entries take no extra arguments.
+    'pnpm lint --fix',
+    'git status --short'
   ])('refuses the near miss %j', (text) => {
     expect(matchAllowlist(argv(text), allowlist)).toBeNull();
   });
@@ -154,7 +168,15 @@ describe('matchAllowlist', () => {
   it('ignores entries that are not valid commands', () => {
     expect(parseAllowlistEntry('pnpm test | cat')).toBeNull();
     expect(matchAllowlist(['pnpm', 'test'], ['pnpm test | cat'])).toBeNull();
-    expect(parseAllowlistEntry('  pnpm   test ')).toEqual(['pnpm', 'test']);
+    expect(parseAllowlistEntry('  pnpm   test ')).toEqual({
+      words: ['pnpm', 'test'],
+      extra: false
+    });
+    expect(parseAllowlistEntry('pnpm test *')).toEqual({ words: ['pnpm', 'test'], extra: true });
+    // `*` only as the last word, never alone or inside a word.
+    expect(parseAllowlistEntry('*')).toBeNull();
+    expect(parseAllowlistEntry('pnpm * test')).toBeNull();
+    expect(parseAllowlistEntry('pnpm test*')).toBeNull();
   });
 });
 
@@ -190,5 +212,69 @@ describe('truncateMiddle', () => {
     const out = truncateMiddle('x'.repeat(10_000), 500);
     expect(out.length).toBeLessThanOrEqual(500);
     expect(out).toContain('[truncated]');
+  });
+});
+
+describe('deniedArgument', () => {
+  it.each([
+    [['git', '-C', '..', 'status'], '-C'],
+    [['git', '-c', 'alias.x=!sh', 'x'], '-c'],
+    [['git', '--git-dir=/tmp/x', 'status'], '--git-dir=/tmp/x'],
+    [['git', '--work-tree', '/', 'status'], '--work-tree'],
+    [['git', 'diff', '--output=/tmp/x'], '--output=/tmp/x'],
+    [['git', 'diff', '--outp=/tmp/x'], '--outp=/tmp/x'],
+    [['git', 'diff', '-o', 'x'], '-o'],
+    [['git', 'fetch', '--upload-pack=sh'], '--upload-pack=sh'],
+    [['git', 'rebase', '--exec', 'sh'], '--exec'],
+    [['git', '--config-env=core.pager=X', 'log'], '--config-env=core.pager=X'],
+    [['node', '-e', '1'], '-e'],
+    [['node', '-pe', '1'], '-pe'],
+    [['node', '--eval=1'], '--eval=1'],
+    [['node', '--print', '1'], '--print'],
+    [['node', '-r', 'x', 'a.js'], '-r'],
+    [['node', '--import=x', 'a.js'], '--import=x'],
+    [['node', '--experimental-loader', 'x', 'a.js'], '--experimental-loader'],
+    [['pnpm', 'dlx', 'x'], 'dlx'],
+    [['pnpm', 'exec', 'x'], 'exec'],
+    [['npm', 'x', 'y'], 'x'],
+    [['npm', '-g', 'install', 'x'], '-g'],
+    [['yarn', '--cwd=/', 'test'], '--cwd=/'],
+    [['pnpm', '--dir=/', 'test'], '--dir=/'],
+    [['npm', '--prefix', '/', 'test'], '--prefix'],
+    [['npx', 'cowsay'], 'npx'],
+    [['pnpx', 'x'], 'pnpx'],
+    [['bunx', 'x'], 'bunx'],
+    [['/usr/local/bin/npx', 'x'], '/usr/local/bin/npx'],
+    [['C:\\Program Files\\nodejs\\NPX.CMD', 'x'], 'C:\\Program Files\\nodejs\\NPX.CMD'],
+    [['git.exe', '-C', 'x'], '-C']
+  ])('refuses %j at %j', (argv, denied) => {
+    expect(deniedArgument(argv)).toBe(denied);
+  });
+
+  it.each([
+    ['git', 'status', '--short'],
+    ['git', 'diff', '--stat'],
+    ['git', 'log', '-1', '--oneline'],
+    ['node', 'scripts/check.js', '--fast'],
+    ['node', '--version'],
+    ['pnpm', 'test', '--', '-e', 'exec', '--dir'],
+    ['pnpm', 'test', 'src/exec.test.ts'],
+    ['vitest', '-e'],
+    ['cargo', 'test', '-C']
+  ])('allows %j', (...argv) => {
+    expect(deniedArgument(argv)).toBeNull();
+  });
+
+  it('names programs as the table does', () => {
+    expect(programName('/usr/bin/GIT')).toBe('git');
+    expect(programName('C:\\x\\pnpm.cmd')).toBe('pnpm');
+    expect(programName('node.exe')).toBe('node');
+  });
+
+  it('says why a command may not run: off the list first, then a denied option', () => {
+    expect(commandRefusal(['git', 'push'], ['git status'])).toBe('not-allowlisted');
+    expect(commandRefusal(['git', '-C', 'x', 'status'], ['git *'])).toBe('denied-flag');
+    expect(commandRefusal(['npx', 'x'], ['npx *'])).toBe('denied-flag');
+    expect(commandRefusal(['git', 'status'], ['git status'])).toBeNull();
   });
 });

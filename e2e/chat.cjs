@@ -4,7 +4,7 @@
 // as it would on the real site. See e2e/README.md for the manual run on chatgpt.com.
 const fs = require('node:fs');
 const path = require('node:path');
-const { EXT, tempDir, launchApp, launchChrome } = require('./lib.cjs');
+const { EXT, tempDir, launchApp, launchChrome, enterCode } = require('./lib.cjs');
 
 const {
   step,
@@ -70,8 +70,7 @@ const CONV = 'e2e00000-0000-4000-8000-000000000001';
   await panel.goto(`chrome-extension://${extId}/src/sidepanel/index.html`);
   await win.getByRole('button', { name: 'Pair extension' }).click();
   const code = (await win.locator('.pairing-code').innerText()).replace(/\D/g, '');
-  await panel.fill('#pair-code', code);
-  await panel.getByRole('button', { name: 'Pair' }).click();
+  await enterCode(win, panel, code);
   await panel
     .locator('header .status')
     .filter({ hasText: 'Connected' })
@@ -432,6 +431,14 @@ const CONV = 'e2e00000-0000-4000-8000-000000000001';
   );
   step('panel state: ' + JSON.stringify(panelState.session));
 
+  // chrome.storage.local, which content scripts can read: paths, hashes and states only.
+  const stored = JSON.stringify(await sw.evaluate(() => chrome.storage.local.get(null)));
+  for (const content of ['Hello, ${name}', 'export const one', 'regenerated = true']) {
+    if (stored.includes(content)) throw new Error(`file content in chrome.storage: ${content}`);
+  }
+  step(
+    `chrome.storage.local holds no file contents (${stored.length} bytes, keys ${Object.keys(JSON.parse(stored)).join(', ')})`
+  );
   await ctx.close();
   await app.close();
   console.log('E2E OK');

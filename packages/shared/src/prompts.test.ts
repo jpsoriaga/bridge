@@ -47,7 +47,7 @@ describe('buildContextMessage', () => {
     const text = buildContextMessage(
       [{ path: 'a.ts', content: 'a\n' }],
       [{ path: '.env', reason: 'protected file' }]
-    );
+    ).text;
     expect(text).toContain('`@@CONTEXT a.ts@@`');
     expect(text).toContain('Bridge could not send: .env (protected file).');
   });
@@ -181,7 +181,7 @@ const result = {
 
 describe('formatRunResult', () => {
   it('shows the command, how it ended and the output in a fence', () => {
-    expect(formatRunResult(result)).toBe(
+    expect(formatRunResult(result).text).toBe(
       'Output of `pnpm test` (exit 1, 3.2s):\n```text\nFAIL src/a.test.ts\n  expected 1 to be 2\n```'
     );
   });
@@ -192,12 +192,12 @@ describe('formatRunResult', () => {
     [{ status: 'failed', exitCode: null, signal: null }, "couldn't start"],
     [{ status: 'exited', exitCode: null, signal: 'SIGKILL' }, 'ended by SIGKILL, 3.2s']
   ] as const)('says %j', (patch, words) => {
-    expect(formatRunResult({ ...result, ...patch })).toContain(`(${words})`);
+    expect(formatRunResult({ ...result, ...patch }).text).toContain(`(${words})`);
   });
 
   it('cuts long output in the middle and survives backticks in it', () => {
     const output = `start\n${'x\n'.repeat(10_000)}\`\`\`\nend\n`;
-    const text = formatRunResult({ ...result, output }, 500);
+    const { text } = formatRunResult({ ...result, output }, 500);
     expect(text).toContain('[truncated]');
     expect(text).toContain('start');
     expect(text).toContain('end');
@@ -206,7 +206,7 @@ describe('formatRunResult', () => {
   });
 
   it('says when there was no output', () => {
-    expect(formatRunResult({ ...result, output: '' })).toContain('(no output)');
+    expect(formatRunResult({ ...result, output: '' }).text).toContain('(no output)');
   });
 });
 

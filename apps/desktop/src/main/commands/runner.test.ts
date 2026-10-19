@@ -2,7 +2,7 @@ import { readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { argument as escapeArgument, command as escapeCommand } from 'cross-spawn/lib/util/escape';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { RunResult } from '@bridge/shared';
+import { RUN_OUTPUT_CAP_BYTES, type RunResult } from '@bridge/shared';
 import { tempProject } from '../project/test-utils';
 import { cleanOutput, CommandRunner, HeadTail, type RunSpec } from './runner';
 
@@ -192,6 +192,30 @@ describe('CommandRunner', () => {
     expect(result.output.length).toBeLessThan(205 * 1024);
     // Live output stops at the cap too; the end comes with the result.
     expect(chunks.join('').length).toBeLessThan(110 * 1024);
+  });
+
+  it('keeps the main process responsive while a command floods its output', async () => {
+    // About 64 MB as fast as the child can write it.
+    const flood = spec(
+      'const b = Buffer.alloc(1 << 20, 120); let n = 0; (function w() { while (n < 64) { n++; if (!process.stdout.write(b)) return process.stdout.once("drain", w); } process.stdout.write("\\nEND\\n"); })();'
+    );
+    let last = Date.now();
+    let worst = 0;
+    const tick = setInterval(() => {
+      const now = Date.now();
+      worst = Math.max(worst, now - last);
+      last = now;
+    }, 10);
+    const result = await run(flood);
+    clearInterval(tick);
+    expect(result.status).toBe('exited');
+    expect(result.truncated).toBe(true);
+    expect(result.output.length).toBeLessThan(RUN_OUTPUT_CAP_BYTES + 200);
+    expect(result.output.endsWith('END\n')).toBe(true);
+    // Live output stopped at the head; the rest came with the result.
+    expect(chunks.join('').length).toBeLessThan(RUN_OUTPUT_CAP_BYTES);
+    // The event loop kept turning: no timer waited anywhere near a whole second.
+    expect(worst).toBeLessThan(250);
   });
 
   it('reports a program that fails to start', async () => {

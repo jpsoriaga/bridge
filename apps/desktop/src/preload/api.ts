@@ -15,6 +15,14 @@ export interface PairingCode {
   expiresAt: number;
 }
 
+/**
+ * Pairing in progress: the code to type into the extension, then the fingerprint both
+ * sides show, which the user confirms here (then in the extension).
+ */
+export type PairingState =
+  | ({ phase: 'code' } & PairingCode)
+  | { phase: 'compare'; fingerprint: string; expiresAt: number; confirmed: boolean };
+
 /** Everything the renderer shows about the server and pairing. */
 export interface DesktopState {
   /** `connecting` here means paired and waiting for the extension. */
@@ -22,7 +30,7 @@ export interface DesktopState {
   paired: boolean;
   /** The port the server is bound to, or null if it isn't running. */
   port: number | null;
-  pairing: PairingCode | null;
+  pairing: PairingState | null;
   /** Epoch ms until which `/pair` refuses codes after too many wrong ones, or null. */
   lockedUntil: number | null;
   /** The open project folder, or null. */
@@ -40,6 +48,8 @@ export interface DesktopState {
   allowlist: string[] | null;
   /** Suggested entries from the project's package.json, shown until it's confirmed. */
   allowlistSuggestions: string[];
+  /** Saved entries were moved to exact matching (`*` added); Settings says so once. */
+  allowlistNote: boolean;
   defaultGatedPatterns: readonly string[];
   gatedPatterns: string[];
   defaultEnvPatterns: readonly string[];
@@ -161,6 +171,10 @@ export interface BridgeApi {
   /** Returns an unsubscribe function. */
   onStatus(listener: (state: DesktopState) => void): () => void;
   startPairing(): Promise<PairingCode>;
+  /** The fingerprints match: the extension may now finish pairing. */
+  confirmPairing(): Promise<boolean>;
+  /** Drops the code or the fingerprint check in progress. */
+  cancelPairing(): Promise<void>;
   unpair(): Promise<void>;
   /** Shows the native folder picker. The renderer never passes a path. */
   openFolder(): Promise<OpenFolderResult>;
@@ -200,6 +214,8 @@ export interface BridgeApi {
   /** Asks in a native dialog, then deletes every backup for the project. */
   clearBackups(): Promise<boolean>;
   setOnboardingDismissed(dismissed: boolean): Promise<void>;
+  /** The one-time note about exact-match allowlist entries was read. */
+  dismissAllowlistNote(): Promise<void>;
   /** Menu items that act in the window. Returns an unsubscribe function. */
   onMenu(listener: (action: MenuAction) => void): () => void;
 }
@@ -209,6 +225,8 @@ export const IPC = {
   getStatus: 'bridge:get-status',
   status: 'bridge:status',
   startPairing: 'bridge:start-pairing',
+  confirmPairing: 'bridge:confirm-pairing',
+  cancelPairing: 'bridge:cancel-pairing',
   unpair: 'bridge:unpair',
   openFolder: 'bridge:open-folder',
   openRecent: 'bridge:open-recent',
@@ -233,5 +251,6 @@ export const IPC = {
   openBackupsFolder: 'bridge:open-backups-folder',
   clearBackups: 'bridge:clear-backups',
   setOnboardingDismissed: 'bridge:set-onboarding-dismissed',
+  dismissAllowlistNote: 'bridge:dismiss-allowlist-note',
   menu: 'bridge:menu'
 } as const;

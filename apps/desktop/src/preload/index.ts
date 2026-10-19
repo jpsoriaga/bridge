@@ -29,6 +29,8 @@ const api: BridgeApi = {
     };
   },
   startPairing: () => ipcRenderer.invoke(IPC.startPairing) as Promise<PairingCode>,
+  confirmPairing: () => ipcRenderer.invoke(IPC.confirmPairing) as Promise<boolean>,
+  cancelPairing: () => ipcRenderer.invoke(IPC.cancelPairing) as Promise<void>,
   unpair: () => ipcRenderer.invoke(IPC.unpair) as Promise<void>,
   openFolder: () => ipcRenderer.invoke(IPC.openFolder) as Promise<OpenFolderResult>,
   openRecent: (index) => ipcRenderer.invoke(IPC.openRecent, index) as Promise<OpenFolderResult>,
@@ -73,6 +75,7 @@ const api: BridgeApi = {
   clearBackups: () => ipcRenderer.invoke(IPC.clearBackups) as Promise<boolean>,
   setOnboardingDismissed: (dismissed) =>
     ipcRenderer.invoke(IPC.setOnboardingDismissed, dismissed) as Promise<void>,
+  dismissAllowlistNote: () => ipcRenderer.invoke(IPC.dismissAllowlistNote) as Promise<void>,
   onMenu: (listener) => {
     const handler = (_event: IpcRendererEvent, action: MenuAction) => listener(action);
     ipcRenderer.on(IPC.menu, handler);

@@ -40,6 +40,7 @@ const BLOCKING: ReadonlySet<string> = new Set<FileErrorCode>([
   'traversal',
   'denied',
   'outside-root',
+  'hardlink',
   'not-a-file',
   'binary',
   'too-large',

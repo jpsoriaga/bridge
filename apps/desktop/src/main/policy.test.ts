@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { FileRequest, Mode } from '@bridge/shared';
+import { PROTOCOL_VERSION, type FileRequest, type Mode } from '@bridge/shared';
 import {
   changeRefusal,
   GatedFiles,
@@ -132,7 +132,7 @@ describe('changeRefusal', () => {
       () => 'full-auto',
       () => gated
     );
-    const base = { v: 4 as const, id: '1' };
+    const base = { v: PROTOCOL_VERSION as typeof PROTOCOL_VERSION, id: '1' };
     await files({
       ...base,
       type: 'delete',
@@ -167,7 +167,7 @@ describe('guardedFiles', () => {
       () => new GatedFiles()
     );
     const write = (path: string, trigger: 'click' | 'auto'): FileRequest => ({
-      v: 4,
+      v: PROTOCOL_VERSION,
       id: '1',
       type: 'write',
       payload: { path, content: 'x', trigger }
@@ -181,9 +181,9 @@ describe('guardedFiles', () => {
 
     expect(await files(write('a.ts', 'auto'))).toEqual({ ok: true, result: {} });
     expect(await files(write('package.json', 'click'))).toEqual({ ok: true, result: {} });
-    expect(await files({ v: 4, id: '2', type: 'read', payload: { path: 'package.json' } })).toEqual(
-      { ok: true, result: {} }
-    );
+    expect(
+      await files({ v: PROTOCOL_VERSION, id: '2', type: 'read', payload: { path: 'package.json' } })
+    ).toEqual({ ok: true, result: {} });
     expect(handle).toHaveBeenCalledTimes(3);
   });
 });

@@ -1,4 +1,4 @@
-import { proofInput } from '@bridge/shared';
+import { FINGERPRINT_LABEL, formatFingerprint, PAIR_KEY_LABEL, proofInput } from '@bridge/shared';
 
 // Web Crypto, so this runs unchanged in the service worker and in Node tests.
 
@@ -49,4 +49,63 @@ export async function verifyProof(
 ): Promise<boolean> {
   const key = await importKey(tokenHash, 'verify');
   return crypto.subtle.verify('HMAC', key, fromHex(proof), encoder.encode(proofInput(...args)));
+}
+
+function base64url(bytes: ArrayBuffer | Uint8Array): string {
+  let binary = '';
+  for (const b of new Uint8Array(bytes)) binary += String.fromCharCode(b);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function fromBase64url(text: string): Uint8Array<ArrayBuffer> {
+  const binary = atob(text.replace(/-/g, '+').replace(/_/g, '/'));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+async function sha256(...parts: (string | ArrayBuffer)[]): Promise<ArrayBuffer> {
+  const chunks = parts.map((p) => (typeof p === 'string' ? encoder.encode(p) : new Uint8Array(p)));
+  const all = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+  let at = 0;
+  for (const chunk of chunks) {
+    all.set(chunk, at);
+    at += chunk.length;
+  }
+  return crypto.subtle.digest('SHA-256', all);
+}
+
+/** A one-time P-256 key pair for pairing, and its public key as the app expects it. */
+export async function pairingKeyPair(): Promise<{ privateKey: CryptoKey; publicKey: string }> {
+  const pair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, false, [
+    'deriveBits'
+  ]);
+  return {
+    privateKey: pair.privateKey,
+    publicKey: base64url(await crypto.subtle.exportKey('raw', pair.publicKey))
+  };
+}
+
+/**
+ * The pairing key (hex), the nonce both pairing proofs sign, and the fingerprint, from
+ * the ECDH secret with the app's key and the transcript. The app computes the same.
+ */
+export async function derivePairing(
+  privateKey: CryptoKey,
+  serverKey: string,
+  transcript: string
+): Promise<{ key: string; nonce: string; fingerprint: string }> {
+  const server = await crypto.subtle.importKey(
+    'raw',
+    fromBase64url(serverKey),
+    { name: 'ECDH', namedCurve: 'P-256' },
+    false,
+    []
+  );
+  const shared = await crypto.subtle.deriveBits({ name: 'ECDH', public: server }, privateKey, 256);
+  return {
+    key: toHex(await sha256(PAIR_KEY_LABEL, shared, transcript)),
+    nonce: toHex(await sha256(transcript)),
+    fingerprint: formatFingerprint(toHex(await sha256(FINGERPRINT_LABEL, transcript)))
+  };
 }

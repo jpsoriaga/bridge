@@ -48,12 +48,15 @@ import { isUsablePath, loginEnvOnce, withPath, type LoginEnv } from './commands/
 import { CommandRunner } from './commands/runner';
 import { CommandService } from './commands/service';
 import { suggestAllowlist } from './commands/suggest';
+import { guardIpc, type IpcChannel } from './ipc';
+import { lockDownContents, lockDownSession } from './lockdown';
+import { securePrivateData } from './perms';
 import { DEFAULT_GATED_FILES, GatedFiles, guardedFiles, ModeState } from './policy';
 import { DEFAULT_DENYLIST } from './project/sandbox';
 import { ProjectService } from './project/service';
 import { Pairing } from './server/pairing';
 import { createBridgeServer, type BridgeServer } from './server/server';
-import { fileTokenStore } from './server/token-store';
+import { fileTokenStore, loadServerKey } from './server/token-store';
 import {
   isValidAllowlist,
   isValidDenyPattern,
@@ -142,7 +145,7 @@ function desktopState(): DesktopState {
           : 'connecting',
     paired: pairing.isPaired,
     port: server.port,
-    pairing: pairing.pendingCode,
+    pairing: pairing.state,
     lockedUntil: lockedFor > 0 ? Date.now() + lockedFor : null,
     project: projects.project,
     recentProjects: projects.recentProjects,
@@ -152,6 +155,7 @@ function desktopState(): DesktopState {
     sessionResets: modes.sessionResets,
     allowlist: confirmed,
     allowlistSuggestions: confirmed === null ? suggestions : [],
+    allowlistNote: saved.allowlistNote,
     defaultGatedPatterns: DEFAULT_GATED_FILES,
     gatedPatterns: saved.gatedPatterns,
     defaultEnvPatterns: DEFAULT_ENV_DENYLIST,
@@ -323,18 +327,21 @@ function projectChanged(): void {
   configChanged();
 }
 
-/** Only our own window's top frame may call in. Arguments are untrusted until checked. */
-function handle<T>(channel: string, fn: (...args: unknown[]) => T): void {
-  ipcMain.handle(channel, (event: IpcMainInvokeEvent, ...args: unknown[]) => {
-    if (!mainWindow || event.sender !== mainWindow.webContents) {
-      throw new Error('Unknown sender');
-    }
-    if (event.senderFrame !== mainWindow.webContents.mainFrame) {
-      throw new Error('Unknown frame');
-    }
-    return fn(...args);
-  });
+/**
+ * Only our own window's top frame may call in, and only with arguments of the channel's
+ * shape (`IPC_ARGS`). Handlers still check what the arguments mean.
+ */
+function handle<T>(channel: (typeof IPC)[IpcChannel], fn: (...args: unknown[]) => T): void {
+  const name = (Object.keys(IPC) as IpcChannel[]).find((key) => IPC[key] === channel)!;
+  const guarded = guardIpc(name, ownFrame, fn);
+  ipcMain.handle(channel, (event: IpcMainInvokeEvent, ...args: unknown[]) =>
+    guarded(event, ...args)
+  );
 }
+
+/** The app window's contents and top frame: the only caller IPC accepts. */
+const ownFrame = () =>
+  mainWindow ? { sender: mainWindow.webContents, frame: mainWindow.webContents.mainFrame } : null;
 
 async function openFolder(): Promise<OpenFolderResult> {
   if (!mainWindow) return { ok: false, reason: 'cancelled' };
@@ -419,6 +426,15 @@ function registerIpc(): void {
     expiryTimer = setTimeout(broadcast, code.expiresAt - Date.now() + 50);
     broadcast();
     return code;
+  });
+  handle(IPC.confirmPairing, () => {
+    const confirmed = pairing.confirmFingerprint();
+    broadcast();
+    return confirmed;
+  });
+  handle(IPC.cancelPairing, () => {
+    pairing.cancelPairing();
+    broadcast();
   });
   handle(IPC.unpair, () => {
     server.unpair();
@@ -555,11 +571,19 @@ function registerIpc(): void {
     settings.update({ onboardingDismissed: dismissed });
     broadcast();
   });
+  handle(IPC.dismissAllowlistNote, () => {
+    settings.update({ allowlistNote: false });
+    broadcast();
+  });
 }
 
 async function startServer(): Promise<void> {
   const userData = app.getPath('userData');
+  // userData, the pairing key, settings and backups: private to the user (POSIX).
+  await securePrivateData(userData).catch(() => []);
   settings = settingsFile(join(userData, 'settings.json'));
+  // Saves any one-time migration (allowlist entries to exact matching) right away.
+  settings.update({});
   void loginEnv().then((result) => {
     login = result;
     broadcast();
@@ -623,7 +647,10 @@ async function startServer(): Promise<void> {
   await projects.restore();
   // A project folder can vanish without an event (an unmounted disk): check now and then.
   setInterval(() => void projects.checkRoot(), 5_000).unref();
-  pairing = new Pairing({ store: fileTokenStore(join(userData, 'pairing.json'), safeStorage) });
+  pairing = new Pairing({
+    store: fileTokenStore(join(userData, 'pairing.json'), safeStorage),
+    serverKey: loadServerKey(join(userData, 'server-key.json'), safeStorage)
+  });
   server = createBridgeServer({
     pairing,
     version: app.getVersion(),
@@ -721,13 +748,8 @@ function createWindow(): void {
     if (mainWindow === window) mainWindow = null;
   });
 
-  // Never open new windows or navigate away from the app. https links go to the browser.
-  window.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('https://')) void shell.openExternal(url);
-    return { action: 'deny' };
-  });
-  window.webContents.on('will-navigate', (event) => event.preventDefault());
-
+  // Navigation, new windows and webviews are refused for every web contents
+  // (`web-contents-created` below), this window's included.
   if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
     void window.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
@@ -745,6 +767,13 @@ app.on('second-instance', () => {
   mainWindow.focus();
 });
 
+// Every renderer runs in the Chromium sandbox, whatever a window's own options say.
+app.enableSandbox();
+// No web contents may navigate away, open a window or attach a <webview>.
+app.on('web-contents-created', (_event, contents) =>
+  lockDownContents(contents, (url) => void shell.openExternal(url))
+);
+
 app.setAboutPanelOptions({
   applicationName: 'Bridge',
   applicationVersion: app.getVersion(),
@@ -754,10 +783,9 @@ app.setAboutPanelOptions({
 
 void app.whenReady().then(async () => {
   if (!primary) return;
-  // The renderer needs no camera, notifications, etc.
-  session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) =>
-    callback(false)
-  );
+  // The renderer needs no camera, notifications, clipboard, etc.: every request and
+  // check is refused.
+  lockDownSession(session.defaultSession);
 
   // safeStorage needs the app to be ready, so the server starts here.
   await startServer();

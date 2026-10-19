@@ -20,7 +20,7 @@ let pathEnv: string;
 beforeEach(() => {
   t = tempProject('bridge-commands-');
   mode = 'manual';
-  allowlist = ['node -e', 'git status'];
+  allowlist = ['node *', 'git status'];
   exits = [];
   refused = [];
   pathEnv = dirname(process.execPath);
@@ -50,6 +50,14 @@ async function finished(): Promise<RunResult> {
   throw new Error('no exit');
 }
 
+/** A script outside the project for `node` to run (`node -e` is never allowed). */
+function script(name: string, source: string): string {
+  const path = join(t.base, 'scripts', name);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, source);
+  return path;
+}
+
 const code = async (argv: string[], trigger: 'click' | 'auto' = 'click') => {
   const outcome = await service.run({ argv, trigger });
   return outcome.ok ? 'ok' : outcome.error.code;
@@ -60,8 +68,10 @@ describe('CommandService', () => {
     const outcome = await service.run({
       argv: [
         'node',
-        '-e',
-        'console.log(process.cwd(), process.env.SECRET_TOKEN || "-", process.env.CI)'
+        script(
+          'env.js',
+          'console.log(process.cwd(), process.env.SECRET_TOKEN || "-", process.env.CI)'
+        )
       ],
       trigger: 'click'
     });
@@ -71,7 +81,7 @@ describe('CommandService', () => {
   });
 
   it('refuses a command that isn’t allowlisted, even on a click', async () => {
-    expect(await code(['node', '--version'])).toBe('not-allowlisted');
+    expect(await code(['npm', '--version'])).toBe('not-allowlisted');
     expect(await code(['git', 'push'])).toBe('not-allowlisted');
     expect(await code(['git', 'statusx'])).toBe('not-allowlisted');
     expect(await code(['rm', '-rf', '/'])).toBe('not-allowlisted');
@@ -79,7 +89,7 @@ describe('CommandService', () => {
   });
 
   it('refuses an automatic run unless the mode is Full auto', async () => {
-    const argv = ['node', '-e', '1'];
+    const argv = ['node', script('one.js', '')];
     mode = 'manual';
     expect(await code(argv, 'auto')).toBe('mode');
     mode = 'auto-apply';
@@ -90,8 +100,8 @@ describe('CommandService', () => {
   });
 
   it('re-checks every word, whatever the extension sent', async () => {
-    allowlist = ['node'];
-    expect(await code(['node', '-e', '$(id)'])).toBe('invalid-command');
+    allowlist = ['node *'];
+    expect(await code(['node', '$(id)'])).toBe('invalid-command');
     expect(await code(['node', 'a\nb'])).toBe('invalid-command');
     expect(await code(['node', '*.js'])).toBe('invalid-command');
     expect(await code(['FOO=1', 'node'])).toBe('invalid-command');
@@ -99,21 +109,48 @@ describe('CommandService', () => {
   });
 
   it('runs one command at a time', async () => {
-    expect(await code(['node', '-e', 'setTimeout(() => {}, 3000)'])).toBe('ok');
-    expect(await code(['node', '-e', '1'])).toBe('busy');
+    expect(await code(['node', script('wait.js', 'setTimeout(() => {}, 3000)')])).toBe('ok');
+    expect(await code(['node', script('one.js', '')])).toBe('busy');
     runner.cancelAll();
     expect((await finished()).status).toBe('cancelled');
   });
 
   it('cancels by run id', async () => {
     const outcome = await service.run({
-      argv: ['node', '-e', 'setInterval(() => {}, 1000)'],
+      argv: ['node', script('forever.js', 'setInterval(() => {}, 1000)')],
       trigger: 'click'
     });
     if (!outcome.ok) throw new Error(outcome.error.code);
     expect(service.cancel('other')).toMatchObject({ ok: false, error: { code: 'unknown-run' } });
     expect(service.cancel(outcome.result.runId)).toEqual({ ok: true, result: { cancelled: true } });
     expect((await finished()).status).toBe('cancelled');
+  });
+
+  it('matches entries exactly unless they end in *', async () => {
+    allowlist = ['git status', 'git diff *'];
+    expect(await code(['git', 'status', '--short'])).toBe('not-allowlisted');
+    expect(await code(['git', 'diff', '--stat'])).not.toBe('not-allowlisted');
+    expect(await code(['git', 'diffx'])).toBe('not-allowlisted');
+  });
+
+  it('refuses denied options even under *, and npx entirely', async () => {
+    allowlist = ['node *', 'git *', 'npx *', 'pnpm *'];
+    for (const argv of [
+      ['node', '-e', '1'],
+      ['node', '--eval=1'],
+      ['node', '-pe', '1'],
+      ['node', '--require', 'x', script('one.js', '')],
+      ['git', '-C', '..', 'status'],
+      ['git', 'diff', '--output=x'],
+      ['git', 'diff', '--outp=x'],
+      ['git', '-c', 'core.pager=sh', 'log'],
+      ['npx', 'cowsay'],
+      ['pnpm', 'dlx', 'cowsay'],
+      ['pnpm', '--dir', '/', 'test']
+    ]) {
+      expect(await code(argv), argv.join(' ')).toBe('denied-flag');
+    }
+    expect(refused.every((r) => r.code === 'denied-flag')).toBe(true);
   });
 
   it('refuses a program that resolves into the project', async () => {

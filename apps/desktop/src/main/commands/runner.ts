@@ -11,6 +11,12 @@ export const KILL_GRACE_MS = 2_000;
 export const DRAIN_MS = 1_000;
 /** Live output is batched this long before it's sent. */
 export const FLUSH_MS = 100;
+/**
+ * Bytes a stream may deliver in one turn of the event loop before it's paused until the
+ * next. Past that the child blocks on its full pipe: real backpressure, so a command that
+ * prints without end never starves the socket, IPC or the window.
+ */
+export const TURN_BUDGET_BYTES = 256 * 1024;
 
 /** CSI, OSC and two-character escape sequences. */
 // eslint-disable-next-line no-control-regex
@@ -145,8 +151,17 @@ export class CommandRunner {
         this.events.onOutput(runId, chunk);
       }
     };
-    const onData = (stream: 0 | 1) => (data: Buffer) => {
+    const budget = [0, 0];
+    const onData = (stream: 0 | 1, source: NodeJS.ReadableStream) => (data: Buffer) => {
       output.push(data);
+      budget[stream]! += data.length;
+      if (budget[stream]! >= TURN_BUDGET_BYTES && !source.isPaused()) {
+        source.pause();
+        setImmediate(() => {
+          budget[stream] = 0;
+          if (!done) source.resume();
+        });
+      }
       if (!streaming) return;
       const room = RUN_OUTPUT_CAP_BYTES / 2 - streamed;
       const part = data.length > room ? data.subarray(0, room) : data;
@@ -214,8 +229,8 @@ export class CommandRunner {
     };
     this.events.onChange?.();
 
-    child.stdout?.on('data', onData(0));
-    child.stderr?.on('data', onData(1));
+    if (child.stdout) child.stdout.on('data', onData(0, child.stdout));
+    if (child.stderr) child.stderr.on('data', onData(1, child.stderr));
     child.once('error', () => settle('failed'));
     child.once('exit', (code, sig) => {
       exited = true;

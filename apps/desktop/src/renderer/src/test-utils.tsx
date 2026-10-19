@@ -26,6 +26,7 @@ export function makeState(overrides: Partial<DesktopState> = {}): DesktopState {
     allowlist: ['pnpm test'],
     allowlistSuggestions: [],
     sessionResets: 0,
+    allowlistNote: false,
     defaultGatedPatterns: ['package.json'],
     gatedPatterns: [],
     defaultEnvPatterns: ['*TOKEN*'],
@@ -100,6 +101,9 @@ export function installBridge(initial: DesktopState = makeState(), activity: Act
     openBackupsFolder: vi.fn(async () => true),
     clearBackups: vi.fn(async () => true),
     setOnboardingDismissed: vi.fn(async () => undefined),
+    confirmPairing: vi.fn(async () => true),
+    cancelPairing: vi.fn(async () => undefined),
+    dismissAllowlistNote: vi.fn(async () => undefined),
     onMenu: vi.fn((listener: (action: MenuAction) => void) => {
       menuListener = listener;
       return () => (menuListener = null);

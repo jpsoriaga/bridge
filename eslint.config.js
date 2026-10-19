@@ -26,8 +26,9 @@ export default tseslint.config(
     languageOptions: { globals: { ...globals.webextensions } }
   },
   {
-    // Manual Playwright scripts (e2e/README.md). `chrome` appears inside page callbacks.
-    files: ['e2e/**/*.cjs'],
+    // Manual Playwright scripts (e2e/README.md; `chrome` appears inside page callbacks), and
+    // the desktop's build scripts (fuses).
+    files: ['e2e/**/*.cjs', 'apps/desktop/scripts/**/*.cjs'],
     languageOptions: {
       sourceType: 'commonjs',
       globals: { ...globals.node, ...globals.browser, ...globals.webextensions }

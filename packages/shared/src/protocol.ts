@@ -19,7 +19,7 @@ import { LoopReport, MAX_STEP_LIMIT } from './loop';
 import { MODES } from './types';
 
 /** Bumped when a message shape changes incompatibly. Both sides reject other versions. */
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 /** The desktop listens on the first free port in `DEFAULT_PORT .. DEFAULT_PORT + PORT_RANGE - 1`. */
 export const DEFAULT_PORT = 47821;
@@ -38,10 +38,13 @@ export const BRIDGE_EXTENSION_ID = 'golkpkmancgpgkpfjggoimedcogghhip';
 export const PAIRING_CODE_LENGTH = 6;
 export const PairingCode = z.string().regex(/^\d{6}$/);
 const hex32 = z.string().regex(/^[0-9a-f]{64}$/);
-/** 32 random bytes, hex encoded. Only ever sent once, in the `/pair` response. */
-export const Token = hex32;
-/** SHA-256 of the token, hex. Both sides keep this; it is the HMAC key for every proof. */
+/**
+ * The pairing key, hex: 32 bytes both sides derive from an ECDH exchange while pairing
+ * (`pairKeyInput`). It never crosses the wire; it is the HMAC key for every proof.
+ */
 export const TokenHash = hex32;
+/** An uncompressed P-256 public key (65 bytes, 0x04‖x‖y), base64url without padding. */
+export const PublicKey = z.string().regex(/^B[A-P][A-Za-z0-9_-]{85}$/);
 /** 32 random bytes, hex. Single use. */
 export const Nonce = hex32;
 /** HMAC-SHA256, hex. See `proofInput`. */
@@ -55,11 +58,35 @@ export const Proof = hex32;
  */
 export function proofInput(
   role: 'server' | 'client',
-  purpose: 'ws' | 'unpair',
+  purpose: 'ws' | 'unpair' | 'pair',
   port: number,
   nonce: string
 ): string {
   return `bridge/v${PROTOCOL_VERSION}/${role}/${purpose}/${port}/${nonce}`;
+}
+
+/**
+ * What a pairing binds together: the port the extension dialled, the code, and both
+ * public keys. A process relaying or squatting a port changes at least one of them, so
+ * its fingerprint can't match the app's.
+ */
+export function pairTranscript(
+  port: number,
+  code: string,
+  serverKey: string,
+  clientKey: string
+): string {
+  return `bridge/v${PROTOCOL_VERSION}/pair/${port}/${code}/${serverKey}/${clientKey}`;
+}
+
+/** Label hashed in front of the ECDH secret and the transcript to make the pairing key. */
+export const PAIR_KEY_LABEL = `bridge/v${PROTOCOL_VERSION}/key/`;
+/** Label hashed in front of the transcript for the fingerprint. */
+export const FINGERPRINT_LABEL = `bridge/v${PROTOCOL_VERSION}/fingerprint/`;
+
+/** The first 4 bytes of the fingerprint hash, as the two sides show it: `a1b2 c3d4`. */
+export function formatFingerprint(hashHex: string): string {
+  return `${hashHex.slice(0, 4)} ${hashHex.slice(4, 8)}`;
 }
 
 // HTTP
@@ -70,14 +97,32 @@ export const HealthResponse = z.strictObject({
 });
 export type HealthResponse = z.infer<typeof HealthResponse>;
 
-export const PairRequest = z.strictObject({ code: PairingCode });
+/** Step 1 of pairing: the code, and the extension's one-time ECDH public key. */
+export const PairRequest = z.strictObject({ code: PairingCode, publicKey: PublicKey });
 export type PairRequest = z.infer<typeof PairRequest>;
 
-export const PairSuccess = z.strictObject({ token: Token });
+/**
+ * The app's public key, and its proof over the transcript (`proofInput('server', 'pair',
+ * port, sha256(transcript))`) that it derived the same key. Nothing is stored yet: both
+ * sides show the fingerprint, and the user confirms it in the app, then in the extension.
+ */
+export const PairSuccess = z.strictObject({ publicKey: PublicKey, proof: Proof });
 export type PairSuccess = z.infer<typeof PairSuccess>;
 
+/** Step 2: the extension's proof over the same transcript hash, after the user confirmed. */
+export const PairConfirmRequest = z.strictObject({ proof: Proof });
+export type PairConfirmRequest = z.infer<typeof PairConfirmRequest>;
+
 export const PairFailure = z.strictObject({
-  error: z.enum(['invalid_request', 'invalid_code', 'locked']),
+  error: z.enum([
+    'invalid_request',
+    'invalid_code',
+    'locked',
+    /** `/pair/confirm` before the user confirmed the fingerprint in the app. */
+    'not_confirmed',
+    /** No pairing waiting: it expired, was cancelled, or the proof was wrong. */
+    'no_pairing'
+  ]),
   retryAfterMs: z.number().int().nonnegative().optional()
 });
 export type PairFailure = z.infer<typeof PairFailure>;

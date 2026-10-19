@@ -108,6 +108,8 @@ interface Step {
   runs: FollowUpRun[];
   runIndex: number;
   message: string | null;
+  /** Likely secrets the follow-up had replaced with `[redacted]`. */
+  redacted: number;
   /** Set once the message is in the composer: user turns before the send. */
   sentFrom: number | null;
 }
@@ -206,6 +208,7 @@ export class FullAutoLoop {
       runs: [],
       runIndex: 0,
       message: null,
+      redacted: 0,
       sentFrom: null
     };
     this.set('acting');
@@ -433,6 +436,7 @@ export class FullAutoLoop {
         return;
       }
       step.message = built.text;
+      step.redacted = built.redacted;
       step.phase = 'send';
     }
 
@@ -519,7 +523,11 @@ export class FullAutoLoop {
     this.reason = undefined;
     this.set('waiting-reply', {
       kind: 'sent',
-      text: `Sent message ${this.step} of ${this.limit}.`
+      // Redactions don't stop the send; the log says how many.
+      text:
+        step.redacted > 0
+          ? `Sent message ${this.step} of ${this.limit}, with ${step.redacted} likely ${step.redacted === 1 ? 'secret' : 'secrets'} redacted.`
+          : `Sent message ${this.step} of ${this.limit}.`
     });
   }
 

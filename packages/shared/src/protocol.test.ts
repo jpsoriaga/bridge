@@ -272,17 +272,27 @@ describe('server messages', () => {
 
 describe('HTTP bodies', () => {
   it('validates pair requests', () => {
-    expect(PairRequest.safeParse({ code: '012345' }).success).toBe(true);
+    const publicKey = `B${'A'}${'x'.repeat(85)}`;
+    expect(PairRequest.safeParse({ code: '012345', publicKey }).success).toBe(true);
     for (const code of ['12345', '1234567', '12a456', ' 123456', 123456]) {
-      expect(PairRequest.safeParse({ code }).success).toBe(false);
+      expect(PairRequest.safeParse({ code, publicKey }).success).toBe(false);
     }
-    expect(PairRequest.safeParse({ code: '123456', extra: true }).success).toBe(false);
+    expect(PairRequest.safeParse({ code: '123456' }).success).toBe(false);
+    // Not an uncompressed point: wrong first byte, length or alphabet.
+    for (const bad of [`C${'A'.repeat(86)}`, `BA${'x'.repeat(84)}`, `BA${'+'.repeat(85)}`]) {
+      expect(PairRequest.safeParse({ code: '123456', publicKey: bad }).success).toBe(false);
+    }
+    expect(PairRequest.safeParse({ code: '123456', publicKey, extra: true }).success).toBe(false);
   });
 
   it('validates pair responses', () => {
-    expect(PairSuccess.safeParse({ token }).success).toBe(true);
-    expect(PairSuccess.safeParse({ token: 'short' }).success).toBe(false);
+    const publicKey = `BP${'x'.repeat(85)}`;
+    expect(PairSuccess.safeParse({ publicKey, proof: 'a'.repeat(64) }).success).toBe(true);
+    // The old response carried a token; it's gone.
+    expect(PairSuccess.safeParse({ token: 'a'.repeat(64) }).success).toBe(false);
+    expect(PairSuccess.safeParse({ publicKey, proof: 'short' }).success).toBe(false);
     expect(PairFailure.safeParse({ error: 'locked', retryAfterMs: 1000 }).success).toBe(true);
+    expect(PairFailure.safeParse({ error: 'not_confirmed' }).success).toBe(true);
     expect(PairFailure.safeParse({ error: 'other' }).success).toBe(false);
   });
 

@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+# Read-only token: CI never writes to the repository.
+permissions:
+  contents: read
+
 jobs:
   check:
     runs-on: ${{ matrix.os }}
@@ -14,18 +18,64 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
-      - uses: actions/checkout@v4
+      # Actions are pinned to commit SHAs (the tag in the comment); Dependabot bumps them.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
           cache: pnpm
 
+      # Only electron and esbuild may run install scripts (`pnpm.onlyBuiltDependencies`).
       - run: pnpm install --frozen-lockfile
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm typecheck
-      - run: pnpm test
+      # Built first, so the tests check the CSP of the HTML that ships.
       - run: pnpm build
+      # Fails below the coverage thresholds in vitest.config.ts.
+      - run: pnpm test:coverage
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      # Runtime dependencies only; fails on high or critical advisories.
+      - run: pnpm audit --prod --audit-level high
+
+  e2e:
+    # The stand-in scripts (e2e/README.md) against the built app and extension, headless
+    # Chrome, and Electron under a virtual display.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: npm ci --prefix e2e
+      - run: npx --prefix e2e playwright-core install --with-deps chromium
+      # Electron's sandbox needs unprivileged user namespaces, which Ubuntu's AppArmor
+      # restricts by default on runners.
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: xvfb-run -a node e2e/run.cjs .
+      - run: xvfb-run -a node e2e/project.cjs .
+      - run: xvfb-run -a node e2e/chat.cjs .
+      - run: xvfb-run -a node e2e/phase6.cjs .
+      - run: xvfb-run -a node e2e/sessions.cjs .
+      - run: xvfb-run -a node e2e/stale.cjs .

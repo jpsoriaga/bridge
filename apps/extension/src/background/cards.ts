@@ -39,10 +39,16 @@ export class CardStore {
     return found;
   }
 
+  /**
+   * Saves a card's state. Only the schema's fields (state, path, op id, counts, times) are
+   * ever stored: never file contents, diffs or keys. Anything else is refused.
+   */
   set(key: string, record: CardRecord): Promise<void> {
+    const parsed = CardRecord.safeParse(record);
+    if (!parsed.success) return Promise.resolve();
     return this.serial.run(async () => {
       const records = this.pruned(await this.load());
-      records[key] = record;
+      records[key] = parsed.data;
       await this.area.set(STORAGE_KEY, records);
     });
   }

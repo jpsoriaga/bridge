@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { createServer as createHttpServer } from 'node:http';
 import { createServer as createNetServer, type AddressInfo } from 'node:net';
 import fastifyWebsocket from '@fastify/websocket';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
@@ -7,6 +8,7 @@ import {
   ClientMessage,
   CloseCode,
   FILE_ERROR_MESSAGES,
+  PairConfirmRequest,
   PairRequest,
   UnpairChallengeRequest,
   UnpairRequest,
@@ -28,10 +30,13 @@ import {
   AUTH_TIMEOUT_MS,
   BODY_LIMIT_BYTES,
   HOST,
+  HTTP_REQUEST_TIMEOUT_MS,
   IDLE_TIMEOUT_MS,
+  MAX_CONNECTIONS,
   MAX_WS_PAYLOAD_BYTES,
   NONCE_LEDGER_MAX,
   NONCE_TTL_MS,
+  OP_RATE_LIMITS,
   RATE_LIMIT,
   UNPAIR_CHALLENGE_TTL_MS
 } from './config';
@@ -64,6 +69,10 @@ export interface BridgeServerOptions {
   idleTimeoutMs?: number;
   now?: () => number;
   rateLimit?: { messages: number; windowMs: number };
+  /** Requests of each kind per second, per socket. */
+  opRateLimits?: Readonly<Record<string, number>>;
+  maxConnections?: number;
+  httpTimeoutMs?: number;
 }
 
 export type BridgeServer = ReturnType<typeof createBridgeServer>;
@@ -118,16 +127,38 @@ export function createBridgeServer(options: BridgeServerOptions) {
     authTimeoutMs = AUTH_TIMEOUT_MS,
     idleTimeoutMs = IDLE_TIMEOUT_MS,
     rateLimit = RATE_LIMIT,
+    opRateLimits = OP_RATE_LIMITS as Readonly<Record<string, number>>,
+    maxConnections = MAX_CONNECTIONS,
+    httpTimeoutMs = HTTP_REQUEST_TIMEOUT_MS,
     now = Date.now
   } = options;
 
   let port: number | null = null;
   const sessions = new Set<WebSocket>();
+  /** Every open socket, authenticated or not, for the connection limit. */
+  const open = new Set<WebSocket>();
   // Client nonces from hello and /unpair/challenge, so neither can be replayed.
   const clientNonces = new NonceLedger(NONCE_TTL_MS, NONCE_LEDGER_MAX, now);
   const unpairNonces = new IssuedNonces(UNPAIR_CHALLENGE_TTL_MS, 16, now);
 
-  const app = Fastify({ logger: false, bodyLimit: BODY_LIMIT_BYTES, forceCloseConnections: true });
+  const app = Fastify({
+    logger: false,
+    bodyLimit: BODY_LIMIT_BYTES,
+    forceCloseConnections: true,
+    // Fastify sets the server's requestTimeout from its own option, so pass it here too.
+    requestTimeout: httpTimeoutMs,
+    // A slow or partial request (slowloris) is cut off after `httpTimeoutMs`. Node checks
+    // these timeouts on an interval (30s by default), so check every second instead.
+    serverFactory: (handler) =>
+      createHttpServer(
+        {
+          requestTimeout: httpTimeoutMs,
+          headersTimeout: httpTimeoutMs,
+          connectionsCheckingInterval: Math.min(1_000, httpTimeoutMs)
+        },
+        handler
+      )
+  });
   // JSON only. A text/plain POST is a "simple" cross-origin request; refusing it means
   // a web page can't even reach the handler without a preflight.
   app.removeContentTypeParser('text/plain');
@@ -171,21 +202,21 @@ export function createBridgeServer(options: BridgeServerOptions) {
 
   app.get('/health', async (): Promise<HealthResponse> => ({ name: 'bridge', version }));
 
+  // Step 1: the code and the extension's public key. Nothing is kept until both sides
+  // have confirmed the fingerprint (step 2).
   app.post('/pair', { onRequest: requireExtensionOrigin }, async (request, reply) => {
     const body = PairRequest.safeParse(request.body);
     if (!body.success) {
       return reply.code(400).send({ error: 'invalid_request' } satisfies PairFailure);
     }
-    const wasPaired = pairing.isPaired;
-    const result = pairing.redeem(body.data.code);
-    if (result.ok) {
-      // One paired extension at a time: the previous token is already replaced.
-      closeSessions(CloseCode.unauthorized, 'replaced');
-      if (wasPaired) onUnpaired();
-      onChange();
-      return { token: result.token } satisfies PairSuccess;
-    }
+    const result = pairing.redeem(body.data.code, body.data.publicKey, port!);
     onChange();
+    if (result.ok) {
+      return { publicKey: result.publicKey, proof: result.proof } satisfies PairSuccess;
+    }
+    if (result.reason === 'invalid_request') {
+      return reply.code(400).send({ error: 'invalid_request' } satisfies PairFailure);
+    }
     if (result.reason === 'locked') {
       reply.header('retry-after', String(Math.ceil(result.retryAfterMs / 1000)));
       return reply
@@ -193,6 +224,28 @@ export function createBridgeServer(options: BridgeServerOptions) {
         .send({ error: 'locked', retryAfterMs: result.retryAfterMs } satisfies PairFailure);
     }
     return reply.code(401).send({ error: 'invalid_code' } satisfies PairFailure);
+  });
+
+  // Step 2: the extension's user confirmed the fingerprint; it proves it holds the key.
+  // Refused until the app's user confirmed it too.
+  app.post('/pair/confirm', { onRequest: requireExtensionOrigin }, async (request, reply) => {
+    const body = PairConfirmRequest.safeParse(request.body);
+    if (!body.success) {
+      return reply.code(400).send({ error: 'invalid_request' } satisfies PairFailure);
+    }
+    const wasPaired = pairing.isPaired;
+    const result = pairing.confirmClient(body.data.proof);
+    onChange();
+    if (result === 'not_confirmed') {
+      return reply.code(409).send({ error: 'not_confirmed' } satisfies PairFailure);
+    }
+    if (result === 'no_pairing') {
+      return reply.code(401).send({ error: 'no_pairing' } satisfies PairFailure);
+    }
+    // One paired extension at a time: the previous key is already replaced.
+    closeSessions(CloseCode.unauthorized, 'replaced');
+    if (wasPaired) onUnpaired();
+    return reply.code(204).send();
   });
 
   // Unpairing is two calls so the token never travels: the app proves itself over the
@@ -222,139 +275,175 @@ export function createBridgeServer(options: BridgeServerOptions) {
     return reply.code(204).send();
   });
 
+  /** At most `maxConnections` sockets: anything more is refused before the upgrade. */
+  async function underConnectionLimit(_request: FastifyRequest, reply: FastifyReply) {
+    if (open.size >= maxConnections) {
+      return reply.code(503).send({ error: 'too_many_connections' });
+    }
+  }
+
   void app.register(async (scope) => {
-    scope.get('/ws', { websocket: true, onRequest: requireExtensionOrigin }, (socket) => {
-      // hello → challenge → auth. `serverNonce` lives only on this socket, so it is used once.
-      let stage: 'hello' | 'auth' | 'authed' = 'hello';
-      let serverNonce = '';
-      let windowStart = Date.now();
-      let windowCount = 0;
+    scope.get(
+      '/ws',
+      { websocket: true, onRequest: [requireExtensionOrigin, underConnectionLimit] },
+      (socket) => {
+        open.add(socket);
+        /** Each operation's count in the current one-second window. */
+        const opWindows = new Map<string, { start: number; count: number }>();
+        const overOpLimit = (type: string): boolean => {
+          const limit = opRateLimits[type];
+          if (limit === undefined) return false;
+          const at = Date.now();
+          const window = opWindows.get(type);
+          if (!window || at - window.start >= 1_000) {
+            opWindows.set(type, { start: at, count: 1 });
+            return false;
+          }
+          window.count += 1;
+          return window.count > limit;
+        };
+        // hello → challenge → auth. `serverNonce` lives only on this socket, so it is used once.
+        let stage: 'hello' | 'auth' | 'authed' = 'hello';
+        let serverNonce = '';
+        let windowStart = Date.now();
+        let windowCount = 0;
 
-      const send = (message: ServerMessage) => {
-        if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
-      };
-
-      const authTimer = setTimeout(() => {
-        send(serverMessage(randomUUID(), 'auth_error', { reason: 'timeout' }));
-        socket.close(CloseCode.authTimeout, 'auth timeout');
-      }, authTimeoutMs);
-
-      let idleTimer: NodeJS.Timeout | undefined;
-      const resetIdle = () => {
-        clearTimeout(idleTimer);
-        idleTimer = setTimeout(() => socket.close(CloseCode.idle, 'idle'), idleTimeoutMs);
-      };
-
-      socket.on('message', (data, isBinary) => {
-        const now = Date.now();
-        if (now - windowStart >= rateLimit.windowMs) {
-          windowStart = now;
-          windowCount = 0;
-        }
-        if (++windowCount > rateLimit.messages) {
-          send(
-            serverMessage(randomUUID(), 'error', {
-              code: 'rate_limited',
-              message: 'Too many messages.'
-            })
-          );
-          socket.close(CloseCode.rateLimited, 'rate limited');
-          return;
-        }
-
-        const message = isBinary ? null : parseMessage(ClientMessage, toText(data));
-
-        const fail = (reason: AuthFailure, code: number) => {
-          clearTimeout(authTimer);
-          send(serverMessage(randomUUID(), 'auth_error', { reason }));
-          socket.close(code, reason);
+        const send = (message: ServerMessage) => {
+          if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
         };
 
-        if (stage === 'hello') {
-          if (message?.type !== 'hello') return fail('expected_hello', CloseCode.protocolError);
-          if (!clientNonces.claim(message.payload.nonce)) {
-            return fail('replayed_nonce', CloseCode.protocolError);
-          }
-          const proof = pairing.serverProof('ws', port!, message.payload.nonce);
-          if (proof === null) return fail('not_paired', CloseCode.unauthorized);
-          serverNonce = newNonce();
-          stage = 'auth';
-          send(serverMessage(randomUUID(), 'challenge', { proof, serverNonce }));
-          return;
-        }
+        const authTimer = setTimeout(() => {
+          send(serverMessage(randomUUID(), 'auth_error', { reason: 'timeout' }));
+          socket.close(CloseCode.authTimeout, 'auth timeout');
+        }, authTimeoutMs);
 
-        if (stage === 'auth') {
-          if (message?.type !== 'auth') return fail('expected_auth', CloseCode.protocolError);
-          if (!pairing.verifyClientProof('ws', port!, serverNonce, message.payload.proof)) {
-            return fail('invalid_proof', CloseCode.unauthorized);
+        let idleTimer: NodeJS.Timeout | undefined;
+        const resetIdle = () => {
+          clearTimeout(idleTimer);
+          idleTimer = setTimeout(() => socket.close(CloseCode.idle, 'idle'), idleTimeoutMs);
+        };
+
+        socket.on('message', (data, isBinary) => {
+          const now = Date.now();
+          if (now - windowStart >= rateLimit.windowMs) {
+            windowStart = now;
+            windowCount = 0;
           }
-          clearTimeout(authTimer);
-          stage = 'authed';
-          sessions.add(socket);
+          if (++windowCount > rateLimit.messages) {
+            send(
+              serverMessage(randomUUID(), 'error', {
+                code: 'rate_limited',
+                message: 'Too many messages.'
+              })
+            );
+            socket.close(CloseCode.rateLimited, 'rate limited');
+            return;
+          }
+
+          const message = isBinary ? null : parseMessage(ClientMessage, toText(data));
+
+          const fail = (reason: AuthFailure, code: number) => {
+            clearTimeout(authTimer);
+            send(serverMessage(randomUUID(), 'auth_error', { reason }));
+            socket.close(code, reason);
+          };
+
+          if (stage === 'hello') {
+            if (message?.type !== 'hello') return fail('expected_hello', CloseCode.protocolError);
+            if (!clientNonces.claim(message.payload.nonce)) {
+              return fail('replayed_nonce', CloseCode.protocolError);
+            }
+            const proof = pairing.serverProof('ws', port!, message.payload.nonce);
+            if (proof === null) return fail('not_paired', CloseCode.unauthorized);
+            serverNonce = newNonce();
+            stage = 'auth';
+            send(serverMessage(randomUUID(), 'challenge', { proof, serverNonce }));
+            return;
+          }
+
+          if (stage === 'auth') {
+            if (message?.type !== 'auth') return fail('expected_auth', CloseCode.protocolError);
+            if (!pairing.verifyClientProof('ws', port!, serverNonce, message.payload.proof)) {
+              return fail('invalid_proof', CloseCode.unauthorized);
+            }
+            clearTimeout(authTimer);
+            stage = 'authed';
+            sessions.add(socket);
+            resetIdle();
+            send(serverMessage(randomUUID(), 'auth_ok', {}));
+            send(statusMessage());
+            onChange();
+            return;
+          }
+
+          if (!message) {
+            send(
+              serverMessage(randomUUID(), 'error', {
+                code: 'invalid_message',
+                message: 'Message dropped.'
+              })
+            );
+            return;
+          }
           resetIdle();
-          send(serverMessage(randomUUID(), 'auth_ok', {}));
-          send(statusMessage());
-          onChange();
-          return;
-        }
+          switch (message.type) {
+            case 'ping':
+              send(serverMessage(randomUUID(), 'pong', {}));
+              break;
+            case 'tree':
+            case 'list':
+            case 'read':
+            case 'stat':
+            case 'write':
+            case 'delete':
+            case 'rename':
+            case 'undo':
+            case 'watch':
+            case 'run':
+            case 'run_cancel':
+              if (overOpLimit(message.type)) {
+                send(
+                  serverMessage(message.id, 'response', {
+                    ok: false,
+                    error: { code: 'rate-limited', message: FILE_ERROR_MESSAGES['rate-limited'] }
+                  })
+                );
+                break;
+              }
+              // The reply carries the request's id.
+              void (
+                message.type === 'run' || message.type === 'run_cancel'
+                  ? commands(message)
+                  : files(message)
+              )
+                .catch((): FileOutcome<unknown> => ({
+                  ok: false,
+                  error: { code: 'io-error', message: FILE_ERROR_MESSAGES['io-error'] }
+                }))
+                .then((outcome) => send(serverMessage(message.id, 'response', outcome)));
+              break;
+            case 'loop_report':
+              onLoopReport(message.payload);
+              break;
+            case 'session_end':
+              onSessionEnd();
+              break;
+            case 'session_start':
+              onSessionStart();
+              break;
+            default:
+              break;
+          }
+        });
 
-        if (!message) {
-          send(
-            serverMessage(randomUUID(), 'error', {
-              code: 'invalid_message',
-              message: 'Message dropped.'
-            })
-          );
-          return;
-        }
-        resetIdle();
-        switch (message.type) {
-          case 'ping':
-            send(serverMessage(randomUUID(), 'pong', {}));
-            break;
-          case 'tree':
-          case 'list':
-          case 'read':
-          case 'stat':
-          case 'write':
-          case 'delete':
-          case 'rename':
-          case 'undo':
-          case 'watch':
-          case 'run':
-          case 'run_cancel':
-            // The reply carries the request's id.
-            void (
-              message.type === 'run' || message.type === 'run_cancel'
-                ? commands(message)
-                : files(message)
-            )
-              .catch((): FileOutcome<unknown> => ({
-                ok: false,
-                error: { code: 'io-error', message: FILE_ERROR_MESSAGES['io-error'] }
-              }))
-              .then((outcome) => send(serverMessage(message.id, 'response', outcome)));
-            break;
-          case 'loop_report':
-            onLoopReport(message.payload);
-            break;
-          case 'session_end':
-            onSessionEnd();
-            break;
-          case 'session_start':
-            onSessionStart();
-            break;
-          default:
-            break;
-        }
-      });
-
-      socket.on('close', () => {
-        clearTimeout(authTimer);
-        clearTimeout(idleTimer);
-        if (sessions.delete(socket)) onChange();
-      });
-    });
+        socket.on('close', () => {
+          open.delete(socket);
+          clearTimeout(authTimer);
+          clearTimeout(idleTimer);
+          if (sessions.delete(socket)) onChange();
+        });
+      }
+    );
   });
 
   return {

@@ -228,6 +228,22 @@ describe('FullAutoLoop', () => {
     expect(new Set(t.reports.map((r) => r.loopId))).toEqual(new Set(['loop-1']));
   });
 
+  it('still sends a follow-up with redactions, and logs how many', async () => {
+    const t = setup();
+    // Assembled at runtime: not a real token, and nothing for a secret scanner to find.
+    const token = `gh${'p_'}Q7f2Kp9xZ3mW8vR1tY6uN4bL0cJ5hG2dabcd`;
+    t.loop.onReply(
+      reply({
+        runs: [{ command: 'pnpm test', outcome: { ok: true, result: result(0, `env ${token}`) } }]
+      }).actions
+    );
+    await settle();
+    expect(t.page.sent).toHaveLength(1);
+    expect(t.page.sent[0]).toContain('[redacted]');
+    expect(t.page.sent[0]).not.toContain(token);
+    expect(t.events()).toContain('sent: Sent message 1 of 10, with 1 likely secret redacted.');
+  });
+
   it('ends on @@DONE@@ after applying that reply’s edits, without sending', async () => {
     const t = setup();
     t.loop.onReply(reply({ runs: [{ command: 'pnpm test' }] }).actions);

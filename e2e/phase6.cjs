@@ -4,7 +4,7 @@
 // and the extension reloading under an open chat.
 const fs = require('node:fs');
 const path = require('node:path');
-const { EXT, tempDir, launchApp, launchChrome } = require('./lib.cjs');
+const { EXT, tempDir, launchApp, launchChrome, enterCode } = require('./lib.cjs');
 const {
   step,
   SHELL,
@@ -51,8 +51,7 @@ const CONV = 'e2e00000-0000-4000-8000-000000000006';
   await panel.goto(`chrome-extension://${extId}/src/sidepanel/index.html`);
   await win.getByRole('button', { name: 'Pair extension' }).click();
   const code = (await win.locator('.pairing-code').innerText()).replace(/\D/g, '');
-  await panel.fill('#pair-code', code);
-  await panel.getByRole('button', { name: 'Pair' }).click();
+  await enterCode(win, panel, code);
   await panel
     .locator('header .status')
     .filter({ hasText: 'Connected' })

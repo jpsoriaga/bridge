@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { constants, createReadStream, type Dirent, type Stats } from 'node:fs';
+import { constants, type Dirent, type Stats } from 'node:fs';
 import * as fs from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import ignore, { type Ignore } from 'ignore';
@@ -35,12 +35,56 @@ export class FileOpError extends Error {
   }
 }
 
-/** The filesystem calls a write commits with. Tests swap one in to simulate a crash. */
+/**
+ * The filesystem calls a write commits with. Tests swap one in to simulate a crash, or a
+ * folder swapped for a symlink just before the commit.
+ */
 export interface WriteFs {
   rename: typeof fs.rename;
   link: typeof fs.link;
+  realpath: (path: string) => Promise<string>;
 }
-const realFs: WriteFs = { rename: fs.rename, link: fs.link };
+const realFs: WriteFs = { rename: fs.rename, link: fs.link, realpath: (path) => fs.realpath(path) };
+
+/** Opens never follow a symlink in the last component, where the platform can (not Windows). */
+const NOFOLLOW = constants.O_NOFOLLOW ?? 0;
+
+/** Opens a checked path for reading. A symlink that appeared there since the check is refused. */
+export async function openRead(abs: string): Promise<fs.FileHandle> {
+  try {
+    return await fs.open(abs, constants.O_RDONLY | NOFOLLOW);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ELOOP') throw new FileOpError('outside-root');
+    throw error;
+  }
+}
+
+/**
+ * A regular file with one name. A second hard link could be a file outside the project
+ * (a link made from inside to anything the user can read), and nothing tells them apart.
+ */
+function checkRegular(stats: Stats): void {
+  if (!stats.isFile()) throw new FileOpError('not-a-file');
+  if (stats.nlink > 1) throw new FileOpError('hardlink');
+}
+
+/**
+ * Right before a commit (rename, link, remove): the folder the change lands in must still
+ * resolve inside the project and off the denylist. Narrows the window in which a local
+ * process could swap a checked folder for a symlink that points elsewhere.
+ */
+async function assertInside(sandbox: Sandbox, dir: string, writeFs: WriteFs): Promise<void> {
+  let real: string;
+  try {
+    real = await writeFs.realpath(dir);
+  } catch {
+    throw new FileOpError('outside-root');
+  }
+  if (!sandbox.contains(real)) throw new FileOpError('outside-root');
+  if (real !== sandbox.root && sandbox.denylist.matches(sandbox.relativeOf(real))) {
+    throw new FileOpError('denied');
+  }
+}
 
 export const sha256 = (data: Buffer): string => createHash('sha256').update(data).digest('hex');
 
@@ -82,14 +126,20 @@ async function resolveOrThrow(sandbox: Sandbox, path: unknown) {
   return resolved;
 }
 
-/** Reads at most `cap` bytes, refusing anything bigger before reading it. */
-async function readCapped(abs: string, cap = MAX_FILE_BYTES): Promise<Buffer> {
-  const handle = await fs.open(abs, 'r');
+/**
+ * Reads at most `cap` bytes of a regular, singly linked file, refusing anything bigger
+ * before reading it. The checks are on the open handle, so they hold for what is read.
+ */
+async function readCapped(
+  abs: string,
+  cap = MAX_FILE_BYTES
+): Promise<{ data: Buffer; stats: Stats }> {
+  const handle = await openRead(abs);
   try {
     const stats = await handle.stat();
-    if (!stats.isFile()) throw new FileOpError('not-a-file');
+    checkRegular(stats);
     if (stats.size > cap) throw new FileOpError('too-large');
-    return await handle.readFile();
+    return { data: await handle.readFile(), stats };
   } finally {
     await handle.close();
   }
@@ -99,19 +149,30 @@ export async function readFile(sandbox: Sandbox, path: unknown): Promise<ReadRes
   const target = await resolveOrThrow(sandbox, path);
   if (target.kind === 'missing') throw new FileOpError('not-found');
   if (target.kind === 'dir') throw new FileOpError('not-a-file');
-  const data = await readCapped(target.abs);
+  const { data } = await readCapped(target.abs);
   const { content, bom } = decodeText(data);
   return { content, hash: sha256(data), eol: detectEol(content), bom };
 }
 
 /** Streams a file through SHA-256, refusing anything over MAX_BACKUP_BYTES. */
 async function hashFile(abs: string): Promise<{ hash: string; size: number }> {
-  const stats = await fs.stat(abs);
-  if (!stats.isFile()) throw new FileOpError('not-a-file');
-  if (stats.size > MAX_BACKUP_BYTES) throw new FileOpError('too-large');
-  const hash = createHash('sha256');
-  for await (const chunk of createReadStream(abs)) hash.update(chunk as Buffer);
-  return { hash: hash.digest('hex'), size: stats.size };
+  const handle = await openRead(abs);
+  try {
+    const stats = await handle.stat();
+    checkRegular(stats);
+    if (stats.size > MAX_BACKUP_BYTES) throw new FileOpError('too-large');
+    const hash = createHash('sha256');
+    const chunk = Buffer.alloc(64 * 1024);
+    for (let position = 0; ;) {
+      const { bytesRead } = await handle.read(chunk, 0, chunk.length, position);
+      if (bytesRead === 0) break;
+      hash.update(chunk.subarray(0, bytesRead));
+      position += bytesRead;
+    }
+    return { hash: hash.digest('hex'), size: stats.size };
+  } finally {
+    await handle.close();
+  }
 }
 
 /** Size and hash of any regular file, text or binary, up to MAX_BACKUP_BYTES. */
@@ -130,7 +191,7 @@ export async function statFile(sandbox: Sandbox, path: unknown): Promise<StatRes
 export async function atomicWrite(
   abs: string,
   data: Buffer,
-  options: { exclusive: boolean; mode?: number },
+  options: { exclusive: boolean; mode?: number; sandbox?: Sandbox },
   writeFs: WriteFs = realFs
 ): Promise<void> {
   const tmp = join(dirname(abs), `.${basename(abs)}.bridge-${randomBytes(6).toString('hex')}.tmp`);
@@ -143,6 +204,7 @@ export async function atomicWrite(
     } finally {
       await handle.close();
     }
+    if (options.sandbox) await assertInside(options.sandbox, dirname(abs), writeFs);
     if (!options.exclusive) {
       await writeFs.rename(tmp, abs);
       return;
@@ -219,7 +281,7 @@ export async function writeFile(
     // No baseHash means the caller meant to create a file, and one is already here.
     if (params.baseHash === undefined) throw new FileOpError('exists');
     // Modify: only on top of exactly what the caller read.
-    const before = await readCapped(target.abs);
+    const { data: before, stats } = await readCapped(target.abs);
     if (sha256(before) !== params.baseHash) throw new FileOpError('conflict');
     // Never overwrite what Bridge wouldn't read: binary or non-UTF-8 files stay as they are.
     const old = decodeText(before);
@@ -228,11 +290,14 @@ export async function writeFile(
     const text = withEol(matchTrailingNewline(content, old.content), detectEol(old.content));
     const data = Buffer.from((old.bom ? BOM : '') + text, 'utf8');
     if (data.length > MAX_FILE_BYTES) throw new FileOpError('too-large');
-    const { mode } = await fs.stat(target.abs);
-
     const opId = newOpId();
     await history.backup(opId, before, data);
-    await atomicWrite(target.abs, data, { exclusive: false, mode: mode & 0o7777 }, writeFs);
+    await atomicWrite(
+      target.abs,
+      data,
+      { exclusive: false, mode: stats.mode & 0o7777, sandbox },
+      writeFs
+    );
     const afterHash = sha256(data);
     await history.commit({
       opId,
@@ -253,7 +318,7 @@ export async function writeFile(
   await fs.mkdir(dirname(target.abs), { recursive: true });
   const opId = newOpId();
   await history.backup(opId, null, data);
-  await atomicWrite(target.abs, data, { exclusive: true }, writeFs);
+  await atomicWrite(target.abs, data, { exclusive: true, sandbox }, writeFs);
   const afterHash = sha256(data);
   await history.commit({
     opId,
@@ -272,19 +337,17 @@ async function readExpected(
   abs: string,
   baseHash: string
 ): Promise<{ data: Buffer; stats: Stats }> {
-  const stats = await fs.stat(abs);
-  if (!stats.isFile()) throw new FileOpError('not-a-file');
-  if (stats.size > MAX_BACKUP_BYTES) throw new FileOpError('too-large');
-  const data = await fs.readFile(abs);
-  if (sha256(data) !== baseHash) throw new FileOpError('conflict');
-  return { data, stats };
+  const read = await readCapped(abs, MAX_BACKUP_BYTES);
+  if (sha256(read.data) !== baseHash) throw new FileOpError('conflict');
+  return read;
 }
 
 /** Deletes one file after backing it up. Refuses with `conflict` if it changed since `baseHash`. */
 export async function deleteFile(
   sandbox: Sandbox,
   history: History,
-  params: Omit<DeleteParams, 'trigger'> & Partial<Pick<DeleteParams, 'trigger'>>
+  params: Omit<DeleteParams, 'trigger'> & Partial<Pick<DeleteParams, 'trigger'>>,
+  writeFs: WriteFs = realFs
 ): Promise<DeleteResult> {
   const target = await resolveOrThrow(sandbox, params.path);
   if (target.kind === 'missing') throw new FileOpError('not-found');
@@ -293,6 +356,7 @@ export async function deleteFile(
 
   const opId = newOpId();
   await history.backup(opId, data);
+  await assertInside(sandbox, dirname(target.abs), writeFs);
   await fs.rm(target.abs);
   await history.commit({
     opId,
@@ -359,9 +423,12 @@ export async function renameFile(
   const opId = newOpId();
   await history.backup(opId, data);
   if (caseOnly) {
+    await assertInside(sandbox, dirname(source.abs), writeFs);
     await caseRename(source.abs, dest.abs);
   } else {
     await fs.mkdir(dirname(dest.abs), { recursive: true });
+    await assertInside(sandbox, dirname(source.abs), writeFs);
+    await assertInside(sandbox, dirname(dest.abs), writeFs);
     await exclusiveMove(source.abs, dest.abs, writeFs, false);
     await fs.rm(source.abs, { force: true });
   }
@@ -380,6 +447,7 @@ export async function renameFile(
 
 /** Puts a backup back at a checked path, replacing what's there only if `replace`. */
 async function restore(
+  sandbox: Sandbox,
   history: History,
   op: OpRecord,
   abs: string,
@@ -392,7 +460,7 @@ async function restore(
     throw new FileOpError('io-error');
   }
   await fs.mkdir(dirname(abs), { recursive: true });
-  await atomicWrite(abs, backup, { exclusive: !options.replace, mode: options.mode });
+  await atomicWrite(abs, backup, { exclusive: !options.replace, mode: options.mode, sandbox });
 }
 
 const currentHash = async (target: { kind: string; abs: string }) =>
@@ -423,20 +491,23 @@ export async function undo(
       if ((await currentHash(target)) !== op.afterHash && !force) {
         throw new FileOpError('conflict');
       }
-      const mode = target.kind === 'file' ? (await fs.stat(target.abs)).mode & 0o7777 : undefined;
-      await restore(history, op, target.abs, { replace: true, mode });
+      const mode = target.kind === 'file' ? (await fs.lstat(target.abs)).mode & 0o7777 : undefined;
+      await restore(sandbox, history, op, target.abs, { replace: true, mode });
       break;
     }
     case 'create':
       if ((await currentHash(target)) !== op.afterHash && !force) {
         throw new FileOpError('conflict');
       }
-      if (target.kind === 'file') await fs.rm(target.abs);
+      if (target.kind === 'file') {
+        await assertInside(sandbox, dirname(target.abs), realFs);
+        await fs.rm(target.abs);
+      }
       break;
     case 'delete':
       // Something new at the path: don't replace it without asking.
       if (target.kind === 'file' && !force) throw new FileOpError('conflict');
-      await restore(history, op, target.abs, { replace: force, mode: op.mode });
+      await restore(sandbox, history, op, target.abs, { replace: force, mode: op.mode });
       break;
     case 'rename': {
       const source = await resolveOrThrow(sandbox, op.from);
@@ -444,9 +515,11 @@ export async function undo(
       const caseOnly = source.kind === 'file' && (await sameFile(source.abs, target.abs));
       const moved = (await currentHash(target)) === op.afterHash;
       if (moved && (source.kind === 'missing' || caseOnly)) {
+        await assertInside(sandbox, dirname(target.abs), realFs);
         if (caseOnly) await caseRename(target.abs, source.abs);
         else {
           await fs.mkdir(dirname(source.abs), { recursive: true });
+          await assertInside(sandbox, dirname(source.abs), realFs);
           await exclusiveMove(target.abs, source.abs, realFs, false);
           await fs.rm(target.abs, { force: true });
         }
@@ -455,10 +528,10 @@ export async function undo(
       if (!force) throw new FileOpError('conflict');
       // Forced: the old path gets the backup, and whatever is at the new path goes.
       if (caseOnly) {
-        await restore(history, op, target.abs, { replace: true });
+        await restore(sandbox, history, op, target.abs, { replace: true });
         await caseRename(target.abs, source.abs);
       } else {
-        await restore(history, op, source.abs, { replace: true });
+        await restore(sandbox, history, op, source.abs, { replace: true });
         if (target.kind === 'file') await fs.rm(target.abs);
       }
       break;

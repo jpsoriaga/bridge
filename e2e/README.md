@@ -1,6 +1,6 @@
 # End-to-end scripts
 
-Manual Playwright scripts that drive the **built** desktop app and a headless Chrome for Testing with the unpacked extension. They are not part of the pnpm workspace and don't run in CI yet.
+Playwright scripts that drive the **built** desktop app and a headless Chrome for Testing with the unpacked extension. They are not part of the pnpm workspace. CI runs them on Linux under `xvfb-run` (the `e2e` job in `.github/workflows/ci.yml`).
 
 ## Setup
 
@@ -76,3 +76,15 @@ Start from a fresh userData so the checklist shows: quit Bridge, then launch it 
 7. **Sleep and wake.** Start a Full auto run with a slow command (`sleep 30` in a test). While it runs, sleep the Mac for a couple of minutes, then wake it. The panel and app reconnect within a few seconds (no "Can't reach Bridge"), and the loop shows **Paused · after sleep** if it was mid-step. Check the cards, then **Resume**. Separately, with the app quit, sleep and wake: when you start the app the extension connects within seconds.
 
 Also check: the page chip can be dragged to another corner and stays there after a reload; deleting the conversation from the sidebar ends its session; moving the project folder in Finder makes the app say **Project missing** (moving it back clears it); the desktop app in **Settings → Appearance → Dark** and the side panel in a dark system theme read clearly.
+
+### Phase 7 on the real chatgpt.com
+
+Start from a fresh userData (as for Phase 6), with a scratch project that has a `package.json` with a `test` script, and the extension reloaded from a new `pnpm build`.
+
+1. **Pairing with the fingerprint.** In the app, **Pair extension**; type the code in the side panel and click **Pair**. Both show the same fingerprint (`a1b2 c3d4`). Click **They match** in the side panel first: it says to confirm in the app. Click **They match** in the app, then in the side panel: both say **Connected**. Pair again and click **Cancel** on both instead: nothing changes.
+2. **Start session in a new chat after a session.** Start a session in a chat and send the prompt. Click **New chat** in the page's sidebar. The side panel shows **No session**; **Start session** puts the prompt in the message box straight away. Go back to the first chat: its session is **ended**.
+3. **Auto-apply across sessions.** Switch the app to **Auto-apply**, end the session and start a new one: still Auto-apply. Switch to **Full auto**, then start a session: the app toasts "Full auto turned off: it’s per session." and the side panel's Mode section says the same.
+4. **Result rows.** Let the chat create one file, modify one, rename one and delete one, and apply them. Created is green with `+`; Modified (pencil) and Renamed (arrow) are neutral; Deleted is red with a trash icon and the path struck through. No check icons. The app's Activity list matches.
+5. **The chip as a dot.** In Manual or Auto-apply the chip in the corner is just a dot; hover it (or Tab to it) to see the mode. In Full auto it shows the counter and Stop. Make the window narrow and short, and open something that puts a banner over the message box: the chip moves up clear of both.
+6. **Redaction.** Add a test that prints a fake key, e.g. `console.log('API_KEY=' + 'Q7f2Kp9xZ3mW8vR1tY6uN4bL0cJ5hG2d')`. Run it from a RUN card and **Send output**: the message box shows `API_KEY=[redacted]`, and the card says one likely secret was replaced.
+7. **An allowlisted command with an extra argument.** With `pnpm test` (no `*`) on the allowlist, ask the chat to run `pnpm test --watch`. The RUN card says **not allowed**. Ask for `node -e "1"` with `node *` allowed: refused, naming `-e`.

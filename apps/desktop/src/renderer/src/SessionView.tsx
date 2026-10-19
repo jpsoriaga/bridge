@@ -94,7 +94,9 @@ function ProjectSection({ state }: { state: DesktopState }) {
 export function ExtensionSection({ state }: { state: DesktopState }) {
   const [busy, setBusy] = useState(false);
   const now = useNow(state.pairing !== null || state.lockedUntil !== null);
-  const code = state.pairing && state.pairing.expiresAt > now ? state.pairing : null;
+  const live = state.pairing && state.pairing.expiresAt > now ? state.pairing : null;
+  const code = live?.phase === 'code' ? live : null;
+  const compare = live?.phase === 'compare' ? live : null;
   const lockedFor = state.lockedUntil ? state.lockedUntil - now : 0;
 
   const run = (action: () => Promise<unknown>) => {
@@ -108,7 +110,48 @@ export function ExtensionSection({ state }: { state: DesktopState }) {
       <h2 className="section-title" id="extension-title">
         Extension
       </h2>
-      {code ? (
+      {compare ? (
+        <>
+          <p className="hint">Check the Bridge side panel in Chrome shows the same fingerprint:</p>
+          <p
+            className="pairing-code"
+            aria-label={`Fingerprint ${compare.fingerprint.replace(' ', '').split('').join(' ')}`}
+          >
+            {compare.fingerprint}
+          </p>
+          {compare.confirmed ? (
+            <p className="hint" role="status">
+              Confirmed here. Now confirm it in the side panel to finish pairing. Expires in{' '}
+              {formatCountdown(compare.expiresAt - now)}.
+            </p>
+          ) : (
+            <p className="hint">
+              If it’s different, something else answered the extension: cancel and pair again.
+              Expires in {formatCountdown(compare.expiresAt - now)}.
+            </p>
+          )}
+          <div className="actions">
+            {!compare.confirmed && (
+              <button
+                type="button"
+                className="btn btn-primary btn-lg"
+                disabled={busy}
+                onClick={() => run(() => window.bridge.confirmPairing())}
+              >
+                They match
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn"
+              disabled={busy}
+              onClick={() => run(() => window.bridge.cancelPairing())}
+            >
+              Cancel
+            </button>
+          </div>
+        </>
+      ) : code ? (
         <>
           <p className="pairing-code" aria-label={`Pairing code ${code.code.split('').join(' ')}`}>
             {code.code.slice(0, 3)} {code.code.slice(3)}

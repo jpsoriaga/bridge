@@ -31,6 +31,13 @@ export default defineManifest({
   // /unpair. The desktop sends no CORS headers, so without this the worker can't read
   // the responses. The WebSocket itself doesn't need it. See PLAN.md.
   host_permissions: ['http://127.0.0.1/*'],
+  // Extension pages (the side panel) run only the extension's own scripts: no eval, no
+  // remote code, no plugins, and no <base> to redirect relative URLs.
+  content_security_policy: {
+    extension_pages: "script-src 'self'; object-src 'none'; base-uri 'none'"
+  },
+  // No web page and no other extension can message or connect to Bridge.
+  externally_connectable: { ids: [] },
   action: {
     default_title: 'Open Bridge',
     default_icon: icons

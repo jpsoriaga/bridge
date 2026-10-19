@@ -37,7 +37,8 @@ const SANDBOX_CODES: ReadonlySet<FileErrorCode> = new Set([
   'absolute-path',
   'traversal',
   'denied',
-  'outside-root'
+  'outside-root',
+  'hardlink'
 ]);
 
 export type OpenProjectResult =

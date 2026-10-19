@@ -166,7 +166,7 @@ Under the last diff card of a reply. Same card frame with a `--border` edge, hol
 
 ### READ card
 
-At the end of a reply that asked for files with `@@READ`. Pending-card frame (`--border-strong`). Header: file icon and "The chat asked for N files" (13px/500). Then one row per path (mono 13px, ~25px tall): file icon, path, and on the right either "1,204 chars" (12px muted), "Reading…", or a `danger` badge "blocked · protected file" with the path struck through in `--fg-subtle`. Footer: a hint with the total ("12,345 characters. Bridge puts them in the message box; you press send."), in `--warning` above 30,000 characters ("The chat may turn this into an attachment or cut it off."), and **Send these files** (primary `.btn-lg`). After sending, the hint says "Added to the message box. Review it and press send." and the button reads **Send again**.
+At the end of a reply that asked for files with `@@READ`. Pending-card frame (`--border-strong`). Header: file icon and "The chat asked for N files" (13px/500). Then one row per path (mono 13px, ~25px tall): file icon, path, and on the right either "1,204 chars" (12px muted), "Reading…", or a `danger` badge "blocked · protected file" with the path struck through in `--fg-subtle`. Footer: a hint with the total ("12,345 characters. Bridge puts them in the message box; you press send."), followed by "N likely secrets were replaced with [redacted]." when any were, in `--warning` above 30,000 characters ("The chat may turn this into an attachment or cut it off."), and **Send these files** (primary `.btn-lg`). After sending, the hint says "Added to the message box. Review it and press send." and the button reads **Send again**.
 
 ### Mode tag on cards
 
@@ -244,6 +244,10 @@ States come from `ConnectionStatus` in `@bridge/shared`, and tones from `CONNECT
 ### Pairing code
 
 On the desktop's Extension section: the six digits in Geist Mono 24px/600 with a space after the third digit, then a 12px muted hint with the countdown ("Expires in 1:52"). The code disappears as soon as it's used, expires, or is cancelled by the lockout.
+
+### Pairing fingerprint
+
+Once the code is used, both the app (Extension section) and the side panel show the fingerprint in the pairing code's style (Geist Mono 24px/600, `0.08em` tracking, tabular): two groups of four hex characters, `a1b2 c3d4`, labelled for screen readers one character at a time. Above it a 12px muted line says to check the other side shows the same; below, a hint says what a mismatch means. Actions: **They match** (primary `.btn-lg`) and **Cancel** (secondary). The app confirms first; then its hint reads "Confirmed here. Now confirm it in the side panel…" with the countdown and only **Cancel**. Confirming in the side panel first shows an `.error-text`: "Click “They match” in the Bridge app first, then confirm here."
 
 ### Activity log row
 
@@ -345,7 +349,7 @@ Bottom-right, 20px in, up to three stacked, 4s each, `aria-live="polite"`: a dot
 
 - **Mode**: the segmented switch. Choosing Full auto opens the native confirm dialog first. Under the description, in Full auto, a `--warning` hint that it sends messages and runs model-written code and turns off on restart, End session, unpair or project switch; then the loop status line (dot, state, "step N of M") and the pause reason in `--warning`.
 - **Running** (while a command runs): label row with **Cancel**, `$ command` in mono, live output in a `--bg-muted` mono box (320px).
-- **Commands**: before the project's list is confirmed, the suggestions as checkbox rows (mono) and **Allow N commands** (primary). After: the entries with **Remove**, a mono input with **Add** (rejects shell syntax with the parser's reason). Then the command timeout (seconds), the step limit (messages) and "Pause Full auto when a command fails" with its hint.
+- **Commands**: before the project's list is confirmed, the suggestions as checkbox rows (mono) and **Allow N commands** (primary). After: a hint that entries match exactly and `*` allows extra arguments, the entries with **Remove**, a mono input with **Add** (rejects shell syntax with the parser's reason, a misplaced `*`, and denied options naming the option). Once, after old entries were migrated to `*`, a `.notice` explains it with **Got it**. Then the command timeout (seconds), the step limit (messages) and "Pause Full auto when a command fails" with its hint.
 - **Settings** gains **Gated files** and **Hidden from commands** in the Protected files layout (defaults in mono, user entries with Remove, input and Add).
 - **Settings** sections: Connection (port, extension, **Unpair** / **Pair again**), Project (protected and gated files), Commands (allowlist, timeout, hidden variables, PATH for commands with its source and any warning), Full auto (step limit, pause on failure), Backups (days to keep, **Open the backups folder**, **Clear for this project…** as `.btn-danger` behind a native dialog), Appearance (a segmented System / Light / Dark).
 - Number fields are 88px mono `.input`s at 32px with a 12px muted unit; they save on blur and show `.error-text` with the allowed range.

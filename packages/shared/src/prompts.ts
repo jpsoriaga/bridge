@@ -1,6 +1,7 @@
 import { CHAT_OUTPUT_CHARS, formatArgv, truncateMiddle } from './commands';
 import type { TreeEntry } from './files';
 import type { RunResult } from './protocol';
+import { redactSecrets } from './redact';
 
 // Text Bridge puts into the chat composer. The chat reads these, so they're plain prose,
 // and nothing here names the chat's vendor.
@@ -23,11 +24,23 @@ function fenceLanguage(path: string): string {
   return ext ? ext.toLowerCase() : '';
 }
 
-/** One file as the chat should read it: a `@@CONTEXT` marker and a fenced block. */
+/** One file as the chat reads it, with likely secrets redacted, and how many were. */
+function contextBlock(path: string, content: string): { text: string; redacted: number } {
+  const clean = redactSecrets(content);
+  const fence = pickFence(clean.text);
+  const body = clean.text.endsWith('\n') ? clean.text : `${clean.text}\n`;
+  return {
+    text: `\`@@CONTEXT ${path}@@\`\n${fence}${fenceLanguage(path)}\n${body}${fence}`,
+    redacted: clean.count
+  };
+}
+
+/**
+ * One file as the chat should read it: a `@@CONTEXT` marker and a fenced block. Likely
+ * secrets in it are already `[redacted]`.
+ */
 export function formatContextBlock(path: string, content: string): string {
-  const fence = pickFence(content);
-  const body = content.endsWith('\n') ? content : `${content}\n`;
-  return `\`@@CONTEXT ${path}@@\`\n${fence}${fenceLanguage(path)}\n${body}${fence}`;
+  return contextBlock(path, content).text;
 }
 
 export interface ContextFile {
@@ -41,23 +54,34 @@ export interface RefusedFile {
   reason: string;
 }
 
-/** Files sent to the chat, plus a line for any Bridge refused to send. */
-export function buildContextMessage(files: ContextFile[], refused: RefusedFile[] = []): string {
+/**
+ * Files sent to the chat, plus a line for any Bridge refused to send. Likely secrets are
+ * `[redacted]`; `redacted` says how many.
+ */
+export function buildContextMessage(
+  files: ContextFile[],
+  refused: RefusedFile[] = []
+): { text: string; redacted: number } {
   const parts: string[] = [];
+  let redacted = 0;
   if (files.length > 0) {
     parts.push(
       files.length === 1
         ? 'Here is a file from the project, for reference only (not an edit):'
         : `Here are ${files.length} files from the project, for reference only (not edits):`
     );
-    for (const file of files) parts.push(formatContextBlock(file.path, file.content));
+    for (const file of files) {
+      const block = contextBlock(file.path, file.content);
+      parts.push(block.text);
+      redacted += block.redacted;
+    }
   }
   if (refused.length > 0) {
     parts.push(
       `Bridge could not send: ${refused.map((f) => `${f.path} (${f.reason})`).join(', ')}.`
     );
   }
-  return parts.join('\n\n');
+  return { text: parts.join('\n\n'), redacted };
 }
 
 export interface TreeSummary {
@@ -145,7 +169,7 @@ function commandRules(allowlist: readonly string[]): string {
     '',
     '`@@RUN pnpm test@@`',
     '',
-    'Only these commands are allowed, optionally with extra arguments after them. Bridge refuses anything else, and any shell syntax (pipes, &&, ;, redirects, $, wildcards, VAR=value):',
+    'Only these commands are allowed, exactly as written. Where one ends in `*`, you may add arguments in place of the `*`; otherwise add nothing. Bridge refuses anything else, options that run other code or change folder (such as `node -e` or `git -C`), and any shell syntax (pipes, &&, ;, redirects, $, wildcards, VAR=value):',
     '',
     ...allowlist.map((entry) => `- \`${entry}\``),
     '',
@@ -203,11 +227,14 @@ export function buildSessionPrompt({
   ].join('\n\n');
 }
 
-/** How a command's run reads in the chat: the command, how it ended, and its output. */
+/**
+ * How a command's run reads in the chat: the command, how it ended, and its output, with
+ * likely secrets `[redacted]` before it's cut to size. `redacted` says how many.
+ */
 export function formatRunResult(
   result: Pick<RunResult, 'argv' | 'status' | 'exitCode' | 'signal' | 'durationMs' | 'output'>,
   maxOutput = CHAT_OUTPUT_CHARS
-): string {
+): { text: string; redacted: number } {
   const seconds = (result.durationMs / 1000).toFixed(1);
   const ended =
     result.status === 'timed-out'
@@ -219,9 +246,13 @@ export function formatRunResult(
           : result.exitCode !== null
             ? `exit ${result.exitCode}, ${seconds}s`
             : `ended by ${result.signal ?? 'a signal'}, ${seconds}s`;
-  const output = truncateMiddle(result.output.trimEnd(), maxOutput);
+  const clean = redactSecrets(result.output.trimEnd());
+  const output = truncateMiddle(clean.text, maxOutput);
   const fence = pickFence(output);
-  return `Output of \`${formatArgv(result.argv)}\` (${ended}):\n${fence}text\n${output || '(no output)'}\n${fence}`;
+  return {
+    text: `Output of \`${formatArgv(result.argv)}\` (${ended}):\n${fence}text\n${output || '(no output)'}\n${fence}`,
+    redacted: clean.count
+  };
 }
 
 /** One command the loop dealt with: its result, or why it didn't run. */
@@ -244,8 +275,13 @@ export interface FollowUpInput {
 /** Below this, command output in a trimmed follow-up is cut harder. */
 const TRIMMED_OUTPUT_CHARS = 2_000;
 
-function followUpText(input: FollowUpInput, outputChars: number, withFiles: boolean): string {
+function followUpText(
+  input: FollowUpInput,
+  outputChars: number,
+  withFiles: boolean
+): { text: string; redacted: number } {
   const parts: string[] = [];
+  let redacted = 0;
   const summary: string[] = [];
   if (input.applied.length > 0) summary.push(`Applied: ${input.applied.join(', ')}.`);
   if (input.skipped.length > 0) {
@@ -254,7 +290,8 @@ function followUpText(input: FollowUpInput, outputChars: number, withFiles: bool
   if (summary.length > 0) parts.push(summary.join('\n'));
   if (withFiles) {
     const context = buildContextMessage([...input.files], [...input.refused]);
-    if (context) parts.push(context);
+    if (context.text) parts.push(context.text);
+    redacted += context.redacted;
   } else if (input.files.length > 0 || input.refused.length > 0) {
     const paths = input.files.map((f) => f.path).join(', ');
     parts.push(
@@ -262,13 +299,15 @@ function followUpText(input: FollowUpInput, outputChars: number, withFiles: bool
     );
   }
   for (const run of input.runs) {
-    parts.push(
-      'refused' in run
-        ? `Bridge didn't run \`${run.command}\`: ${run.refused}`
-        : formatRunResult(run.result, outputChars)
-    );
+    if ('refused' in run) {
+      parts.push(`Bridge didn't run \`${run.command}\`: ${run.refused}`);
+      continue;
+    }
+    const output = formatRunResult(run.result, outputChars);
+    parts.push(output.text);
+    redacted += output.redacted;
   }
-  return parts.join('\n\n');
+  return { text: parts.join('\n\n'), redacted };
 }
 
 /**
@@ -279,16 +318,17 @@ function followUpText(input: FollowUpInput, outputChars: number, withFiles: bool
 export function buildFollowUp(
   input: FollowUpInput,
   budget = COMPOSER_WARN_CHARS
-): { text: string; trimmed: boolean } | null {
+): { text: string; trimmed: boolean; redacted: number } | null {
   const full = followUpText(input, CHAT_OUTPUT_CHARS, true);
-  if (full.length <= budget) return { text: full, trimmed: false };
+  if (full.text.length <= budget) return { ...full, trimmed: false };
   const note = '\n\n(Bridge trimmed this message to fit.)';
   for (const [chars, files] of [
     [TRIMMED_OUTPUT_CHARS, true],
     [TRIMMED_OUTPUT_CHARS, false]
   ] as const) {
-    const text = followUpText(input, chars, files) + note;
-    if (text.length <= budget) return { text, trimmed: true };
+    const built = followUpText(input, chars, files);
+    const text = built.text + note;
+    if (text.length <= budget) return { text, trimmed: true, redacted: built.redacted };
   }
   return null;
 }

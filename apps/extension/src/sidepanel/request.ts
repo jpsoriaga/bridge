@@ -28,3 +28,9 @@ const SESSION_ERRORS: Record<SessionError, string> = {
 };
 
 export const sessionErrorText = (error: SessionError) => SESSION_ERRORS[error];
+
+/** " N likely secrets were replaced with [redacted]." when any were, else nothing. */
+export const redactedText = (count: number): string =>
+  count > 0
+    ? ` ${count} likely ${count === 1 ? 'secret was' : 'secrets were'} replaced with [redacted].`
+    : '';

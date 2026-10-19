@@ -223,10 +223,66 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [x] `e2e/sessions.cjs`: Start session after client-side navigation to a new chat and to another chat
 - [x] `e2e/stale.cjs`: send a file, edit it on disk, `changed` mark in the panel, Resend changed inserts the new content
 
-- [ ] Security review against PLAN.md "Security model"
+- [x] Security review against PLAN.md "Security model"; threat model, controls and known limits in SECURITY.md
 - [x] Upgrade Electron to a supported major (34 → 44, done at the start of Phase 2)
-- [ ] E2E smoke test: the parser runs in the content script, apply and undo work against a temp project
+- [x] E2E smoke test: the parser runs in the content script, apply and undo work against a temp project (`chat.cjs`, `phase6.cjs`, now in CI)
 - [x] Keep the pairing key out of content-script reach (moved to the worker's IndexedDB at the start of Phase 5)
+
+### Pairing
+
+- [x] Protocol v5: ECDH pairing (`/pair { code, publicKey }`, `/pair/confirm { proof }`); the app's key generated once and kept with `safeStorage`
+- [x] Fingerprint (8 hex) shown in the app and the side panel; confirmed in the app, then the extension; nothing kept before both; Cancel on both sides
+- [x] Old (v1) pairing files read as unpaired; tests: same key and fingerprint both sides, relay/squatter mismatch, confirm order, wrong proof, cancel, expiry, previous key kept until confirmed
+
+### Filesystem
+
+- [x] Hard links refused (`hardlink`) for read, stat, modify, delete and rename sources, and undo
+- [x] Target folder re-checked right before every rename, link and remove; `O_NOFOLLOW` opens; race tests swap the folder for a symlink at commit time
+- [x] userData `0700`, settings/pairing/server key `0600`, backups and op log `0700`/`0600`; checked and tightened at startup
+
+### Commands
+
+- [x] Exact-match allowlist, `*` for extra arguments; old entries migrated to `*` with a one-time note in Settings
+- [x] `DENIED_FLAGS` table (git, node, npm/pnpm/yarn, npx/pnpx/bunx), checked on argv and the resolved program, on the RUN card and in Settings
+- [x] Secret redaction in everything inserted into the chat; count on cards and in the side panel; Full auto logs it and still sends
+- [x] Output backpressure: a flooding command pauses per event-loop turn; capped at 200 KB
+
+### Server
+
+- [x] `maxPayload` from the largest message (6 MiB + 64 KiB), 2 connections, 10s HTTP timeout, per-operation rate limits (`rate-limited`, retried by the extension)
+- [x] fast-check fuzzing of the live server before and after auth, and of HTTP bodies; web-page origin, no origin and `Origin: null` refused everywhere
+
+### Electron
+
+- [x] `app.enableSandbox()`; permission request and check handlers deny all; `will-navigate`, `will-redirect`, `will-attach-webview` and new windows blocked for every web contents
+- [x] Built `index.html` CSP tested (`default-src 'none'`, no `unsafe-*`)
+- [x] Fuses via `afterPack` (`scripts/fuses.cjs`) and `verify:fuses`; tested on a synthetic binary
+- [x] Every IPC handler: sender frame check and a zod schema per channel (`main/ipc.ts`), tested per channel
+- [ ] Fuses verified on a packaged app (Phase 8)
+
+### Extension
+
+- [x] Extension page CSP; `externally_connectable` empty; manifest test updated
+- [x] Every `chrome.runtime` listener checks the sender and parses with zod (panel port included); source test
+- [x] `chrome.storage.local` holds no contents or secrets: `CardStore.set` validates; unit and e2e checks
+
+### Supply chain and CI
+
+- [x] `onlyBuiltDependencies` (electron, esbuild); `pnpm audit --prod --audit-level high` in CI
+- [x] Actions pinned to commit SHAs, read-only token; Dependabot for npm, `e2e/` and Actions
+- [x] e2e scripts in CI on Linux with `xvfb-run`
+- [ ] First CI run of the new jobs (Linux e2e, coverage on Windows) on GitHub
+
+### Tests
+
+- [x] Property tests (fast-check): sandbox paths, argv parsing and allowlist matching, denied options, protocol schemas, the `@@` parser, redaction
+- [x] Coverage thresholds: 90% lines for sandbox, runner, server, nonces, pairing, proofs, parser; 70% overall; `pnpm test:coverage` in CI
+- [x] Regression tests: hard links, race re-check, exact allowlist and migration, denied flags, redaction (with false positives), rate limits, connection limits, fingerprint mismatch, every Electron handler
+
+### Docs
+
+- [x] SECURITY.md; PLAN.md "Phase 7 decisions"; README (SECURITY.md, fingerprint step, exact allowlist, redaction); CLAUDE.md rules; e2e README Phase 7 manual script
+- [ ] Manual run of the Phase 7 script on real chatgpt.com (e2e README)
 
 ## Phase 8: Packaging and release
 

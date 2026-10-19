@@ -145,6 +145,7 @@ describe('write', () => {
   it('gives exists if the file appears between the check and the write', async () => {
     const racing: WriteFs = {
       rename: fs.rename,
+      realpath: (path) => fs.realpath(path),
       link: async (from, to) => {
         writeFileSync(to, 'appeared');
         return fs.link(from, to);
@@ -161,6 +162,7 @@ describe('write', () => {
     project.write('a.txt', 'intact\n');
     const crash: WriteFs = {
       link: fs.link,
+      realpath: (path) => fs.realpath(path),
       rename: async () => {
         throw Object.assign(new Error('simulated power cut'), { code: 'EIO' });
       }
@@ -181,6 +183,7 @@ describe('write', () => {
   it('leaves no file when a create fails before landing', async () => {
     const crash: WriteFs = {
       rename: fs.rename,
+      realpath: (path) => fs.realpath(path),
       link: async () => {
         throw Object.assign(new Error('simulated'), { code: 'EIO' });
       }

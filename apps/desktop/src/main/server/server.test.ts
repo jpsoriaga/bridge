@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -20,10 +20,13 @@ import { ProjectService } from '../project/service';
 import { tempProject } from '../project/test-utils';
 import { settingsFile } from '../settings';
 import { AUTH_TIMEOUT_MS, MAX_WS_PAYLOAD_BYTES } from './config';
-import { memoryTokenStore, Pairing } from './pairing';
+import { generateServerKey, memoryTokenStore, Pairing } from './pairing';
+import { pairingClient } from './test-pairing';
 import { createBridgeServer, type BridgeServer } from './server';
 
 const ORIGIN = `chrome-extension://${BRIDGE_EXTENSION_ID}`;
+/** One app key for the whole file: generating P-256 keys per test is needlessly slow. */
+const serverKey = generateServerKey();
 
 let clock: number;
 let pairing: Pairing;
@@ -34,7 +37,7 @@ let project: { name: string; path: string } | null;
 
 beforeEach(async () => {
   clock = 1_000_000;
-  pairing = new Pairing({ store: memoryTokenStore(), now: () => clock });
+  pairing = new Pairing({ store: memoryTokenStore(), serverKey, now: () => clock });
   project = null;
   server = createBridgeServer({
     pairing,
@@ -64,13 +67,26 @@ function post(url: string, body: unknown, headers: Record<string, string> = {}) 
   });
 }
 
-/** Pairs and returns the key the extension keeps: the token's SHA-256, hex. */
+/** A `/pair` body: the code and a fresh one-time public key. */
+const pairBody = (code: unknown) => ({ code, publicKey: pairingClient().publicKey });
+
+/**
+ * Pairs the whole way: the code, the fingerprint confirmed in the app, then the client's
+ * confirmation. Returns the key the extension keeps, hex.
+ */
 async function pair(): Promise<string> {
   const { code } = pairing.startPairing();
-  const res = await post('/pair', { code });
+  const client = pairingClient();
+  const res = await post('/pair', { code, publicKey: client.publicKey });
   expect(res.statusCode).toBe(200);
-  const { token } = res.json() as { token: string };
-  return createHash('sha256').update(token).digest('hex');
+  const { publicKey } = res.json() as { publicKey: string };
+  const { key, nonce } = client.derive(port, code, publicKey);
+  expect(pairing.confirmFingerprint()).toBe(true);
+  const confirmed = await post('/pair/confirm', {
+    proof: sign(key, 'client', 'pair', port, nonce)
+  });
+  expect(confirmed.statusCode).toBe(204);
+  return key;
 }
 
 const nonce = () => randomBytes(32).toString('hex');
@@ -216,7 +232,7 @@ describe('origin check', () => {
       method: 'POST',
       url: '/pair',
       headers,
-      payload: JSON.stringify({ code })
+      payload: JSON.stringify(pairBody(code))
     });
     expect(res.statusCode).toBe(403);
     // The code was not consumed.
@@ -229,17 +245,122 @@ describe('origin check', () => {
 });
 
 describe('POST /pair', () => {
-  it('exchanges a valid code for a token', async () => {
-    const token = await pair();
-    expect(token).toMatch(/^[0-9a-f]{64}$/);
+  it('derives the same key on both sides and keeps it only after both confirm', async () => {
+    const key = await pair();
+    expect(key).toMatch(/^[0-9a-f]{64}$/);
     expect(pairing.isPaired).toBe(true);
-    expect(pairing.pendingCode).toBeNull();
+    expect(pairing.state).toBeNull();
+    (await authedClient(key)).ws.close();
+  });
+
+  it('shows the same fingerprint the extension computes, and proves the key first', async () => {
+    const { code } = pairing.startPairing();
+    const client = pairingClient();
+    const res = await post('/pair', { code, publicKey: client.publicKey });
+    const { publicKey, proof } = res.json() as { publicKey: string; proof: string };
+    const derived = client.derive(port, code, publicKey);
+    expect(proof).toBe(sign(derived.key, 'server', 'pair', port, derived.nonce));
+    expect(pairing.state).toEqual({
+      phase: 'compare',
+      fingerprint: derived.fingerprint,
+      expiresAt: expect.any(Number),
+      confirmed: false
+    });
+    expect(derived.fingerprint).toMatch(/^[0-9a-f]{4} [0-9a-f]{4}$/);
+    // Nothing is stored until the user confirms.
+    expect(pairing.isPaired).toBe(false);
+  });
+
+  it('refuses the client’s confirmation until the app’s user confirmed', async () => {
+    const { code } = pairing.startPairing();
+    const client = pairingClient();
+    const { publicKey } = (await post('/pair', { code, publicKey: client.publicKey })).json() as {
+      publicKey: string;
+    };
+    const { key, nonce } = client.derive(port, code, publicKey);
+    const proof = sign(key, 'client', 'pair', port, nonce);
+    const early = await post('/pair/confirm', { proof });
+    expect(early.statusCode).toBe(409);
+    expect(early.json()).toEqual({ error: 'not_confirmed' });
+    expect(pairing.isPaired).toBe(false);
+    pairing.confirmFingerprint();
+    expect((await post('/pair/confirm', { proof })).statusCode).toBe(204);
+    expect(pairing.isPaired).toBe(true);
+  });
+
+  it('drops the exchange on a wrong proof, a cancel or expiry', async () => {
+    const start = async () => {
+      const { code } = pairing.startPairing();
+      const client = pairingClient();
+      const res = await post('/pair', { code, publicKey: client.publicKey });
+      const { publicKey } = res.json() as { publicKey: string };
+      pairing.confirmFingerprint();
+      return client.derive(port, code, publicKey);
+    };
+    let derived = await start();
+    const wrong = await post('/pair/confirm', {
+      proof: sign(nonce(), 'client', 'pair', port, derived.nonce)
+    });
+    expect(wrong.statusCode).toBe(401);
+    expect(wrong.json()).toEqual({ error: 'no_pairing' });
+    // The right proof is too late now.
+    expect(
+      (
+        await post('/pair/confirm', {
+          proof: sign(derived.key, 'client', 'pair', port, derived.nonce)
+        })
+      ).statusCode
+    ).toBe(401);
+
+    derived = await start();
+    pairing.cancelPairing();
+    expect(
+      (
+        await post('/pair/confirm', {
+          proof: sign(derived.key, 'client', 'pair', port, derived.nonce)
+        })
+      ).statusCode
+    ).toBe(401);
+
+    derived = await start();
+    clock += 2 * 60_000;
+    expect(
+      (
+        await post('/pair/confirm', {
+          proof: sign(derived.key, 'client', 'pair', port, derived.nonce)
+        })
+      ).statusCode
+    ).toBe(401);
+    expect(pairing.isPaired).toBe(false);
+  });
+
+  it('gives a relay or squatter a different fingerprint than the app shows', async () => {
+    const { code } = pairing.startPairing();
+    // A process on another port relays the extension's request to the real app with its
+    // own key, to learn the pairing key. The app shows the squatter's fingerprint...
+    const squatter = pairingClient();
+    const res = await post('/pair', { code, publicKey: squatter.publicKey });
+    const { publicKey } = res.json() as { publicKey: string };
+    const appShows = pairing.state?.phase === 'compare' ? pairing.state.fingerprint : null;
+    // ...while the extension, answered by the squatter on its port, sees its own.
+    const extension = pairingClient();
+    const extensionSees = extension.derive(port + 1, code, publicKey).fingerprint;
+    expect(appShows).not.toBeNull();
+    expect(extensionSees).not.toBe(appShows);
+  });
+
+  it('refuses a key that isn’t a P-256 point without using up the code', async () => {
+    const { code } = pairing.startPairing();
+    const notAPoint = `BA${'A'.repeat(85)}`;
+    expect((await post('/pair', { code, publicKey: notAPoint })).statusCode).toBe(400);
+    expect((await post('/pair', { code })).statusCode).toBe(400);
+    expect(pairing.pendingCode?.code).toBe(code);
   });
 
   it('rejects a reused code', async () => {
     const { code } = pairing.startPairing();
-    expect((await post('/pair', { code })).statusCode).toBe(200);
-    const res = await post('/pair', { code });
+    expect((await post('/pair', pairBody(code))).statusCode).toBe(200);
+    const res = await post('/pair', pairBody(code));
     expect(res.statusCode).toBe(401);
     expect(res.json()).toEqual({ error: 'invalid_code' });
   });
@@ -247,7 +368,7 @@ describe('POST /pair', () => {
   it('rejects an expired code', async () => {
     const { code } = pairing.startPairing();
     clock += 2 * 60_000;
-    expect((await post('/pair', { code })).statusCode).toBe(401);
+    expect((await post('/pair', pairBody(code))).statusCode).toBe(401);
   });
 
   it('rejects malformed bodies', async () => {
@@ -265,29 +386,33 @@ describe('POST /pair', () => {
   it('locks for 60s after 5 wrong codes and burns the code', async () => {
     const { code } = pairing.startPairing();
     const wrong = code === '000000' ? '111111' : '000000';
-    for (let i = 0; i < 4; i++) expect((await post('/pair', { code: wrong })).statusCode).toBe(401);
+    for (let i = 0; i < 4; i++) expect((await post('/pair', pairBody(wrong))).statusCode).toBe(401);
 
-    const fifth = await post('/pair', { code: wrong });
+    const fifth = await post('/pair', pairBody(wrong));
     expect(fifth.statusCode).toBe(429);
     expect(fifth.json()).toEqual({ error: 'locked', retryAfterMs: 60_000 });
     expect(fifth.headers['retry-after']).toBe('60');
 
     // Even the right code is refused while locked, and that code is gone for good.
-    expect((await post('/pair', { code })).statusCode).toBe(429);
+    expect((await post('/pair', pairBody(code))).statusCode).toBe(429);
     clock += 30_000;
-    const later = await post('/pair', { code });
+    const later = await post('/pair', pairBody(code));
     expect(later.statusCode).toBe(429);
     expect(later.json()).toMatchObject({ retryAfterMs: 30_000 });
 
     clock += 30_000;
-    expect((await post('/pair', { code })).statusCode).toBe(401);
+    expect((await post('/pair', pairBody(code))).statusCode).toBe(401);
     const fresh = pairing.startPairing();
-    expect((await post('/pair', { code: fresh.code })).statusCode).toBe(200);
+    expect((await post('/pair', pairBody(fresh.code))).statusCode).toBe(200);
   });
 
-  it('replaces the previous token when pairing again', async () => {
+  it('replaces the previous key when pairing again, only once the new one is confirmed', async () => {
     const first = await pair();
     const client = await authedClient(first);
+    // A code redeemed but not confirmed leaves the old pairing working.
+    const { code } = pairing.startPairing();
+    expect((await post('/pair', pairBody(code))).statusCode).toBe(200);
+    (await authedClient(first)).ws.close();
     const second = await pair();
     expect((await client.closed).code).toBe(CloseCode.unauthorized);
     await expect(authedClient(first)).rejects.toThrow();
@@ -608,6 +733,9 @@ describe('modes, commands and the loop (real project, real runner)', () => {
     t = tempProject('bridge-server-modes-');
     t.write('src/a.ts', 'old\n');
     t.write('package.json', '{}\n');
+    // Scripts outside the project for `node` to run (`node -e` is never allowed).
+    t.write('scripts/ran.js', 'console.log("ran")\n', t.base);
+    t.write('scripts/forever.js', 'setInterval(() => {}, 1000)\n', t.base);
     const userData = join(t.base, 'userData');
     mkdirSync(userData);
     const settings = settingsFile(join(userData, 'settings.json'));
@@ -640,12 +768,12 @@ describe('modes, commands and the loop (real project, real runner)', () => {
       runner,
       root: () => projects.root,
       mode: () => modes.mode,
-      allowlist: () => ['node -e'],
+      allowlist: () => ['node *'],
       envPatterns: () => [],
       timeoutMs: () => 10_000,
       env: () => ({ PATH: dirname(process.execPath), SystemRoot: process.env.SystemRoot ?? '' })
     });
-    pairing = new Pairing({ store: memoryTokenStore(), now: () => clock });
+    pairing = new Pairing({ store: memoryTokenStore(), serverKey, now: () => clock });
     server = createBridgeServer({
       pairing,
       version: '9.9.9',
@@ -661,7 +789,7 @@ describe('modes, commands and the loop (real project, real runner)', () => {
           : Promise.resolve(commands.cancel(request.payload.runId)),
       config: () => ({
         mode: modes.mode,
-        allowlist: ['node -e'],
+        allowlist: ['node *'],
         stepLimit: 10,
         pauseOnFailure: false,
         running: runner.current,
@@ -759,7 +887,7 @@ describe('modes, commands and the loop (real project, real runner)', () => {
 
   it('rejects automatic runs outside Full auto, and runs them in Full auto', async () => {
     const client = await setUp('auto-apply');
-    const run = { argv: ['node', '-e', 'console.log("ran")'], trigger: 'auto' };
+    const run = { argv: ['node', join(t.base, 'scripts/ran.js')], trigger: 'auto' };
     expect(await ask(client, 'run', run)).toMatchObject({ ok: false, error: { code: 'mode' } });
     modes.set('full-auto');
     const started = await ask(client, 'run', run);
@@ -778,7 +906,7 @@ describe('modes, commands and the loop (real project, real runner)', () => {
   it('rejects a command that isn’t allowlisted even on a click', async () => {
     const client = await setUp('full-auto');
     for (const argv of [
-      ['node', '--version'],
+      ['npm', '--version'],
       ['git', 'status'],
       ['sh', '-c', 'id']
     ]) {
@@ -795,7 +923,7 @@ describe('modes, commands and the loop (real project, real runner)', () => {
   it('cancels a run on request', async () => {
     const client = await setUp('manual');
     const started = await ask(client, 'run', {
-      argv: ['node', '-e', 'setInterval(() => {}, 1000)'],
+      argv: ['node', join(t.base, 'scripts/forever.js')],
       trigger: 'click'
     });
     if (!started.ok) throw new Error(started.error.code);

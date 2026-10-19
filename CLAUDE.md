@@ -2,7 +2,7 @@
 
 Bridge lets the ChatGPT web chat edit a local project. A Chrome MV3 extension on chatgpt.com parses `@@FILE` blocks and shows diff cards. An Electron desktop app writes the files inside a sandboxed project root, connected over loopback. Personal project.
 
-**Before any task, read PLAN.md, CHECKLIST.md and DESIGN.md. When you finish one, tick it in CHECKLIST.md.** Work only on the current phase.
+**Before any task, read PLAN.md, CHECKLIST.md and DESIGN.md (and SECURITY.md for anything touching a control). When you finish one, tick it in CHECKLIST.md.** Work only on the current phase.
 
 ## Stack
 
@@ -26,7 +26,7 @@ pnpm test         # vitest
 pnpm format       # prettier --write .
 ```
 
-Before saying a task is done, run lint, typecheck, test and build.
+Before saying a task is done, run format:check, lint, typecheck, build, `pnpm test:coverage` (thresholds in vitest.config.ts) and, for anything the app or extension does, the e2e scripts.
 If `pnpm dev` fails with `electron.app` undefined, the shell has `ELECTRON_RUN_AS_NODE=1`. Use `env -u ELECTRON_RUN_AS_NODE pnpm dev`.
 
 ## Conventions
@@ -39,10 +39,12 @@ If `pnpm dev` fails with `electron.app` undefined, the shell has `ELECTRON_RUN_A
 
 ## Security rules (never break these)
 
-1. The local server binds **127.0.0.1 only**, checks `Origin`, and requires the pairing token.
-2. **Path sandbox** on every chat-supplied path: no absolute paths, no `..`, no symlinks that resolve outside the root, nothing under `.git`, no `.env*` files.
-3. Commands use **`spawn` with `shell: false`** and an argv-prefix **allowlist** the user sets in the app. Never build a shell string. The one exception is Windows: `.cmd`/`.bat` shims can't be spawned without a shell, so `CommandRunner` uses `cross-spawn` there (only when `process.platform === 'win32'`), which escapes every argument for `cmd.exe`, and Bridge refuses cmd metacharacters in arguments to batch files. See PLAN.md, "Phase 5 decisions".
-4. Electron: `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`, strict CSP. Preload exposes only narrow, typed, validated methods.
+1. The local server binds **127.0.0.1 only**, checks `Host` and `Origin`, and requires the pairing key's HMAC proofs. Pairing keeps a key only after the user confirmed the fingerprint in the app and the extension. Keep its limits (frame size, 2 connections, HTTP timeout, per-operation rates).
+2. **Path sandbox** on every chat-supplied path: no absolute paths, no `..`, no symlinks that resolve outside the root, nothing under `.git`, no `.env*` files, no files with more than one hard link. Re-check the target folder's real path right before every commit (rename, link, remove).
+3. Commands use **`spawn` with `shell: false`** and an **allowlist** the user sets in the app. Entries match **exactly**; only a trailing `*` allows extra arguments. Options in `DENIED_FLAGS` (shared `commands.ts`) are refused even under `*`; extend that one table, never bypass it. Never build a shell string. The one exception is Windows: `.cmd`/`.bat` shims can't be spawned without a shell, so `CommandRunner` uses `cross-spawn` there (only when `process.platform === 'win32'`), which escapes every argument for `cmd.exe`, and Bridge refuses cmd metacharacters in arguments to batch files. See PLAN.md, "Phase 5 decisions".
+4. Electron: `app.enableSandbox()`, `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`, strict CSP (no `unsafe-*`), permissions and navigation refused for every web contents, fuses set at packaging. Preload exposes only narrow, typed methods; every IPC channel has a zod schema in `main/ipc.ts` and goes through `handle()`.
 5. **No telemetry**, analytics or non-loopback network calls.
 6. **No Codex or OpenAI branding** in names, UI, icons or copy. Say "the chat".
-7. Extension permissions stay minimal: chatgpt.com only, no `<all_urls>`.
+7. Extension permissions stay minimal: chatgpt.com only, no `<all_urls>`, empty `externally_connectable`. Every `chrome.runtime` listener checks the sender and parses with zod.
+8. **Redaction:** everything Bridge puts into the chat (command output, file contents) goes through `redactSecrets`, via the `prompts.ts` builders. Never insert raw content around them.
+9. `chrome.storage.local` holds paths, hashes, counts and states only: never file contents, output or keys.

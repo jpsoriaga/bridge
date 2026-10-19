@@ -1,7 +1,7 @@
 // Pairing, reconnect and lockout against the built desktop app and the unpacked extension.
 const fs = require('node:fs');
 const path = require('node:path');
-const { tempDir, launchApp, launchChrome } = require('./lib.cjs');
+const { tempDir, launchApp, launchChrome, enterCode } = require('./lib.cjs');
 
 const APP_DATA = tempDir('app-data');
 const step = (m) => console.log('•', m);
@@ -42,16 +42,31 @@ function readIdbKey() {
   await panelStatus.filter({ hasText: 'Not paired' }).waitFor({ timeout: 10000 });
   step('panel: ' + (await panelStatus.innerText()));
 
+  /** A fresh code: after New code, waits until the app shows a different one. */
   async function getCode() {
+    const shown = win.locator('.pairing-code');
+    const before = await win.evaluate(
+      () => document.querySelector('.pairing-code')?.textContent ?? null
+    );
     await win
       .getByRole('button', { name: /Pair extension|Pair again|New code/ })
       .first()
       .click();
-    return (await win.locator('.pairing-code').innerText()).replace(/\D/g, '');
+    await win.waitForFunction((old) => {
+      const text = document.querySelector('.pairing-code')?.textContent ?? null;
+      return text !== null && text !== old && /^\d{3} \d{3}$/.test(text);
+    }, before);
+    return (await shown.innerText()).replace(/\D/g, '');
   }
+  /** A code the app refuses: just typed in. */
   async function enter(code) {
     await panel.fill('#pair-code', code);
     await panel.getByRole('button', { name: 'Pair' }).click();
+  }
+  /** The right code: typed in, then the fingerprint compared and confirmed on both sides. */
+  async function pairWith(code) {
+    const fingerprint = await enterCode(win, panel, code);
+    step(`fingerprint ${fingerprint} matched in the app and the panel; confirmed in both`);
   }
   const wrongFor = (code) => (code === '000000' ? '111111' : '000000');
 
@@ -60,14 +75,32 @@ function readIdbKey() {
   await enter(wrongFor(code));
   await panel.locator('#pair-error').waitFor();
   step('wrong code: ' + (await panel.locator('#pair-error').innerText()));
+
+  // The right code, then Cancel: nothing is kept on either side.
+  code = await getCode();
   await enter(code);
+  await panel.locator('.pairing-fingerprint').waitFor();
+  await panel.getByRole('button', { name: 'Cancel' }).click();
+  await win.getByRole('button', { name: 'Cancel' }).click();
+  await panel.locator('#pair-code').waitFor();
+  await desktopStatus(win).filter({ hasText: 'Not paired' }).waitFor();
+  step('fingerprint shown, then cancelled on both sides: still not paired');
+
+  // Confirming in the panel before the app is refused until the app confirms.
+  code = await getCode();
+  await enter(code);
+  await panel.getByRole('button', { name: 'They match' }).click();
+  await panel.getByText(/Click “They match” in the Bridge app first/).waitFor();
+  step('panel confirmed first: told to confirm in the app');
+  await win.getByRole('button', { name: 'They match' }).click();
+  await panel.getByRole('button', { name: 'They match' }).click();
   await panelStatus.filter({ hasText: 'Connected' }).waitFor({ timeout: 10000 });
   await desktopStatus(win).filter({ hasText: 'Connected' }).waitFor();
   step(
     `paired: panel=${await panelStatus.innerText()} desktop=${await desktopStatus(win).innerText()}`
   );
 
-  // The extension keeps only the token's hash, in the worker's IndexedDB and not in
+  // The extension keeps only the derived key, in the worker's IndexedDB and not in
   // chrome.storage.local (which content scripts can read); the desktop file is encrypted.
   const stored = await sw.evaluate(() => chrome.storage.local.get(null));
   step(`extension storage keys: ${Object.keys(stored).sort().join(',')}`);
@@ -89,7 +122,7 @@ function readIdbKey() {
   step(`unpaired from extension: desktop=${await desktopStatus(win).innerText()}`);
 
   // Pair, then unpair from the desktop.
-  await enter(await getCode());
+  await pairWith(await getCode());
   await panelStatus.filter({ hasText: 'Connected' }).waitFor({ timeout: 10000 });
   await nav(win, 'Settings').click();
   await win.getByRole('button', { name: 'Unpair' }).click();
@@ -98,7 +131,7 @@ function readIdbKey() {
   step('unpaired from desktop: panel=' + (await panelStatus.innerText()));
 
   // Pair, quit the app, relaunch. The alarm is set while the app is gone.
-  await enter(await getCode());
+  await pairWith(await getCode());
   await panelStatus.filter({ hasText: 'Connected' }).waitFor({ timeout: 10000 });
   await app.close();
   const t0 = Date.now();

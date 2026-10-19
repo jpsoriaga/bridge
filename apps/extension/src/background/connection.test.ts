@@ -1,8 +1,12 @@
-import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { createECDH, createHash, createHmac, randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CloseCode,
   DEFAULT_PORT,
+  FINGERPRINT_LABEL,
+  formatFingerprint,
+  PAIR_KEY_LABEL,
+  pairTranscript,
   proofInput,
   serverMessage,
   type BridgeConfig,
@@ -11,6 +15,8 @@ import {
 import {
   Connection,
   PING_INTERVAL_MS,
+  RATE_LIMIT_RETRIES,
+  RATE_LIMIT_RETRY_MS,
   REQUEST_TIMEOUT_MS,
   type ConnectionStorage
 } from './connection';
@@ -144,6 +150,52 @@ function memoryStorage(
   };
 }
 
+/** The fake app's pairing: its ECDH key, the exchange in progress, the user's confirmation. */
+const appEcdh = createECDH('prime256v1');
+appEcdh.generateKeys();
+const APP_KEY = appEcdh.getPublicKey().toString('base64url');
+const sha = (...parts: (string | Buffer)[]) => {
+  const hash = createHash('sha256');
+  for (const part of parts) hash.update(part);
+  return hash.digest('hex');
+};
+let exchange: {
+  port: number;
+  key: string;
+  nonce: string;
+  fingerprint: string;
+  confirmed: boolean;
+} | null;
+/** A squatter that answers /pair without deriving the key: its proof can't be right. */
+let lyingApp: boolean;
+
+function fakePair(port: number, body: Record<string, string>): Response {
+  if (body.code !== '123456') return Response.json({ error: 'invalid_code' }, { status: 401 });
+  const shared = appEcdh.computeSecret(Buffer.from(body.publicKey!, 'base64url'));
+  const transcript = pairTranscript(port, body.code, APP_KEY, body.publicKey!);
+  const key = sha(PAIR_KEY_LABEL, shared, transcript);
+  const nonce = sha(transcript);
+  exchange = {
+    port,
+    key,
+    nonce,
+    fingerprint: formatFingerprint(sha(FINGERPRINT_LABEL, transcript)),
+    confirmed: false
+  };
+  const proof = lyingApp ? 'e'.repeat(64) : sign(key, 'server', 'pair', port, nonce);
+  return Response.json({ publicKey: APP_KEY, proof });
+}
+
+function fakeConfirm(port: number, body: Record<string, string>): Response {
+  if (!exchange || body.proof !== sign(exchange.key, 'client', 'pair', port, exchange.nonce)) {
+    return Response.json({ error: 'no_pairing' }, { status: 401 });
+  }
+  if (!exchange.confirmed) return Response.json({ error: 'not_confirmed' }, { status: 409 });
+  servers.get(port)!.key = exchange.key;
+  exchange = null;
+  return new Response(null, { status: 204 });
+}
+
 const fakeFetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
   const url = new URL(String(input));
   const server = servers.get(Number(url.port));
@@ -153,9 +205,9 @@ const fakeFetch = vi.fn(async (input: string | URL | Request, init?: RequestInit
     case '/health':
       return Response.json({ name: 'bridge', version: '0.1.0' });
     case '/pair':
-      return body.code === '123456'
-        ? Response.json({ token: TOKEN })
-        : Response.json({ error: 'invalid_code' }, { status: 401 });
+      return fakePair(Number(url.port), body);
+    case '/pair/confirm':
+      return fakeConfirm(Number(url.port), body);
     case '/unpair/challenge':
       return Response.json({
         proof: sign(server.key!, 'server', 'unpair', Number(url.port), body.nonce!),
@@ -202,6 +254,8 @@ beforeEach(() => {
   });
   vi.stubGlobal('WebSocket', { OPEN: 1 });
   servers = new Map([[DEFAULT_PORT, { key: KEY }]]);
+  exchange = null;
+  lyingApp = false;
   sockets = [];
   statuses = [];
   alarm = {
@@ -352,10 +406,12 @@ describe('port pinning', () => {
   });
 
   it('pins the port it paired on', async () => {
-    servers = new Map([[DEFAULT_PORT + 3, { key: KEY }]]);
+    servers = new Map([[DEFAULT_PORT + 3, { key: null }]]);
     const { connection, storage } = makeConnection(memoryStorage(null));
     await connection.connect();
-    expect(await connection.pair('123456')).toEqual({ ok: true });
+    expect(await connection.pair('123456')).toMatchObject({ ok: true });
+    exchange!.confirmed = true;
+    expect(await connection.confirmPair()).toEqual({ ok: true });
     expect(storage.port).toBe(DEFAULT_PORT + 3);
   });
 });
@@ -455,14 +511,51 @@ describe('Connection', () => {
     expect(sockets).toHaveLength(0);
   });
 
-  it('pairs with a code, stores only the hash and connects', async () => {
+  it('pairs with a code, shows the app’s fingerprint, and keeps the key only once both confirm', async () => {
+    servers.set(DEFAULT_PORT, { key: null });
     const { connection, storage } = makeConnection(memoryStorage(null));
     await connection.connect();
     expect(await connection.pair('000000')).toEqual({ ok: false, error: 'invalid_code' });
-    expect(await connection.pair('123456')).toEqual({ ok: true });
-    expect(storage.key).toBe(KEY);
-    expect(sockets).toHaveLength(1);
+    const started = await connection.pair('123456');
+    expect(started).toEqual({ ok: true, fingerprint: exchange!.fingerprint });
+    expect(started).toMatchObject({
+      fingerprint: expect.stringMatching(/^[0-9a-f]{4} [0-9a-f]{4}$/)
+    });
+    const derived = exchange!.key;
+    // Nothing kept, and the app hasn't confirmed yet.
+    expect(storage.key).toBeNull();
+    expect(await connection.confirmPair()).toEqual({ ok: false, error: 'not-confirmed' });
+    expect(storage.key).toBeNull();
+    exchange!.confirmed = true;
+    expect(await connection.confirmPair()).toEqual({ ok: true });
+    expect(storage.key).toBe(derived);
+    await settle();
     expect(connection.current).toBe('connected');
+    // The key never crossed the wire.
+    expect(fakeFetch.mock.calls.some(([, init]) => String(init?.body).includes(derived))).toBe(
+      false
+    );
+  });
+
+  it('refuses an app that can’t prove it derived the key, before asking the user anything', async () => {
+    servers.set(DEFAULT_PORT, { key: null });
+    lyingApp = true;
+    const { connection, storage } = makeConnection(memoryStorage(null));
+    await connection.connect();
+    expect(await connection.pair('123456')).toEqual({ ok: false, error: 'failed' });
+    expect(await connection.confirmPair()).toEqual({ ok: false, error: 'expired' });
+    expect(storage.key).toBeNull();
+  });
+
+  it('forgets the exchange on cancel', async () => {
+    servers.set(DEFAULT_PORT, { key: null });
+    const { connection, storage } = makeConnection(memoryStorage(null));
+    await connection.connect();
+    expect(await connection.pair('123456')).toMatchObject({ ok: true });
+    exchange!.confirmed = true;
+    connection.cancelPair();
+    expect(await connection.confirmPair()).toEqual({ ok: false, error: 'expired' });
+    expect(storage.key).toBeNull();
   });
 
   it('unpair proves itself to the desktop and clears the key', async () => {
@@ -525,6 +618,32 @@ describe('file requests', () => {
       ok: false,
       error: { code: 'denied', message: 'Protected.' }
     });
+  });
+
+  it('waits out a rate-limited reply and retries, then gives up after a few', async () => {
+    let refusals = 2;
+    servers.set(DEFAULT_PORT, {
+      key: KEY,
+      respond: (m) =>
+        refusals-- > 0
+          ? serverMessage(m.id, 'response', {
+              ok: false,
+              error: { code: 'rate-limited', message: 'Slow down.' }
+            })
+          : serverMessage(m.id, 'response', { ok: true, result: READ })
+    });
+    const { connection } = makeConnection();
+    await connection.connect();
+    const pending = connection.request('read', { path: 'a.txt' });
+    await advance(RATE_LIMIT_RETRY_MS);
+    await advance(RATE_LIMIT_RETRY_MS);
+    expect(await pending).toEqual({ ok: true, result: READ });
+    expect(sockets[0]!.sent.filter((m) => m.type === 'read')).toHaveLength(3);
+
+    refusals = 100;
+    const stuck = connection.request('read', { path: 'a.txt' });
+    for (let i = 0; i < RATE_LIMIT_RETRIES; i++) await advance(RATE_LIMIT_RETRY_MS);
+    expect(await stuck).toMatchObject({ ok: false, error: { code: 'rate-limited' } });
   });
 
   it('rejects a result that does not match the schema for its request', async () => {

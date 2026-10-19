@@ -10,7 +10,7 @@ import {
   type TreeResult
 } from '@bridge/shared';
 import { MAX_FILES_PER_SEND, type RequestOutcome, type SendFilesResult } from '../messages';
-import { formatCount, panelWindowId, request, sessionErrorText } from './request';
+import { formatCount, panelWindowId, redactedText, request, sessionErrorText } from './request';
 
 /** Marker, fence and blank lines around each file in `@@CONTEXT` format. */
 const PER_FILE_OVERHEAD = 40;
@@ -230,7 +230,7 @@ export function SendFiles({ project, version }: { project: ProjectInfo; version:
           return;
         }
         setResult({
-          text: `Added ${outcome.sent.length} ${outcome.sent.length === 1 ? 'file' : 'files'} to the message box. Review it and press send.${refused ? ` Not sent: ${refused}.` : ''}`
+          text: `Added ${outcome.sent.length} ${outcome.sent.length === 1 ? 'file' : 'files'} to the message box. Review it and press send.${refused ? ` Not sent: ${refused}.` : ''}${redactedText(outcome.redacted)}`
         });
         setSelected(new Set());
       })

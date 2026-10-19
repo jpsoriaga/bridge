@@ -9,9 +9,10 @@ import {
 import {
   SIDE_PANEL_PORT,
   type ChatPanelState,
+  type PairConfirmResult,
   type PairResult,
   type PanelHello,
-  type PanelMessage,
+  PanelMessage,
   type StatusUpdate,
   type WorkerRequest
 } from '../messages';
@@ -46,7 +47,11 @@ function useWorker(): { update: StatusUpdate | null; live: LiveRun | null } {
   const [live, setLive] = useState<LiveRun | null>(null);
   useEffect(() => {
     const port = chrome.runtime.connect({ name: SIDE_PANEL_PORT });
-    port.onMessage.addListener((message: PanelMessage) => {
+    port.onMessage.addListener((raw: unknown) => {
+      // Only the worker can reach this port, and its messages are still checked.
+      const parsed = PanelMessage.safeParse(raw);
+      if (!parsed.success) return;
+      const message = parsed.data;
       switch (message.type) {
         case 'status':
           setUpdate(message);
@@ -92,6 +97,8 @@ function PairForm() {
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** The fingerprint to compare with the app's, once the code went through. */
+  const [fingerprint, setFingerprint] = useState<string | null>(null);
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -100,12 +107,79 @@ function PairForm() {
     setError(null);
     void request<PairResult>({ type: 'pair', code })
       .then((result) => {
-        if (!result.ok) setError(pairError(result));
+        if (result.ok) setFingerprint(result.fingerprint);
+        else setError(pairError(result));
         setCode('');
       })
       .catch(() => setError('Pairing failed. Try again.'))
       .finally(() => setBusy(false));
   };
+
+  const confirm = () => {
+    setBusy(true);
+    setError(null);
+    void request<PairConfirmResult>({ type: 'pair-confirm' })
+      .then((result) => {
+        if (result.ok) return;
+        if (result.error === 'not-confirmed') {
+          setError('Click “They match” in the Bridge app first, then confirm here.');
+        } else if (result.error === 'app-not-running') {
+          setError('The Bridge app isn’t running. Open it and try again.');
+        } else {
+          setFingerprint(null);
+          setError('This pairing expired or was cancelled. Start a new code in the Bridge app.');
+        }
+      })
+      .catch(() => setError('Pairing failed. Try again.'))
+      .finally(() => setBusy(false));
+  };
+
+  const cancel = () => {
+    setFingerprint(null);
+    setError(null);
+    void request({ type: 'pair-cancel' });
+  };
+
+  if (fingerprint) {
+    return (
+      <section className="pair-form" aria-labelledby="fingerprint-label">
+        <p className="label" id="fingerprint-label">
+          Check the fingerprint
+        </p>
+        <p className="hint">
+          The Bridge app shows a fingerprint too. Confirm only if it’s the same as this one.
+        </p>
+        <p
+          className="pairing-fingerprint mono"
+          aria-label={`Fingerprint ${fingerprint.replace(' ', '').split('').join(' ')}`}
+        >
+          {fingerprint}
+        </p>
+        <p className="hint">
+          If they differ, something other than the Bridge app answered: cancel, and start again in
+          the app.
+        </p>
+        <div className="pair-row">
+          <button
+            type="button"
+            className="btn btn-primary btn-lg"
+            disabled={busy}
+            onClick={confirm}
+          >
+            {busy ? 'Pairing…' : 'They match'}
+          </button>
+          <button type="button" className="btn btn-lg" disabled={busy} onClick={cancel}>
+            Cancel
+          </button>
+        </div>
+        {error && (
+          <p className="error-text" role="alert">
+            {error}
+          </p>
+        )}
+      </section>
+    );
+  }
 
   return (
     <form className="pair-form" onSubmit={submit}>

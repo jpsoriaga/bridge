@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { FILE_ERROR_LABELS } from '@bridge/shared';
 import type { ContextEntry, ContextResendResult, PendingRequest } from '../messages';
-import { formatCount, panelWindowId, request, sessionErrorText } from './request';
+import { formatCount, panelWindowId, redactedText, request, sessionErrorText } from './request';
 
 /**
  * Files sent to the chat this session, newest first, with how much of the message each
@@ -36,7 +36,7 @@ export function ContextFiles({
         setResult({
           text:
             outcome.sent.length > 0
-              ? `Added ${outcome.sent.length} changed ${outcome.sent.length === 1 ? 'file' : 'files'} to the message box. Review it and press send.${refused ? ` Not sent: ${refused}.` : ''}`
+              ? `Added ${outcome.sent.length} changed ${outcome.sent.length === 1 ? 'file' : 'files'} to the message box. Review it and press send.${refused ? ` Not sent: ${refused}.` : ''}${redactedText(outcome.redacted)}`
               : `Nothing to send.${refused ? ` Not sent: ${refused}.` : ''}`
         });
       })

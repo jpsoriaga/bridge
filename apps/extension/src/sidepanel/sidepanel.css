@@ -51,6 +51,15 @@
   margin-top: var(--space-4);
 }
 
+/* The pairing fingerprint: the same size and face as the app's pairing code. */
+.pairing-fingerprint {
+  margin: var(--space-3) 0;
+  font-size: var(--text-xl);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+}
+
 .pair-row .input {
   flex: 1;
   min-width: 0;

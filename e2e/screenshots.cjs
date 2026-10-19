@@ -3,7 +3,7 @@
 //   node e2e/screenshots.cjs .   → docs/screenshots/*.png
 const fs = require('node:fs');
 const path = require('node:path');
-const { ROOT, EXT, tempDir, launchApp, launchChrome } = require('./lib.cjs');
+const { ROOT, EXT, tempDir, launchApp, launchChrome, enterCode } = require('./lib.cjs');
 const { step, SHELL, assistantTurn, cardText, clickInCard, waitFor } = require('./chat-lib.cjs');
 
 const OUT = path.join(ROOT, 'docs/screenshots');
@@ -57,8 +57,7 @@ const PAGE = SHELL.replace(
   await panel.goto(`chrome-extension://${extId}/src/sidepanel/index.html`);
   await win.getByRole('button', { name: 'Pair extension' }).click();
   const code = (await win.locator('.pairing-code').innerText()).replace(/\D/g, '');
-  await panel.fill('#pair-code', code);
-  await panel.getByRole('button', { name: 'Pair' }).click();
+  await enterCode(win, panel, code);
   await panel
     .locator('header .status')
     .filter({ hasText: 'Connected' })

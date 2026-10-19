@@ -41,4 +41,42 @@ describe('manifest', () => {
     expect(manifest.key).toBe(EXTENSION_PUBLIC_KEY);
     expect(extensionIdFromKey(EXTENSION_PUBLIC_KEY)).toBe(BRIDGE_EXTENSION_ID);
   });
+
+  it('runs extension pages under a strict CSP', async () => {
+    const manifest = await loadManifest();
+    const csp = manifest.content_security_policy?.extension_pages ?? '';
+    const directives = new Map(
+      csp
+        .split(';')
+        .map((d) => d.trim().split(/\s+/))
+        .filter((parts) => parts[0])
+        .map(([name, ...values]) => [name!, values])
+    );
+    expect(directives.get('script-src')).toEqual(["'self'"]);
+    expect(directives.get('object-src')).toEqual(["'none'"]);
+    expect(csp).not.toMatch(/unsafe-|https?:|\*/);
+  });
+
+  it('lets no web page or other extension connect', async () => {
+    const manifest = await loadManifest();
+    expect(manifest.externally_connectable).toEqual({ ids: [] });
+  });
+
+  it('declares nothing it doesn’t use: no other keys that widen access', async () => {
+    const manifest = (await loadManifest()) as unknown as Record<string, unknown>;
+    for (const key of [
+      'optional_permissions',
+      'optional_host_permissions',
+      'sandbox',
+      'chrome_url_overrides',
+      'devtools_page',
+      'oauth2',
+      'declarative_net_request',
+      'commands'
+    ]) {
+      expect(manifest[key], key).toBeUndefined();
+    }
+    const resources = (manifest.web_accessible_resources ?? []) as { matches: string[] }[];
+    for (const entry of resources) expect(entry.matches).toEqual(['https://chatgpt.com/*']);
+  });
 });

@@ -330,7 +330,7 @@ describe('Undo all', () => {
 
 const CONFIG: BridgeConfig = {
   mode: 'manual',
-  allowlist: ['pnpm test'],
+  allowlist: ['pnpm test *', 'git status', 'node *'],
   stepLimit: 10,
   pauseOnFailure: false,
   running: null,
@@ -371,6 +371,12 @@ describe('RunCard', () => {
     ['pnpm test -- --run', 'allowlisted', null],
     ['pnpm testx', 'not allowed', 'it isn’t on the allowlist in the Bridge app'],
     ['git push', 'not allowed', 'it isn’t on the allowlist in the Bridge app'],
+    ['git status --short', 'not allowed', 'it isn’t on the allowlist in the Bridge app'],
+    [
+      'node -e 1',
+      'not allowed',
+      'Bridge never allows -e here: it could run other code, write files or change folders'
+    ],
     [
       'pnpm test && rm -rf /',
       'not allowed',

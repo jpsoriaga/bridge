@@ -11,7 +11,7 @@ import {
 import type { ReadCardRecord, RequestOutcome, SentFile } from '../../../messages';
 import { insertIntoComposer } from '../composer';
 import { failureText, type Ask } from './diff-card';
-import { formatCount, h, icon, renderCard } from './dom';
+import { formatCount, h, icon, redactionNote, renderCard } from './dom';
 import { createHost } from './host';
 
 type Entry =
@@ -142,8 +142,8 @@ export class ReadCard {
     this.render();
   }
 
-  /** The text Send would insert. */
-  message(): string {
+  /** The text Send would insert, and how many likely secrets in it are `[redacted]`. */
+  message(): { text: string; redacted: number } {
     const files = this.entries.flatMap((e) =>
       e.status === 'ok' ? [{ path: e.path, content: e.content }] : []
     );
@@ -154,7 +154,7 @@ export class ReadCard {
   }
 
   private send(): void {
-    const text = this.message();
+    const { text } = this.message();
     const result = insertIntoComposer(text);
     if (!result.ok) {
       this.error =
@@ -183,7 +183,8 @@ export class ReadCard {
   private render(): void {
     const loading = this.entries.some((e) => e.status === 'loading');
     const okCount = this.entries.filter((e) => e.status === 'ok').length;
-    const chars = loading ? 0 : this.message().length;
+    const built = loading ? { text: '', redacted: 0 } : this.message();
+    const chars = built.text.length;
 
     const rows = this.entries.map((entry) =>
       h(
@@ -214,6 +215,7 @@ export class ReadCard {
       tone = 'warning';
     }
     if (this.sent) hint = 'Added to the message box. Review it and press send.';
+    if (built.redacted > 0) hint += ` ${redactionNote(built.redacted)}`;
     if (this.disabled) hint = 'Session ended.';
 
     const button = h(

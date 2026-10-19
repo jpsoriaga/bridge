@@ -1,7 +1,7 @@
 {
   "name": "bridge-e2e",
   "private": true,
-  "description": "Manual end-to-end scripts. Not part of the pnpm workspace or CI. See README.md.",
+  "description": "End-to-end scripts. Not part of the pnpm workspace; CI runs them on Linux. See README.md.",
   "type": "commonjs",
   "scripts": {
     "pairing": "node run.cjs ..",

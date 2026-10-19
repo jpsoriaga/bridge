@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CardStore } from './cards';
+import { ChatPanelState } from '../messages';
 import { Sessions } from './sessions';
 import { memoryArea } from './store';
 
@@ -210,5 +211,25 @@ describe('Sessions', () => {
     // No hash to compare: never stale, only missing.
     await sessions.noteDisk('old.ts', 'e'.repeat(64));
     expect((await sessions.context(1))[0]?.stale).toBe(false);
+  });
+
+  it('builds panel state the side panel’s schema accepts', async () => {
+    const { sessions } = setup();
+    const panel = async (tabId: number) =>
+      ChatPanelState.parse({
+        ...(await sessions.panelState(tabId)),
+        loop: null,
+        requests: [],
+        watch: null
+      });
+    expect((await panel(1)).tab).toBeNull();
+    await sessions.sync(1, null, 'ok');
+    await sessions.start(1);
+    await sessions.addSent(1, [{ path: 'a.ts', chars: 3, hash: 'a'.repeat(64) }]);
+    expect((await panel(1)).session?.context).toEqual([
+      { path: 'a.ts', chars: 3, hash: 'a'.repeat(64), stale: false, missing: false }
+    ]);
+    await sessions.sync(1, 'conv-1234', 'ok');
+    expect((await panel(1)).session?.conversationId).toBe('conv-1234');
   });
 });
