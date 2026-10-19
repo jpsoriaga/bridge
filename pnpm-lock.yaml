@@ -51,7 +51,7 @@ importers:
         specifier: ^7.0.6
         version: 7.0.6
       electron-updater:
-        specifier: 6.8.10
+        specifier: ^6.8.10
         version: 6.8.10
       fastify:
         specifier: ^5.12.7
@@ -152,8 +152,8 @@ importers:
         specifier: ^2.0.0-beta.28
         version: 2.7.1(vite@5.4.21(@types/node@24.19.2))
       '@types/chrome':
-        specifier: ^0.0.306
-        version: 0.0.306
+        specifier: ^0.3.5
+        version: 0.3.5
       '@types/react':
         specifier: ^18.3.18
         version: 18.3.31
@@ -1127,8 +1127,8 @@ packages:
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
 
-  '@types/chrome@0.0.306':
-    resolution: {integrity: sha512-95kgcqvTNcaZCXmx/kIKY6uo83IaRNT3cuPxYqlB2Iu+HzKDCP4t7TUe7KhJijTdibcvn+SzziIcfSLIlgRnhQ==}
+  '@types/chrome@0.3.5':
+    resolution: {integrity: sha512-7HYsK7xalNxzLwGrP9lkCQPAA6V56VtPpOmv2CQnBnMzX5/Hpr+Iv5fqaIOIY/H/Q6ZBksLmurWh7zXPcZ4B7Q==}
 
   '@types/cross-spawn@6.0.6':
     resolution: {integrity: sha512-fXRhhUkG4H3TQk5dBhQ7m/JDdSNHKwR2BBia62lhwEIq9xGiQKLxd6LymNhn47SjXhsUEPmxi+PKw2OkW4LLjA==}
@@ -4024,7 +4024,7 @@ snapshots:
       '@types/deep-eql': 4.0.2
       assertion-error: 2.0.1
 
-  '@types/chrome@0.0.306':
+  '@types/chrome@0.3.5':
     dependencies:
       '@types/filesystem': 0.0.36
       '@types/har-format': 1.2.16
