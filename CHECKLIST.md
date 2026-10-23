@@ -414,7 +414,7 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [x] RELEASE.md "Dry run", run before tagging; PLAN.md
 - [x] Version 1.2.0-beta.3, CHANGELOG
 - [x] Dry run on GitHub: mac x64 smoke still timed out under Rosetta (step dropped, above); everything else passed
-- [ ] Dry run on GitHub green without the x64 smoke step
+- [x] Dry run on GitHub green without the x64 smoke step (run 39947867132; `release` skipped, `dry-run` passed)
 - [ ] Release workflow run for `v1.2.0-beta.3` on GitHub: pre-release, not Latest, unpacked zip only
 
 ## Landing page (`apps/site`)
