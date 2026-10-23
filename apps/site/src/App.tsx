@@ -8,8 +8,11 @@ import { Modes } from './components/Modes';
 import { Safety } from './components/Safety';
 import { Support } from './components/Support';
 import { Why } from './components/Why';
+import { useScrollReveal } from './lib/motion';
 
 export function App() {
+  useScrollReveal();
+
   return (
     <>
       <Header />

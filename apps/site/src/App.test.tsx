@@ -1,10 +1,10 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
 import { resetReleaseCache } from './lib/releases';
 
 const SECTIONS = [
-  'Let the ChatGPT web chat edit your local project, even on the Free plan.',
+  'Let the ChatGPT web chat edit your local project.',
   'Set it up once, then keep chatting',
   'You choose how much happens on its own',
   'The chat suggests. You stay in charge.',
@@ -53,11 +53,12 @@ describe.each(['light', 'dark'] as const)('the page in the %s theme', (theme) =>
     ).toBe('true');
   });
 
-  it('hides the footer wordmark from assistive technology', async () => {
+  it('draws the footer wordmark as an SVG hidden from assistive technology', async () => {
     await renderApp();
-    const wordmark = document.querySelector('footer .wordmark');
+    const wordmark = document.querySelector('footer svg.wordmark');
     expect(wordmark?.textContent).toBe('Bridge');
     expect(wordmark?.getAttribute('aria-hidden')).toBe('true');
+    expect(wordmark?.getAttribute('viewBox')).toMatch(/^[\d.-]+ [\d.-]+ [\d.]+ [\d.]+$/);
   });
 });
 
@@ -93,10 +94,29 @@ describe('the page', () => {
     vi.restoreAllMocks();
   });
 
-  it('lets the example diff card be applied and undone', async () => {
+  it('has one call to action in the hero, and no badge above the title', async () => {
     await renderApp();
-    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
-    expect(screen.getByRole('button', { name: 'Apply' })).toBeTruthy();
+    const hero = screen.getByRole('region', { name: /edit your local project/i });
+    expect(within(hero).queryByText(/now in beta/i)).toBeNull();
+    const buttons = hero.querySelectorAll('a.btn, button.btn');
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]?.textContent).toBe('Download');
+    expect(buttons[0]?.classList.contains('btn-accent')).toBe(true);
+    expect(buttons[0]?.getAttribute('href')).toBe('#download');
+    expect(within(hero).getByRole('link', { name: 'GitHub' }).classList.contains('btn')).toBe(
+      false
+    );
+    expect(within(hero).queryByRole('link', { name: /beta\.md/i })).toBeNull();
+  });
+
+  it('credits the author in the footer', async () => {
+    await renderApp();
+    const footer = screen.getByRole('contentinfo');
+    expect(within(footer).getByText(/made by/i).textContent).toBe(
+      'Made by John Patrick Soriaga, 2026'
+    );
+    expect(
+      within(footer).getByRole('link', { name: 'John Patrick Soriaga' }).getAttribute('href')
+    ).toBe('https://jpsoriaga.me');
   });
 });

@@ -4,38 +4,40 @@ import { GithubMark, Icon } from './Icon';
 
 export function Hero() {
   return (
-    <section id="top" aria-labelledby="hero-title" className="pt-12 pb-16 sm:pt-20 sm:pb-24">
-      <div className="container-page grid items-center gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,34rem)] lg:gap-16">
-        <div className="min-w-0">
-          <p className="mb-5 inline-flex items-center gap-2 rounded-full border border-border px-3 py-1 text-xs text-fg-muted">
-            <span className="dot" data-tone="success" />
-            Free and open source · now in beta
+    <section id="top" aria-labelledby="hero-title" className="pt-16 sm:pt-24 lg:pt-32">
+      <div className="container-page">
+        <h1
+          id="hero-title"
+          className="m-0 max-w-[13ch] text-display font-bold text-balance text-fg sm:max-w-[15ch]"
+        >
+          Let the ChatGPT web chat edit your local project.
+        </h1>
+        <div className="mt-8 grid gap-8 sm:mt-10 lg:grid-cols-[minmax(0,36rem)_auto] lg:items-end lg:justify-between">
+          <p className="m-0 text-lead text-pretty text-fg-muted">
+            Even on the Free plan. Each change the chat suggests shows up as a diff under its reply,
+            and nothing is written until you click Apply.
           </p>
-          <h1 id="hero-title" className="m-0 text-display font-semibold text-balance text-fg">
-            Let the ChatGPT web chat edit your local project, even on the Free plan.
-          </h1>
-          <p className="mt-6 mb-0 max-w-[36rem] text-lead text-pretty text-fg-muted">
-            No more pasting files in one by one. Bridge shows each change the chat suggests as a
-            diff right under its reply. You click Apply, and the Bridge app writes it into your
-            project folder, with undo.
-          </p>
-          <div className="mt-8 flex flex-wrap gap-3">
-            <a href="#download" className="btn btn-primary btn-xl">
-              <Icon name="download" />
-              Download
-            </a>
-            <a href={LINKS.github} className="btn btn-xl">
-              <GithubMark />
-              View on GitHub
-            </a>
-            <a href={LINKS.beta} className="btn btn-xl">
-              Read BETA.md
-            </a>
+          <div className="flex flex-col gap-4 lg:items-end">
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+              <a href="#download" className="btn btn-accent btn-xl">
+                <Icon name="download" />
+                Download
+              </a>
+              <a
+                href={LINKS.github}
+                className="inline-flex items-center gap-2 rounded-md text-sm font-medium text-fg-muted no-underline transition-colors duration-120 hover:text-fg"
+              >
+                <GithubMark />
+                GitHub
+              </a>
+            </div>
+            <p className="m-0 text-xs text-fg-muted">
+              macOS, Windows and Linux · Chrome, Edge or Brave · Free and open source
+            </p>
           </div>
-          <p className="mt-5 mb-0 text-xs text-fg-muted">
-            macOS, Windows and Linux · Chrome, Edge or Brave · Runs only on your computer
-          </p>
         </div>
+      </div>
+      <div className="container-wide mt-14 sm:mt-20">
         <ChatDemo />
       </div>
     </section>

@@ -429,6 +429,7 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [x] CI: `changes` job (`scripts/ci-changes.mjs`, tests), `site` job (20 min), check and e2e skip site-only changes; Vercel `ignoreCommand`
 - [x] Screenshots at phone, tablet and desktop in both themes (`docs/screenshots/site/`); the wordmark fills the width and is cut about 25% at every size, no horizontal scroll
 - [x] `apps/site/README.md` (local, Vercel, DNS, new domain, funding), README link and "Why Bridge exists", PLAN.md "Landing page decisions", DESIGN.md "Landing page"
+- [x] Redesign pass: display type scale, varied section layouts, green Download call to action, looping hero demo (pauses off screen, hidden or paused; final frame under reduced motion), scroll reveals, smooth FAQ, theme crossfade, SVG footer wordmark that fits every width, finished Support section, footer credit; `scripts/screenshots.mjs` checks 320–2560px and records the demo
 - [ ] Vercel project and the `bridge.jpsoriaga.me` DNS record (by hand, `apps/site/README.md`)
 - [ ] Funding links and the GCash QR (`src/config/funding.ts`, `public/gcash-qr.png`)
 - [ ] Jaypee reviews the "Why Bridge exists" text

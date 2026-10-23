@@ -24,5 +24,6 @@ export const LINKS = {
   security: repoFile('SECURITY.md'),
   privacy: repoFile('PRIVACY.md'),
   license: repoFile('LICENSE'),
+  issues: `${GITHUB_URL}/issues`,
   author: AUTHOR_URL
 } as const;

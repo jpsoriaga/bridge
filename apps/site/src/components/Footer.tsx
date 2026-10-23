@@ -1,4 +1,3 @@
-import { useEffect, useRef, useState } from 'react';
 import { LINKS } from '../config/site';
 import { Logo } from './Logo';
 
@@ -30,36 +29,14 @@ const COLUMNS = [
   }
 ];
 
-// Fades the wordmark in the first time it scrolls into view. Without IntersectionObserver,
-// or under prefers-reduced-motion, it's simply shown.
-function useReveal() {
-  const ref = useRef<HTMLParagraphElement>(null);
-  const [state, setState] = useState<'hidden' | 'shown' | undefined>(undefined);
-  useEffect(() => {
-    const el = ref.current;
-    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? true;
-    if (!el || reduced || typeof IntersectionObserver === 'undefined') return;
-    setState('hidden');
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          setState('shown');
-          observer.disconnect();
-        }
-      },
-      { threshold: 0.2 }
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-  return { ref, state };
-}
+// The wordmark's box in Geist 900 at 100px: x 6 to 320 covers the ink of "Bridge" with its
+// spacing tightened to -0.03em (textLength), y -74 to 17 runs from the cap height to the
+// bottom of the g. Measured once in Chromium; textLength holds the width whatever the font.
+const WORDMARK = { x: 6, y: -74, width: 314, height: 91, length: 319.4 };
 
 export function Footer() {
-  const { ref, state } = useReveal();
-
   return (
-    <footer className="overflow-hidden border-t border-border">
+    <footer className="mt-12 overflow-hidden border-t border-border sm:mt-20">
       <div className="container-page">
         <div className="grid gap-10 py-12 sm:py-16 md:grid-cols-[minmax(0,1fr)_auto] md:gap-16">
           <div className="max-w-[20rem]">
@@ -100,14 +77,44 @@ export function Footer() {
           <p className="m-0">
             Made by{' '}
             <a className="link text-fg-muted" href={LINKS.author}>
-              Jaypee
+              John Patrick Soriaga
             </a>
+            , 2026
           </p>
         </div>
+      </div>
 
-        <p ref={ref} className="wordmark" aria-hidden="true" data-reveal={state}>
-          Bridge
-        </p>
+      <div className="mt-4 px-2 sm:mt-8 sm:px-4">
+        <svg
+          className="wordmark"
+          viewBox={`${WORDMARK.x} ${WORDMARK.y} ${WORDMARK.width} ${WORDMARK.height}`}
+          aria-hidden="true"
+          focusable="false"
+          data-reveal=""
+        >
+          <defs>
+            <linearGradient
+              id="wordmark-fade"
+              gradientUnits="userSpaceOnUse"
+              x1="0"
+              y1={WORDMARK.y}
+              x2="0"
+              y2={WORDMARK.y + WORDMARK.height}
+            >
+              <stop offset="0.08" className="wordmark-from" />
+              <stop offset="0.64" className="wordmark-to" />
+            </linearGradient>
+          </defs>
+          <text
+            x="0"
+            y="0"
+            textLength={WORDMARK.length}
+            lengthAdjust="spacing"
+            fill="url(#wordmark-fade)"
+          >
+            Bridge
+          </text>
+        </svg>
       </div>
     </footer>
   );

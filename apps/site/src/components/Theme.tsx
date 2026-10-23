@@ -1,4 +1,5 @@
 import { useRef, useSyncExternalStore, type KeyboardEvent } from 'react';
+import { prefersReducedMotion } from '../lib/motion';
 import { Icon, type IconName } from './Icon';
 
 // System, Light or Dark, as the app's Appearance setting. "System" removes data-theme so
@@ -45,7 +46,13 @@ export function ThemeSwitch() {
   const choice = useSyncExternalStore(subscribe, readTheme, () => 'system');
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
 
-  const choose = (value: ThemeChoice) => applyTheme(value);
+  // The page crossfades into the new theme where the browser has view transitions.
+  const choose = (value: ThemeChoice) => {
+    if (value === choice) return;
+    if (typeof document.startViewTransition === 'function' && !prefersReducedMotion()) {
+      document.startViewTransition(() => applyTheme(value));
+    } else applyTheme(value);
+  };
 
   // Arrow keys move and choose, as in a radio group.
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {

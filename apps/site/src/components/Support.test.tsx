@@ -16,7 +16,16 @@ describe('Support', () => {
     expect(screen.queryByRole('link', { name: /sponsors/i })).toBeNull();
     expect(screen.queryByRole('link', { name: /ko-fi/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /gcash/i })).toBeNull();
-    expect(screen.getByText(/coming soon/i)).toBeTruthy();
+    expect(screen.getByRole('link', { name: /star on github/i })).toBeTruthy();
+  });
+
+  it('shows the costs and the star button when no link is set', () => {
+    render(<Support goals={GOALS} links={NONE} />);
+    expect(screen.getAllByRole('progressbar')).toHaveLength(1);
+    expect(screen.getByText(/helps just as much/i)).toBeTruthy();
+    const star = screen.getByRole('link', { name: /star on github/i });
+    expect(star.getAttribute('href')).toBe('https://github.com/jpsoriaga/bridge');
+    expect(star.classList.contains('btn')).toBe(true);
   });
 
   it('shows only the buttons that have a link', () => {
@@ -26,7 +35,7 @@ describe('Support', () => {
     );
     expect(screen.queryByRole('link', { name: /sponsors/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /gcash/i })).toBeNull();
-    expect(screen.queryByText(/coming soon/i)).toBeNull();
+    expect(screen.getByRole('link', { name: /star on github/i })).toBeTruthy();
   });
 
   it('shows progress until a goal is reached, then "Funded"', () => {

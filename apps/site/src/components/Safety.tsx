@@ -39,7 +39,7 @@ export function Safety() {
   return (
     <Section
       id="safety"
-      label="Safe by design"
+      layout="split"
       title="The chat suggests. You stay in charge."
       intro={
         <>
@@ -51,14 +51,16 @@ export function Safety() {
         </>
       }
     >
-      <ul className="m-0 grid list-none gap-x-8 gap-y-8 p-0 sm:grid-cols-2 lg:grid-cols-3">
+      <ul className="m-0 grid list-none gap-x-10 p-0 sm:grid-cols-2 sm:gap-y-2" data-reveal="group">
         {POINTS.map((point) => (
-          <li key={point.title} className="border-t border-border pt-5">
-            <span className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-fg">
-              <Icon name={point.icon} />
-            </span>
-            <h3 className="mt-4 mb-1.5 text-base font-semibold">{point.title}</h3>
-            <p className="m-0 text-sm text-fg-muted">{point.body}</p>
+          <li key={point.title} className="flex gap-4 border-t border-border py-6">
+            <Icon name={point.icon} size={20} className="mt-0.5 text-fg" />
+            <div>
+              <h3 className="mt-0 mb-1.5 text-lg font-semibold tracking-[-0.01em]">
+                {point.title}
+              </h3>
+              <p className="m-0 text-base text-fg-muted">{point.body}</p>
+            </div>
           </li>
         ))}
       </ul>

@@ -75,7 +75,7 @@ export function Download() {
   return (
     <Section
       id="download"
-      label="Download"
+      layout="panel"
       title="Get Bridge"
       intro="You need both parts: the app for your computer and the extension for your browser. Both are free."
     >
@@ -95,7 +95,10 @@ export function Download() {
 
 function Loading() {
   return (
-    <div className="rounded-lg border border-border p-5 sm:p-6" aria-label="Loading downloads">
+    <div
+      className="rounded-xl border border-border bg-bg p-5 sm:p-8"
+      aria-label="Loading downloads"
+    >
       <div className="h-3.5 w-40 rounded-sm bg-bg-muted" />
       <div className="mt-6 h-11 w-64 max-w-full rounded-md bg-bg-muted" />
       <div className="mt-3 h-3.5 w-72 max-w-full rounded-sm bg-bg-muted" />
@@ -113,8 +116,8 @@ function Ready({ release, detected }: { release: PickedRelease; detected: Detect
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="rounded-lg border border-border-strong">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-5 py-3 sm:px-6">
+      <div className="rounded-xl border border-border-strong bg-bg">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-5 py-3 sm:px-8">
           <span className="font-mono text-sm font-medium">Bridge {release.version}</span>
           {release.beta ? (
             <span className="badge" data-tone="warning" title="A test version for early testers">
@@ -129,12 +132,12 @@ function Ready({ release, detected }: { release: PickedRelease; detected: Detect
           </a>
         </div>
 
-        <div className="grid gap-6 p-5 sm:p-6 md:grid-cols-2">
+        <div className="grid gap-8 p-5 sm:p-8 md:grid-cols-2">
           <div>
             <p className="mt-0 mb-3 text-xs text-fg-muted">1. The app, for your computer</p>
             {primary ? (
               <>
-                <a href={primary.url} className="btn btn-primary btn-xl w-full sm:w-auto">
+                <a href={primary.url} className="btn btn-accent btn-xl w-full sm:w-auto">
                   <Icon name="download" />
                   {LABELS[primary.key].button}
                 </a>
@@ -184,11 +187,11 @@ function Ready({ release, detected }: { release: PickedRelease; detected: Detect
           <h3 className="mt-0 mb-3 text-sm font-semibold">
             {primary ? 'Other systems' : 'All systems'}
           </h3>
-          <ul className="m-0 list-none divide-y divide-border rounded-lg border border-border p-0">
+          <ul className="m-0 list-none divide-y divide-border rounded-xl border border-border bg-bg p-0">
             {others.map((d) => (
               <li
                 key={d.key}
-                className="flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-3 sm:px-6"
+                className="flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-3 sm:px-8"
               >
                 <div className="min-w-0 flex-1">
                   <p className="m-0 text-base font-medium">{LABELS[d.key].name}</p>
@@ -211,12 +214,12 @@ function Ready({ release, detected }: { release: PickedRelease; detected: Detect
 
 function Fallback({ reason }: { reason: keyof typeof FALLBACK_TEXT }) {
   return (
-    <div className="rounded-lg border border-border-strong p-5 sm:p-6">
+    <div className="rounded-xl border border-border-strong bg-bg p-5 sm:p-8">
       <p className="m-0 text-base">{FALLBACK_TEXT[reason]}</p>
       <p className="mt-1 mb-0 text-sm text-fg-muted">
         Every installer and the extension zip are on GitHub’s Releases page, under Assets.
       </p>
-      <a href={RELEASES_URL} className="btn btn-primary btn-lg mt-5">
+      <a href={RELEASES_URL} className="btn btn-accent btn-xl mt-6">
         Open the Releases page
         <Icon name="external" />
       </a>
@@ -226,7 +229,7 @@ function Fallback({ reason }: { reason: keyof typeof FALLBACK_TEXT }) {
 
 function Notes() {
   return (
-    <div className="mt-8 grid gap-4 text-sm text-fg-muted md:grid-cols-3">
+    <div className="mt-10 grid gap-6 text-sm text-fg-muted md:grid-cols-3 md:gap-8">
       <p className="m-0">
         <strong className="font-semibold text-fg">macOS and Windows will warn you</strong> the first
         time. Bridge isn’t signed yet (that costs a yearly fee), so they can’t tell who made it.{' '}

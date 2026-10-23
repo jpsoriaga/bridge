@@ -24,56 +24,86 @@ export function Support({
   const [qrOpen, setQrOpen] = useState(false);
   const hasLinks = Boolean(links.githubSponsors || links.kofi || links.gcashQr);
 
+  const total = goals.reduce((sum, goal) => sum + goal.goal, 0);
+
   return (
     <Section
       id="support"
-      label="Support Bridge"
       title="Help Bridge reach more people"
       intro="Bridge is free and always will be. Support only covers the two costs below, and nothing else. I update the numbers by hand; nothing on this page is tracked."
     >
-      <ul className="m-0 grid list-none gap-4 p-0 md:grid-cols-2">
-        {goals.map((goal) => (
-          <FundingItem key={goal.id} goal={goal} />
-        ))}
-      </ul>
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,20rem)]">
+        <ul
+          className="m-0 grid list-none gap-4 p-0 md:grid-cols-2 lg:col-span-2"
+          data-reveal="group"
+        >
+          {goals.map((goal) => (
+            <FundingItem key={goal.id} goal={goal} />
+          ))}
+        </ul>
 
-      <div className="mt-8 flex flex-col gap-4">
-        {hasLinks ? (
-          <div className="flex flex-wrap gap-3">
-            {links.githubSponsors ? (
-              <a href={links.githubSponsors} className="btn btn-lg">
-                <GithubMark />
-                GitHub Sponsors
-              </a>
-            ) : null}
-            {links.kofi ? (
-              <a href={links.kofi} className="btn btn-lg">
-                <Icon name="coffee" />
-                Ko-fi
-              </a>
-            ) : null}
-            {links.gcashQr ? (
-              <button
-                type="button"
-                className="btn btn-lg"
-                aria-haspopup="dialog"
-                onClick={() => setQrOpen(true)}
-              >
-                <Icon name="qr" />
-                GCash
-              </button>
-            ) : null}
+        <div
+          className="flex flex-col rounded-xl bg-bg-muted p-6 sm:p-7"
+          data-reveal=""
+          aria-labelledby="support-help-title"
+          role="group"
+        >
+          <h3 id="support-help-title" className="m-0 text-lg font-semibold tracking-[-0.01em]">
+            {hasLinks ? 'Chip in' : 'Can’t chip in?'}
+          </h3>
+          {hasLinks ? (
+            <>
+              <p className="mt-2 mb-0 text-base text-fg-muted">
+                About {dollars(total)} covers both. Any amount helps.
+              </p>
+              <div className="mt-5 flex flex-wrap gap-3">
+                {links.githubSponsors ? (
+                  <a href={links.githubSponsors} className="btn btn-lg">
+                    <GithubMark />
+                    GitHub Sponsors
+                  </a>
+                ) : null}
+                {links.kofi ? (
+                  <a href={links.kofi} className="btn btn-lg">
+                    <Icon name="coffee" />
+                    Ko-fi
+                  </a>
+                ) : null}
+                {links.gcashQr ? (
+                  <button
+                    type="button"
+                    className="btn btn-lg"
+                    aria-haspopup="dialog"
+                    onClick={() => setQrOpen(true)}
+                  >
+                    <Icon name="qr" />
+                    GCash
+                  </button>
+                ) : null}
+              </div>
+              <p className="mt-6 mb-0 text-sm text-fg-muted">
+                Can’t chip in? A star on GitHub, a bug report or telling a friend helps just as
+                much.
+              </p>
+            </>
+          ) : (
+            <p className="mt-2 mb-0 text-base text-fg-muted">
+              A star on GitHub, a bug report or telling a friend helps just as much.
+            </p>
+          )}
+          <div className="mt-auto flex flex-wrap gap-x-5 gap-y-3 pt-6">
+            <a href={LINKS.github} className="btn btn-lg">
+              <Icon name="star" />
+              Star on GitHub
+            </a>
+            <a
+              href={LINKS.issues}
+              className="inline-flex items-center rounded-sm text-sm font-medium text-fg-muted no-underline transition-colors duration-120 hover:text-fg"
+            >
+              Report a bug
+            </a>
           </div>
-        ) : (
-          <p className="m-0 text-sm text-fg-muted">Ways to chip in are coming soon.</p>
-        )}
-        <p className="m-0 text-sm text-fg-muted">
-          Can’t chip in? That’s fine. A{' '}
-          <a className="link" href={LINKS.github}>
-            star on GitHub
-          </a>
-          , a bug report or telling a friend in the same boat helps just as much.
-        </p>
+        </div>
       </div>
 
       {qrOpen && links.gcashQr ? (
@@ -102,13 +132,20 @@ function FundingItem({ goal }: { goal: FundingGoal }) {
   }`;
 
   return (
-    <li className="flex flex-col rounded-lg border border-border p-5 sm:p-6" data-funded={funded}>
-      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-        <h3 className="m-0 text-base font-semibold">{goal.title}</h3>
-        <span className="text-sm text-fg-muted">{target}</span>
-      </div>
+    <li className="flex flex-col rounded-xl border border-border p-6 sm:p-7" data-funded={funded}>
+      <p className="m-0 flex flex-wrap items-baseline gap-x-2">
+        <span className="text-[2.5rem] leading-none font-semibold tracking-[-0.03em] tabular-nums">
+          {goal.approximate ? '~' : ''}
+          {dollars(goal.goal)}
+        </span>
+        <span className="text-sm text-fg-muted">
+          {goal.cadence === 'per year' ? 'a year' : 'one-time'}
+          <span className="sr-only"> ({target})</span>
+        </span>
+      </p>
+      <h3 className="mt-5 mb-0 text-base font-semibold">{goal.title}</h3>
       <p className="mt-1 mb-0 flex-1 text-sm text-fg-muted">{goal.detail}</p>
-      <div className="mt-5">
+      <div className="mt-6">
         {funded ? (
           <p className="m-0 flex items-center gap-2 text-sm font-medium text-success">
             <Icon name="check" />

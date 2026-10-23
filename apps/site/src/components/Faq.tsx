@@ -1,5 +1,6 @@
-import type { ReactNode } from 'react';
+import type { MouseEvent, ReactNode } from 'react';
 import { LINKS } from '../config/site';
+import { prefersReducedMotion } from '../lib/motion';
 import { Icon } from './Icon';
 import { Section } from './Section';
 
@@ -106,21 +107,36 @@ const QUESTIONS: { q: string; a: ReactNode }[] = [
 
 export function Faq() {
   return (
-    <Section id="faq" label="FAQ" title="Questions people ask">
-      <div className="max-w-[48rem] divide-y divide-border border-y border-border">
+    <Section id="faq" layout="split" title="Questions people ask">
+      <div className="divide-y divide-border border-y border-border" data-reveal="">
         {QUESTIONS.map(({ q, a }) => (
-          <details key={q} className="group">
-            <summary className="flex cursor-pointer list-none items-center gap-4 py-4 text-lg font-medium [&::-webkit-details-marker]:hidden">
+          <details key={q} className="group" onClick={closeSmoothly}>
+            <summary className="flex cursor-pointer list-none items-center gap-4 rounded-sm py-5 text-lg font-medium tracking-[-0.01em] transition-colors duration-120 hover:text-fg-muted [&::-webkit-details-marker]:hidden">
               <span className="flex-1">{q}</span>
               <Icon
                 name="chevron"
-                className="text-fg-muted transition-transform duration-120 group-open:rotate-180"
+                className="text-fg-muted transition-transform duration-200 group-open:rotate-180 group-data-closing:rotate-0"
               />
             </summary>
-            <div className="pb-5 text-base text-fg-muted">{a}</div>
+            <div className="faq-answer max-w-[42rem] pb-6 text-base text-fg-muted">{a}</div>
           </details>
         ))}
       </div>
     </Section>
   );
+}
+
+// A click on an open question's summary fades the answer out before closing it, instead of
+// cutting it off. Under reduced motion it closes at once.
+function closeSmoothly(event: MouseEvent<HTMLDetailsElement>) {
+  const details = event.currentTarget;
+  const summary = details.querySelector('summary');
+  if (!details.open || !summary?.contains(event.target as Node) || prefersReducedMotion()) return;
+  event.preventDefault();
+  if (details.dataset.closing !== undefined) return;
+  details.dataset.closing = '';
+  window.setTimeout(() => {
+    details.open = false;
+    delete details.dataset.closing;
+  }, 160);
 }

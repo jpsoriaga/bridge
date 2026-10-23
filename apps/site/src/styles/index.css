@@ -35,17 +35,22 @@
   --color-idle: var(--idle);
 }
 
-/* Display sizes, for the page only (the apps stop at 24px). */
+/* Display sizes, for the page only (the apps stop at 24px): the hero title, section titles,
+   the Why quote and lead text. */
 @theme {
-  --text-display: clamp(2.25rem, 1.45rem + 3.4vw, 3.75rem);
-  --text-display--line-height: 1.04;
-  --text-display--letter-spacing: -0.035em;
-  --text-title: clamp(1.625rem, 1.3rem + 1.3vw, 2.25rem);
-  --text-title--line-height: 1.12;
-  --text-title--letter-spacing: -0.025em;
-  --text-lead: clamp(1rem, 0.95rem + 0.25vw, 1.125rem);
+  --text-display: clamp(3.5rem, 1.9rem + 5.6vw, 6rem);
+  --text-display--line-height: 0.98;
+  --text-display--letter-spacing: -0.04em;
+  --text-title: clamp(2rem, 1.55rem + 1.9vw, 3rem);
+  --text-title--line-height: 1.06;
+  --text-title--letter-spacing: -0.03em;
+  --text-quote: clamp(1.5rem, 1.15rem + 1.5vw, 2.25rem);
+  --text-quote--line-height: 1.3;
+  --text-quote--letter-spacing: -0.02em;
+  --text-lead: clamp(1.0625rem, 0.98rem + 0.35vw, 1.25rem);
   --text-lead--line-height: 1.6;
   --ease-bridge: var(--ease);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @layer base {
@@ -64,9 +69,10 @@
     line-height: 1.6;
     overflow-x: clip;
   }
-  /* 2px ring in --fg, offset 2px, keyboard only (DESIGN.md, "Focus"). */
+  /* 2px ring, offset 2px, keyboard only (DESIGN.md, "Focus"). The site draws it in the
+     accent green (DESIGN.md, "Landing page"). */
   :focus-visible {
-    outline: 2px solid var(--fg);
+    outline: 2px solid var(--success);
     outline-offset: 2px;
   }
   ::selection {
@@ -113,11 +119,21 @@
     transition:
       background-color 120ms var(--ease),
       border-color 120ms var(--ease),
-      opacity 120ms var(--ease);
+      opacity 120ms var(--ease),
+      translate 160ms var(--ease-out),
+      scale 120ms var(--ease-out);
   }
   .btn:hover {
     background: var(--bg-hover);
     border-color: var(--border-strong);
+  }
+  /* The page's buttons lift a pixel on hover and focus, and press in on click. */
+  :is(a, button).btn:is(:hover, :focus-visible) {
+    translate: 0 -1px;
+  }
+  :is(a, button).btn:active {
+    translate: 0;
+    scale: 0.98;
   }
   .btn:disabled {
     opacity: 0.4;
@@ -143,6 +159,19 @@
     background: var(--inverse-bg);
     border-color: var(--inverse-bg);
     opacity: 0.86;
+  }
+  /* The page's one call to action (Download), in the Created green: the site's only accent
+     (DESIGN.md, "Landing page"). --bg on --success passes AA in both themes. */
+  .btn-accent {
+    background: var(--success);
+    border-color: var(--success);
+    color: var(--bg);
+    font-weight: 600;
+  }
+  .btn-accent:hover {
+    background: var(--success);
+    border-color: var(--success);
+    opacity: 0.9;
   }
 
   /* Mono tags with a 1px border; the tone is the text and a 35% border, never a fill. */
@@ -247,48 +276,187 @@
     color: var(--fg-subtle);
   }
 
-  /* The footer's oversized wordmark. The one gradient in the system (DESIGN.md, "Landing
-     page"): a faint grey a step off the background, fading into it towards the bottom. It
-     sizes to the content width (1120px at most, 16px or 32px gutters) so the word fills it,
-     and the footer's overflow cuts off its lower quarter. */
+  /* The footer's wordmark (Footer.tsx): an SVG whose viewBox is the word's ink box in Geist
+     900, so at width: 100% it spans the footer exactly at every size. Its gradient is the one
+     in the system (DESIGN.md, "Landing page"): --border fading to transparent. A negative
+     bottom margin of 36% of its height (a margin percentage is of the width, hence the ratio)
+     pushes the lower part past the footer, whose overflow clips it at the page's bottom edge:
+     the bottom of the g and about a quarter of the other letters. */
   .wordmark {
     display: block;
-    margin: 0;
-    font-size: clamp(4rem, calc((min(100vw, 1120px + 4rem) - 2rem) * 0.3255), 24rem);
-    font-weight: 900;
-    line-height: 0.9;
-    letter-spacing: -0.05em;
-    /* background-clip: text paints only inside the box, so give the glyphs' overhang room. */
-    padding: 0.04em 0.05em 0;
-    margin-inline: -0.05em;
-    text-align: center;
-    white-space: nowrap;
-    background: linear-gradient(to bottom, var(--border) 15%, var(--bg) 92%);
-    background-clip: text;
-    -webkit-background-clip: text;
-    color: transparent;
-    -webkit-text-fill-color: transparent;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 314 / 91;
+    margin-bottom: calc(-36% * 91 / 314);
     user-select: none;
     pointer-events: none;
-    translate: 0 30%;
-    margin-top: -0.12em;
   }
-  @media (width >= 40rem) {
-    .wordmark {
-      font-size: clamp(4rem, calc((min(100vw, 1120px + 4rem) - 4rem) * 0.3252), 24rem);
+  .wordmark text {
+    font-family: var(--font-sans);
+    font-size: 100px;
+    font-weight: 900;
+  }
+  .wordmark-from {
+    stop-color: var(--border);
+  }
+  .wordmark-to {
+    stop-color: var(--border);
+    stop-opacity: 0;
+  }
+
+  /* The FAQ: the answer fades in under its question. Closing waits for the fade out
+     (Faq.tsx). Only opacity and transform move. */
+  .faq-answer {
+    transition:
+      opacity 160ms var(--ease),
+      translate 160ms var(--ease);
+  }
+  details[open] > .faq-answer {
+    animation: faq-in 320ms var(--ease-out);
+  }
+  details[data-closing] > .faq-answer {
+    opacity: 0;
+    translate: 0 -4px;
+  }
+  @keyframes faq-in {
+    from {
+      opacity: 0;
+      translate: 0 -6px;
     }
   }
-  .wordmark[data-reveal] {
-    opacity: 0;
-    transition: opacity 900ms var(--ease);
+}
+
+/* Scroll reveals (lib/motion.ts). Only while <html data-motion> is set, which the script does
+   after marking what's already on screen, and never under reduced motion: without it, the
+   page is just there. A section rises 14px; a group's children follow one after another. */
+@layer components {
+  :root[data-motion] [data-reveal],
+  :root[data-motion] [data-reveal='group'] > * {
+    transition:
+      opacity 800ms var(--ease-out),
+      translate 800ms var(--ease-out);
   }
-  .wordmark[data-reveal='shown'] {
-    opacity: 1;
+  :root[data-motion] [data-reveal='group'] {
+    transition: none;
+  }
+  :root[data-motion] [data-reveal]:not([data-reveal='group'], [data-shown]),
+  :root[data-motion] [data-reveal='group']:not([data-shown]) > * {
+    opacity: 0;
+    translate: 0 14px;
+  }
+  [data-reveal='group'] > :nth-child(2) {
+    transition-delay: 80ms;
+  }
+  [data-reveal='group'] > :nth-child(3) {
+    transition-delay: 160ms;
+  }
+  [data-reveal='group'] > :nth-child(4) {
+    transition-delay: 240ms;
+  }
+  [data-reveal='group'] > :nth-child(n + 5) {
+    transition-delay: 300ms;
+  }
+  /* The wordmark rises out of the page's edge, slowly. */
+  :root[data-motion] .wordmark[data-reveal] {
+    transition:
+      opacity 1600ms var(--ease-out),
+      translate 1600ms var(--ease-out);
+  }
+  :root[data-motion] .wordmark[data-reveal]:not([data-shown]) {
+    opacity: 0;
+    translate: 0 14%;
   }
   @media (prefers-reduced-motion: reduce) {
-    .wordmark[data-reveal] {
-      opacity: 1;
+    :root[data-motion] [data-reveal],
+    :root[data-motion] [data-reveal] > * {
+      opacity: 1 !important;
+      translate: none !important;
     }
+  }
+}
+
+/* The hero demo (ChatDemo.tsx). Every part is laid out from the start, so the frame never
+   changes size; a part that hasn't happened yet is transparent and 8px low. */
+@layer components {
+  .demo-stage {
+    transition: opacity 420ms var(--ease);
+  }
+  .demo-stage[data-fading] {
+    opacity: 0;
+  }
+  .demo-part {
+    transition:
+      opacity 520ms var(--ease-out),
+      translate 520ms var(--ease-out);
+  }
+  .demo-part:not([data-on]) {
+    opacity: 0;
+    translate: 0 8px;
+  }
+  .demo-card:not([data-on]) {
+    translate: 0 16px;
+  }
+  /* The reply's code streams in, a line at a time. */
+  .demo-line:nth-child(2) {
+    transition-delay: 140ms;
+  }
+  .demo-line:nth-child(3) {
+    transition-delay: 280ms;
+  }
+  /* Two states sharing one cell (the card's footer, the RUN badge): they crossfade. */
+  .demo-swap {
+    display: grid;
+  }
+  .demo-swap > * {
+    grid-area: 1 / 1;
+    transition: opacity 360ms var(--ease);
+  }
+  .demo-swap > :not([data-on]) {
+    opacity: 0;
+    visibility: hidden;
+    transition:
+      opacity 360ms var(--ease),
+      visibility 0s 360ms;
+  }
+  .demo-press {
+    transition: scale 140ms var(--ease-out);
+  }
+  .demo-press[data-pressed] {
+    scale: 0.95;
+  }
+  .demo-cursor {
+    position: absolute;
+    top: 55%;
+    left: 50%;
+    z-index: 1;
+    color: var(--fg);
+    pointer-events: none;
+    opacity: 0;
+    translate: -120px -72px;
+    transition:
+      opacity 300ms var(--ease),
+      translate 720ms var(--ease-out),
+      scale 140ms var(--ease-out);
+  }
+  .demo-cursor[data-at='button'],
+  .demo-cursor[data-at='press'] {
+    opacity: 1;
+    translate: 0 0;
+  }
+  .demo-cursor[data-at='press'] {
+    scale: 0.86;
+  }
+}
+
+/* Wider, for the parts that break out of the column: the hero demo and the Download panel. */
+@utility container-wide {
+  width: 100%;
+  max-width: calc(1280px + 2 * var(--space-4));
+  margin-inline: auto;
+  padding-inline: var(--space-4);
+  @media (width >= 40rem) {
+    max-width: calc(1280px + 2 * var(--space-8));
+    padding-inline: var(--space-8);
   }
 }
 

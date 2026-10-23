@@ -41,6 +41,12 @@ the Releases page instead, which is expected.
   never raw colours. DESIGN.md, "Landing page", has the site's additions.
 - `public/`: icons, the share image (`og.png`), `theme.js` (applies the saved theme before the
   first paint). `robots.txt` and `sitemap.xml` are written at build time from `SITE_URL`.
+- `src/lib/motion.ts`: reduced-motion detection and the scroll reveals (`data-reveal`); the
+  hero demo's timeline is in `src/components/ChatDemo.tsx`.
+- `scripts/screenshots.mjs`: with `pnpm --filter site preview` running, checks every width
+  from 320 to 2560px in both themes, with and without reduced motion (no sideways scroll, the
+  wordmark spans the footer, every reveal shows), writes `docs/screenshots/site/` and records
+  the hero demo (`hero-demo.webm`). Same Chromium setup as `images.mjs` below.
 - `scripts/images.mjs`: renders the icons and `og.png` from the logo. Run it after changing
   either: `npm ci --prefix e2e && npx --prefix e2e playwright-core install chromium`, then
   `node apps/site/scripts/images.mjs`.
@@ -109,7 +115,8 @@ policy) and long caching for the hashed files in `/assets/`.
   - `kofi`: e.g. `https://ko-fi.com/<you>`
   - `gcashQr`: `'/gcash-qr.png'` once the image is in place (below)
 
-  With none set, the section says ways to chip in are coming soon.
+  With none set, the section shows the two costs and the "Can’t chip in?" card with **Star on
+  GitHub** and **Report a bug**, so it reads as finished either way.
 
 - **GCash QR:** export the QR from the GCash app, save it as `apps/site/public/gcash-qr.png`
   (square, about 640×640 px, under 200 KB), and set `gcashQr: '/gcash-qr.png'`. The image loads
