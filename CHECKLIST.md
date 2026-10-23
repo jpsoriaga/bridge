@@ -424,7 +424,7 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [x] `release.yml`: notes start with How to install, then the CHANGELOG under What's new; INSTALL.md attached and in `SHA256SUMS.txt`; the release fails if the notes name a missing file; dry run shows notes and INSTALL.md in the summary and uploads both (fake `gh` tests)
 - [x] `README.txt` at the root of both extension zips; `releaseProblems` requires it and `manifest.json` at the root (tests); the beta.3 zip loads unpacked in Chrome for Testing with no warnings or errors
 - [x] RELEASE.md "Release notes", CHANGELOG; README screenshots removed
-- [ ] Dry run on GitHub shows the notes and INSTALL.md in its summary
+- [x] Dry run on GitHub green with the notes and INSTALL.md (run 39980326869; `check` passed against the real build files, INSTALL.md in SHA256SUMS.txt, README.txt in the zip)
 - [ ] How to install pasted into the `v1.2.0-beta.3` release notes by hand
 
 ## Landing page (`apps/site`)
