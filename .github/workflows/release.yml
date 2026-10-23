@@ -4,9 +4,14 @@ name: Release
 # them to a DRAFT release. Publishing is done by hand (RELEASE.md). A beta tag
 # (vX.Y.Z-beta.N) makes a pre-release that is never marked Latest, with only the Load
 # unpacked extension zip (scripts/release-flags.mjs, scripts/release-extension.mjs).
+#
+# Run by hand (Actions → Release → Run workflow), it's a dry run for the version in the
+# packages: the same checks, builds, verification and smoke tests, with every file uploaded
+# as an artifact, but it never creates a release. RELEASE.md runs it before tagging.
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 # Read-only by default. Only the last job may write, to create the draft release.
 permissions:
@@ -25,6 +30,8 @@ jobs:
   version:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -32,10 +39,21 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
+      # The pushed tag, or for a dry run the tag the packages' version would get.
+      - name: Tag
+        id: tag
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            tag="v$(node -p "require('./package.json').version")"
+          else
+            tag="$GITHUB_REF_NAME"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "TAG=$tag" >> "$GITHUB_ENV"
       # Every package carries the tag's version, and CHANGELOG.md has a section for it.
-      - run: node scripts/version.mjs check "$GITHUB_REF_NAME"
-      - run: node scripts/changelog.mjs "$GITHUB_REF_NAME" > /dev/null
-      - run: node scripts/release-flags.mjs "$GITHUB_REF_NAME"
+      - run: node scripts/version.mjs check "$TAG"
+      - run: node scripts/changelog.mjs "$TAG" > /dev/null
+      - run: node scripts/release-flags.mjs "$TAG"
 
   package:
     needs: [checks, version]
@@ -100,13 +118,19 @@ jobs:
       - name: Check package contents
         run: pnpm --filter @bridge/desktop check:package
 
-      - name: Smoke test (macOS)
+      # One app per run, each with its own fresh userData (smoke.mjs).
+      - name: Smoke test (macOS arm64)
+        if: matrix.platform == 'mac'
+        working-directory: apps/desktop
+        run: node scripts/smoke.mjs dist/mac-arm64/Bridge.app
+      - name: Smoke test (macOS x64)
         if: matrix.platform == 'mac'
         working-directory: apps/desktop
         run: |
-          # The x64 build runs under Rosetta on the arm64 runner.
+          # The x64 build runs under Rosetta on the arm64 runner; smoke.mjs gives its window
+          # 120s to load (Rosetta translates Electron on the first launch).
           /usr/bin/pgrep -q oahd || softwareupdate --install-rosetta --agree-to-license
-          node scripts/smoke.mjs dist/mac-arm64/Bridge.app dist/mac/Bridge.app
+          node scripts/smoke.mjs dist/mac/Bridge.app
       - name: Smoke test (Windows)
         if: matrix.platform == 'win'
         working-directory: apps/desktop
@@ -157,6 +181,8 @@ jobs:
 
   release:
     needs: [package, extension]
+    # Tag pushes only: a dry run never creates a release.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # The only job that may write: it creates the draft release. No signing secrets here.
@@ -194,3 +220,47 @@ jobs:
             --title "Bridge ${GITHUB_REF_NAME#v}" \
             --notes-file notes.md \
             $flags
+
+  dry-run:
+    needs: [version, package, extension]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Read-only: shows what the release would hold and creates nothing.
+    env:
+      TAG: ${{ needs.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: assets
+          merge-multiple: true
+      - name: What the release would hold
+        run: |
+          (cd assets && sha256sum -- * > SHA256SUMS.txt)
+          node scripts/release-flags.mjs --intro "$TAG" > notes.md
+          node scripts/changelog.mjs "$TAG" >> notes.md
+          flags=$(node scripts/release-flags.mjs "$TAG" | paste -sd ' ' -)
+          {
+            echo "## Dry run: Bridge ${TAG#v}"
+            echo
+            echo "No release was created. Tagging \`$TAG\` would make a draft (\`--draft${flags:+ $flags}\`) with these files:"
+            echo
+            echo '```'
+            cat assets/SHA256SUMS.txt
+            echo '```'
+            echo
+            cat notes.md
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dry-run-notes
+          if-no-files-found: error
+          path: |
+            notes.md
+            assets/SHA256SUMS.txt

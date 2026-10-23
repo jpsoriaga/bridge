@@ -1,15 +1,26 @@
 # Releasing Bridge
 
-A release is one version number for the desktop app, the extension and `@bridge/shared`, cut from `main` by pushing a `v*` tag. GitHub Actions ([`.github/workflows/release.yml`](.github/workflows/release.yml)) runs every check, builds the installers and the extension zip, verifies and smoke-tests each app, and leaves everything in a **draft** release. Nothing is published until you publish it.
+A release is one version number for the desktop app, the extension and `@bridge/shared`, cut from `main` by pushing a `v*` tag. GitHub Actions ([`.github/workflows/release.yml`](.github/workflows/release.yml)) runs every check, builds the installers and the extension zip, verifies and smoke-tests each app, and leaves everything in a **draft** release. Nothing is published until you publish it. Before tagging, run the same workflow by hand as a [dry run](#dry-run).
 
 ## What the workflow does
 
 1. Runs the full CI suite (format, lint, typecheck, build, tests with coverage, `pnpm audit`, the e2e scripts) by calling [`ci.yml`](.github/workflows/ci.yml). It gets no secrets.
 2. Checks every package has the tag's version (`pnpm version:check vX.Y.Z`) and that `CHANGELOG.md` has a section for it.
 3. Builds on `macos-latest` (dmg and zip, arm64 and x64), `windows-latest` (NSIS installer, x64) and `ubuntu-latest` (AppImage, x64). Signing secrets reach only the packaging step for their platform.
-4. For each app: `verify:fuses`, `check:package` (fuses again, and app.asar holds only the built app and its production dependencies), and a smoke test (launch, window loads, `/health` answers on `127.0.0.1`, quit).
+4. For each app: `verify:fuses`, `check:package` (fuses again, and app.asar holds only the built app and its production dependencies), and a smoke test (launch with a fresh temp userData, window loads, `/health` answers on `127.0.0.1`, quit, wait until every process is gone and the port is free). The window gets 90s to load, or 120s for the x64 mac build, which runs under Rosetta on the arm64 runner; each app's run stops after 3 minutes at most.
 5. Builds the extension zips (`pnpm build:extension:release`): `bridge-extension-X.Y.Z.zip` for the store and `bridge-extension-X.Y.Z-unpacked.zip` for Load unpacked.
 6. Creates a draft release named "Bridge X.Y.Z" with every installer, `latest*.yml` (for the app's update check), both extension zips, `SHA256SUMS.txt`, and that version's `CHANGELOG.md` section as the notes.
+
+## Dry run
+
+Run by hand, the workflow is a dry run for the version in the packages: steps 1 to 5 exactly as above (the version and changelog checks use `v` + that version), every installer and zip uploaded as a run artifact, and instead of step 6 a summary of what the draft would hold (files and checksums, `gh` flags, notes). It never creates a release, and its last job has no write permission. Run it after pushing the version bump and before tagging:
+
+```bash
+gh workflow run release.yml --ref main
+gh run watch "$(gh run list --workflow release.yml --limit 1 --json databaseId -q '.[0].databaseId')"
+```
+
+(Or Actions → Release → **Run workflow** on `main`.) Green means the tag push will build the same thing; red costs nothing to fix, since no tag exists yet. The run's summary page shows the would-be notes, and its artifacts hold the installers if you want to try one first.
 
 ## Cutting a release
 
@@ -28,18 +39,24 @@ $EDITOR CHANGELOG.md
 pnpm format:check && pnpm lint && pnpm typecheck && pnpm build && pnpm test:coverage
 pnpm build:extension:release
 
-# 4. Commit, tag, push.
+# 4. Commit and push, without a tag yet.
 git commit -am "chore: release 1.1.0"
+git push origin main
+
+# 5. Dry run (see "Dry run"); wait for it to go green.
+gh workflow run release.yml --ref main
+
+# 6. Tag and push the tag.
 git tag -a v1.1.0 -m "Bridge 1.1.0"
-git push origin main v1.1.0
+git push origin v1.1.0
 ```
 
 Then:
 
-5. **Watch the run** under Actions → Release. A red check means no release was created; fix, delete the tag (`git push --delete origin v1.1.0 && git tag -d v1.1.0`), and tag again.
-6. **Check the draft** under Releases: every file is there (two dmgs, two mac zips, the Windows setup exe, the AppImage, `latest.yml`, `latest-mac.yml`, `latest-linux.yml`, both extension zips, `SHA256SUMS.txt`), the notes read right, and the logs say whether each build was signed. Download one installer and try it.
-7. **Publish** the draft. From then on, apps with "Check for updates" see the new version and link to it.
-8. **Upload the extension** to the Chrome Web Store (below).
+7. **Watch the run** under Actions → Release. A red check means no release was created; fix, delete the tag (`git push --delete origin v1.1.0 && git tag -d v1.1.0`), and tag again.
+8. **Check the draft** under Releases: every file is there (two dmgs, two mac zips, the Windows setup exe, the AppImage, `latest.yml`, `latest-mac.yml`, `latest-linux.yml`, both extension zips, `SHA256SUMS.txt`), the notes read right, and the logs say whether each build was signed. Download one installer and try it.
+9. **Publish** the draft. From then on, apps with "Check for updates" see the new version and link to it.
+10. **Upload the extension** to the Chrome Web Store (below).
 
 ## Beta release
 
@@ -69,18 +86,24 @@ $EDITOR CHANGELOG.md
 pnpm format:check && pnpm lint && pnpm typecheck && pnpm build && pnpm test:coverage
 pnpm build:extension:release      # only release/bridge-extension-1.2.0-beta.1-unpacked.zip
 
-# 4. Commit, tag, push.
+# 4. Commit and push, without a tag yet.
 git commit -am "chore: release 1.2.0-beta.1"
+git push origin main
+
+# 5. Dry run (see "Dry run"); wait for it to go green.
+gh workflow run release.yml --ref main
+
+# 6. Tag and push the tag.
 git tag -a v1.2.0-beta.1 -m "Bridge 1.2.0-beta.1"
-git push origin main v1.2.0-beta.1
+git push origin v1.2.0-beta.1
 ```
 
 Then:
 
-5. **Watch the run** under Actions → Release (as for a release; to redo it, delete the tag and tag again).
-6. **Check the draft** under Releases: it says **Pre-release**, the notes start with "Beta for testers", and the files are the two dmgs, two mac zips, the Windows setup exe, the AppImage, `latest.yml`, `latest-mac.yml`, `latest-linux.yml`, `bridge-extension-1.2.0-beta.1-unpacked.zip` (and no store zip) and `SHA256SUMS.txt`. Download an installer and the extension zip and go through BETA.md's install steps once yourself.
-7. **Publish** the draft, keeping **Set as a pre-release** ticked and **Set as the latest release** unticked.
-8. **Share** with testers: the release page link (`https://github.com/jpsoriaga/bridge/releases/tag/v1.2.0-beta.1`) and BETA.md (`https://github.com/jpsoriaga/bridge/blob/v1.2.0-beta.1/BETA.md`). Say which file to download for their computer, that the warnings on first open are expected, and that diagnostics can come back to you directly if they have no GitHub account. Reports arrive as issues labelled `beta`.
+7. **Watch the run** under Actions → Release (as for a release; to redo it, delete the tag and tag again).
+8. **Check the draft** under Releases: it says **Pre-release**, the notes start with "Beta for testers", and the files are the two dmgs, two mac zips, the Windows setup exe, the AppImage, `latest.yml`, `latest-mac.yml`, `latest-linux.yml`, `bridge-extension-1.2.0-beta.1-unpacked.zip` (and no store zip) and `SHA256SUMS.txt`. Download an installer and the extension zip and go through BETA.md's install steps once yourself.
+9. **Publish** the draft, keeping **Set as a pre-release** ticked and **Set as the latest release** unticked.
+10. **Share** with testers: the release page link (`https://github.com/jpsoriaga/bridge/releases/tag/v1.2.0-beta.1`) and BETA.md (`https://github.com/jpsoriaga/bridge/blob/v1.2.0-beta.1/BETA.md`). Say which file to download for their computer, that the warnings on first open are expected, and that diagnostics can come back to you directly if they have no GitHub account. Reports arrive as issues labelled `beta`.
 
 Never upload a beta to the Chrome Web Store.
 
@@ -149,6 +172,7 @@ pnpm package:mac      # or package:win, package:linux (each on its own OS)
 pnpm --filter @bridge/desktop check:package      # fuses and asar contents of everything in dist/
 pnpm --filter @bridge/desktop verify:fuses apps/desktop/dist/mac-arm64/Bridge.app
 pnpm --filter @bridge/desktop smoke dist/mac-arm64/Bridge.app
+pnpm --filter @bridge/desktop smoke dist/mac/Bridge.app      # x64; under Rosetta on Apple silicon
 pnpm build:extension:release
 ```
 

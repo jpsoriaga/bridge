@@ -4,6 +4,18 @@ All notable changes to Bridge are listed here. The format follows [Keep a Change
 
 ## [Unreleased]
 
+## [1.2.0-beta.3] - 2026-10-23
+
+The release build for 1.2.0-beta.2 failed on the Intel Mac smoke test, so this beta replaces it. The app and extension are the same as in 1.2.0-beta.2.
+
+### Added
+
+- **Release dry run.** Running the release workflow by hand builds, verifies and smoke-tests every package and uploads them, but never creates a release. RELEASE.md now runs it before tagging.
+
+### Fixed
+
+- **Intel Mac smoke test.** The release smoke test now gives the Intel Mac build 120 seconds to open its window when it runs under Rosetta on an Apple silicon Mac (other builds keep 90 seconds), still stopping after 3 minutes at most. It tests each build in its own run with fresh app data, and starts the next only after the previous one has fully quit and freed its port.
+
 ## [1.2.0-beta.2] - 2026-10-23
 
 The release build for 1.2.0-beta.1 failed, so this is the first beta testers can download. It has everything listed under 1.2.0-beta.1, plus the fixes below.
@@ -79,7 +91,8 @@ The first release: a desktop app for macOS, Windows and Linux, and a Chrome exte
 - **Update check, notify only.** Settings → About shows the version and can ask GitHub Releases whether a newer one exists, on a click or (if you turn it on) at launch. It never downloads or installs anything, and it's off in unsigned macOS builds.
 - **Version handshake.** If the app and the extension speak different protocol versions, both say which one to update instead of failing to connect.
 
-[Unreleased]: https://github.com/jpsoriaga/bridge/compare/v1.2.0-beta.2...HEAD
+[Unreleased]: https://github.com/jpsoriaga/bridge/compare/v1.2.0-beta.3...HEAD
+[1.2.0-beta.3]: https://github.com/jpsoriaga/bridge/compare/v1.2.0-beta.2...v1.2.0-beta.3
 [1.2.0-beta.2]: https://github.com/jpsoriaga/bridge/compare/v1.2.0-beta.1...v1.2.0-beta.2
 [1.2.0-beta.1]: https://github.com/jpsoriaga/bridge/compare/v1.1.0...v1.2.0-beta.1
 [1.1.0]: https://github.com/jpsoriaga/bridge/compare/v1.0.1...v1.1.0

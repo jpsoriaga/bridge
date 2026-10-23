@@ -93,9 +93,60 @@ describe('releaseFlags', () => {
 describe('release.yml', () => {
   it('runs on v* tags, checks the tag early, and makes only drafts', () => {
     expect(WORKFLOW).toMatch(/on:\n\s+push:\n\s+tags: \['v\*'\]/);
-    expect(stepScriptsOf('version')).toContain('node scripts/release-flags.mjs "$GITHUB_REF_NAME"');
+    expect(stepScriptsOf('version')).toContain('node scripts/release-flags.mjs "$TAG"');
     expect(stepScript(WORKFLOW, 'Create the draft release')).toContain('--draft');
   });
+
+  it('runs by hand only as a dry run: the release job is for tag pushes, dry-run never writes', () => {
+    expect(WORKFLOW).toMatch(/^ {2}workflow_dispatch:$/m);
+    expect(stepScriptsOf('release')).toMatch(/^ {4}if: github\.event_name == 'push'$/m);
+    const dryRun = stepScriptsOf('dry-run');
+    expect(dryRun).toMatch(/^ {4}if: github\.event_name == 'workflow_dispatch'$/m);
+    expect(dryRun).not.toContain('permissions');
+    expect(dryRun).not.toContain('gh ');
+    expect(dryRun).not.toContain('secrets.');
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'takes the pushed tag, or for a dry run the packages’ version',
+    () => {
+      const version = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
+      expect(runTagStep('workflow_dispatch', 'main')).toEqual({
+        output: `tag=v${version}`,
+        env: `TAG=v${version}`
+      });
+      expect(runTagStep('push', 'v1.1.0')).toEqual({ output: 'tag=v1.1.0', env: 'TAG=v1.1.0' });
+    }
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'dry run: writes the files, flags and notes to the summary',
+    () => {
+      const tag = changelogBeta();
+      const dir = mkdtempSync(join(tmpdir(), 'bridge-dry-run-'));
+      mkdirSync(join(dir, 'assets'));
+      writeFileSync(join(dir, 'assets', 'Bridge.dmg'), 'x');
+      const summary = join(dir, 'summary.md');
+      const script = stepScript(WORKFLOW, 'What the release would hold').replaceAll(
+        'scripts/',
+        `${join(ROOT, 'scripts')}/`
+      );
+      const result = spawnSync('bash', ['-e', '-c', script], {
+        cwd: dir,
+        env: { ...process.env, TAG: tag, GITHUB_STEP_SUMMARY: summary },
+        encoding: 'utf8'
+      });
+      expect(result.stderr).toBe('');
+      expect(result.status).toBe(0);
+      const text = readFileSync(summary, 'utf8');
+      expect(text).toContain(`## Dry run: Bridge ${tag.slice(1)}`);
+      expect(text).toContain('No release was created.');
+      expect(text).toContain('(`--draft --prerelease --latest=false`)');
+      expect(text).toMatch(/[0-9a-f]{64} {2}Bridge\.dmg/);
+      expect(text).toContain('**Beta for testers.**');
+      expect(readFileSync(join(dir, 'notes.md'), 'utf8')).toContain('**Beta for testers.**');
+    }
+  );
 
   // The steps are bash; Windows runners aren't where the release job runs.
   it.skipIf(process.platform === 'win32')('creates a normal draft for vX.Y.Z, as before', () => {
@@ -129,6 +180,29 @@ describe('release.yml', () => {
     expect(runRelease('vnext').status).not.toBe(0);
   });
 });
+
+/** Runs the version job's Tag step for an event; its GITHUB_OUTPUT and GITHUB_ENV lines. */
+function runTagStep(event, refName) {
+  const dir = mkdtempSync(join(tmpdir(), 'bridge-tag-'));
+  const output = join(dir, 'output');
+  const env = join(dir, 'env');
+  const result = spawnSync('bash', ['-e', '-c', stepScript(WORKFLOW, 'Tag')], {
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      GITHUB_EVENT_NAME: event,
+      GITHUB_REF_NAME: refName,
+      GITHUB_OUTPUT: output,
+      GITHUB_ENV: env
+    },
+    encoding: 'utf8'
+  });
+  if (result.status !== 0) throw new Error(result.stderr);
+  return {
+    output: readFileSync(output, 'utf8').trim(),
+    env: readFileSync(env, 'utf8').trim()
+  };
+}
 
 /** Every `run:` line of the job called `job`. */
 function stepScriptsOf(job) {

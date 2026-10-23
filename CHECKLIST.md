@@ -403,4 +403,15 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [x] `smoke.mjs`: the app is spawned detached; pass or fail, its process group gets SIGTERM, then SIGKILL after up to 5s (`taskkill /T /F` on Windows), and the script exits with its code; a hard 3-minute timeout (tests with a fake app whose SIGTERM-ignoring helper holds the pipes: passing and never ready)
 - [x] `timeout-minutes` on every job: 30 for packaging, 20 for the rest (ci.yml's jobs cover the reusable `checks` call); `repo.test.mjs` checks it
 - [x] Version 1.2.0-beta.2, CHANGELOG
-- [ ] Release workflow run for `v1.2.0-beta.2` on GitHub: pre-release, not Latest, unpacked zip only
+- [x] Release workflow run for `v1.2.0-beta.2` on GitHub: ran, and failed only on the mac x64 smoke test under Rosetta (fixed in 1.2.0-beta.3)
+
+## 1.2.0-beta.3: Mac x64 smoke test, release dry run
+
+- [x] `smoke.mjs`: a fresh temp `--user-data-dir` per app; the next app starts only after the previous one's process group is gone and its port is free (test: two runs on a fixed port, no overlap, different userData)
+- [x] `smoke.mjs`: 120s window-load timeout for an x64 Mac app on an arm64 Mac (`loadTimeoutFor`, from the Mach-O header; tests), 90s otherwise; 3-minute hard cap per app
+- [x] `release.yml`: arm64 and x64 mac smoke tests in separate steps
+- [x] `release.yml`: `workflow_dispatch` dry run (builds, verifies, smoke-tests and uploads everything; no release); `release` job on tag pushes only; tests for the `Tag` and dry-run steps
+- [x] RELEASE.md "Dry run", run before tagging; PLAN.md
+- [x] Version 1.2.0-beta.3, CHANGELOG
+- [ ] Dry run on GitHub: mac x64 smoke test passes under Rosetta (or its smoke step is dropped, keeping `verify:fuses` and `check:package`)
+- [ ] Release workflow run for `v1.2.0-beta.3` on GitHub: pre-release, not Latest, unpacked zip only
