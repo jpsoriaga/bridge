@@ -1,0 +1,15 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "gradient-text",
+        "value": "*",
+        "files": ["src/styles/index.css"],
+        "createdAt": "2026-10-23T11:25:36.304Z",
+        "reason": "User spec: footer wordmark must use a vertical gradient with background-clip: text (landing page prompt, section 9)"
+      }
+    ]
+  }
+}
