@@ -2,6 +2,8 @@
 
 <img src="packages/shared/assets/logo.svg" width="48" alt="" />
 
+> **Testing a beta?** Start with **[BETA.md](BETA.md)**: install steps for macOS, Windows and Linux, a 15-minute test checklist, and how to report problems.
+
 Bridge lets the chat on chatgpt.com edit a project on your computer, with you in charge. The chat writes whole files in a simple `@@FILE` format; Bridge shows each one as a diff card right under the reply, and writes it into your project only when you click **Apply** (or, if you choose, as soon as the reply finishes, with Undo).
 
 Everything runs on your computer. The Bridge desktop app does the reading and writing inside one project folder; the Chrome extension talks only to that app, over `127.0.0.1`. No accounts, no telemetry, nothing sent anywhere else.
@@ -176,6 +178,8 @@ When a reply finishes, Bridge applies its edits, reads the files it asked for, r
 
 **Settings → About** shows your version and has **Check for updates**. It asks GitHub Releases for the latest version number and, if there's a newer one, links to it. It never downloads or installs anything. Turn on **Check for updates when Bridge starts** to have it ask once at each launch (off by default). Unsigned macOS builds don't check; watch the [releases page](https://github.com/jpsoriaga/bridge/releases) instead.
 
+**Update channel** (same place): **Stable** tells you about releases only; **Beta** also about betas for testers (versions like `1.2.0-beta.1`, published as GitHub pre-releases). A beta build starts on Beta, a release on Stable.
+
 To update, install the new version over the old one (drag it to Applications, run the new installer, or replace the AppImage). Your pairing, settings and backups stay. Update the extension too: the store does it on its own; for an unpacked copy, replace the folder and click reload on `chrome://extensions`.
 
 ## Troubleshooting
@@ -195,6 +199,8 @@ To update, install the new version over the old one (drag it to Applications, ru
 - **Full auto paused with "no new message appeared"**: the page didn't take the send. Check the message box and press **Resume**.
 - **"Project missing"**: the folder was moved, renamed or unmounted. Put it back and click **Try again**, or open it from its new place.
 
+**Reporting a problem:** **Help → Copy diagnostics** in the app and **Copy diagnostics** at the bottom of the side panel copy versions, your system, the mode, the connection and the last 50 log lines (no file contents, keys or tokens; likely secrets redacted, paths from `~`). **Help → Open logs folder** shows the app's log. Paste them into an [issue](https://github.com/jpsoriaga/bridge/issues/new/choose).
+
 More in the [FAQ](docs/FAQ.md).
 
 ## Where data lives
@@ -207,9 +213,9 @@ More in the [FAQ](docs/FAQ.md).
 | Windows | `%APPDATA%\Bridge`                                |
 | Linux   | `~/.config/Bridge` (or `$XDG_CONFIG_HOME/Bridge`) |
 
-Inside: `settings.json` (projects, patterns, allowlists, settings), `pairing.json` and `server-key.json` (keys, encrypted with your system keychain when available), and `backups/` (copies of changed files and the change log, per project). A development build (`pnpm dev`) uses `@bridge/desktop` instead of `Bridge`, so it never shares a pairing or backups with an installed app.
+Inside: `settings.json` (projects, patterns, allowlists, settings), `pairing.json` and `server-key.json` (keys, encrypted with your system keychain when available), `backups/` (copies of changed files and the change log, per project), and `logs/` (`bridge.log`: what happened, never file contents or keys; 5 MB at most, plus two older files). A development build (`pnpm dev`) uses `@bridge/desktop` instead of `Bridge`, so it never shares a pairing or backups with an installed app.
 
-**The extension** keeps the pairing key in its own IndexedDB, and session and card states (paths, hashes, counts, never file contents) in Chrome's extension storage. [PRIVACY.md](PRIVACY.md) lists everything.
+**The extension** keeps the pairing key in its own IndexedDB, and session and card states (paths, hashes, counts, never file contents) in Chrome's extension storage. Its recent events for Copy diagnostics are kept in memory only. [PRIVACY.md](PRIVACY.md) lists everything.
 
 ## Uninstall
 
@@ -263,6 +269,7 @@ archive/prototype/  earlier prototype, reference only (not built)
 
 ## Docs
 
+- [BETA.md](BETA.md): for beta testers: install, what to test, reporting problems
 - [docs/FAQ.md](docs/FAQ.md): common questions
 - [SECURITY.md](SECURITY.md): threat model, controls, known limits, reporting a problem
 - [PRIVACY.md](PRIVACY.md): what's stored where; no telemetry

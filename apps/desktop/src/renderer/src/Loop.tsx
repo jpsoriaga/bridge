@@ -161,6 +161,14 @@ export function toastsFor(
         hint: 'Settings → About has the link.'
       });
     }
+    if (now.about.diagnosticsCopied > was.about.diagnosticsCopied) {
+      toasts.push({
+        id: `diagnostics:${now.about.diagnosticsCopied}`,
+        tone: 'success',
+        text: 'Diagnostics copied',
+        hint: 'Paste them into your bug report.'
+      });
+    }
     if (was.status === 'connected' && now.status !== 'connected' && now.paired) {
       toasts.push({
         id: `disconnected:${Date.now()}`,

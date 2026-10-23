@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { BRIDGE_EXTENSION_ID } from '@bridge/shared';
 import manifestExport, { EXTENSION_PUBLIC_KEY } from '../manifest.config';
+import pkg from '../package.json';
 
 async function loadManifest() {
   return typeof manifestExport === 'function'
@@ -16,6 +17,14 @@ function extensionIdFromKey(key: string): string {
 }
 
 describe('manifest', () => {
+  it('carries the package version, numbers only, with a beta in version_name', async () => {
+    const manifest = await loadManifest();
+    const [release, beta] = pkg.version.split('-');
+    expect(manifest.version).toBe(release);
+    expect(manifest.version).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(manifest.version_name).toBe(beta ? pkg.version : undefined);
+  });
+
   it('requests exactly storage, sidePanel and alarms', async () => {
     const manifest = await loadManifest();
     expect(manifest.permissions).toEqual(['storage', 'sidePanel', 'alarms']);

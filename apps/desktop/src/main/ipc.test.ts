@@ -54,7 +54,10 @@ const CALLS: Record<IpcChannel, { good: unknown[]; bad: unknown[][] }> = {
   dismissAllowlistNote: { good: [], bad: [[1]] },
   answerInstallNote: { good: [true], bad: [[], ['yes']] },
   checkForUpdates: { good: [], bad: [['https://example.com']] },
-  setCheckUpdatesOnStart: { good: [false], bad: [['yes'], []] }
+  setCheckUpdatesOnStart: { good: [false], bad: [['yes'], []] },
+  setUpdateChannel: { good: ['beta'], bad: [['nightly'], [], ['stable', 'beta']] },
+  copyDiagnostics: { good: [], bad: [['all']] },
+  openLogsFolder: { good: [], bad: [['/etc']] }
 };
 
 const window = { sender: { id: 1 }, frame: { id: 'top' } };

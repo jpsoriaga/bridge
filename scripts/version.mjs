@@ -1,9 +1,10 @@
 // One version for the whole of Bridge: the root, the desktop app, the extension (its
 // manifest reads apps/extension/package.json) and @bridge/shared.
 //
-//   pnpm version:set 1.2.0       set it everywhere
-//   pnpm version:check           fail unless every package has the same version
-//   pnpm version:check v1.2.0    ...and it is this one (the release workflow passes the tag)
+//   pnpm version:set 1.2.0         set it everywhere
+//   pnpm version:set 1.2.0-beta.1  a beta (published as a pre-release, RELEASE.md)
+//   pnpm version:check             fail unless every package has the same version
+//   pnpm version:check v1.2.0      ...and it is this one (the release workflow passes the tag)
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,14 +20,23 @@ export const VERSIONED = [
 ];
 
 /**
- * `MAJOR.MINOR.PATCH` only. Chrome takes at most four dot-separated integers of 0–65535
- * with no leading zeros and refuses pre-release tags, so the shared version keeps to what
- * both the store and electron-builder accept.
+ * `MAJOR.MINOR.PATCH`, or `MAJOR.MINOR.PATCH-beta.N` for a beta. Each number is 0–65535 with
+ * no leading zeros, as Chrome's manifest needs; a beta's manifest gets the numbers as
+ * `version` and the whole thing as `version_name` (`manifestVersion` in @bridge/shared, which
+ * has the same rule as this). electron-builder reads `beta` as the update channel.
  */
 export function isReleaseVersion(version) {
-  if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) return false;
-  return version.split('.').every((part) => Number(part) <= 65535);
+  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-beta\.([1-9]\d*))?$/.exec(version);
+  if (!match) return false;
+  return match
+    .slice(1)
+    .filter((part) => part !== undefined)
+    .every((part) => Number(part) <= 65535);
 }
+
+/** A beta: released as a GitHub pre-release, never marked Latest, no store zip. */
+export const isBeta = (version) =>
+  isReleaseVersion(version.replace(/^v/, '')) && version.includes('-beta.');
 
 /** The version in each package.json, keyed by path. */
 export function readVersions(root = ROOT) {
@@ -38,7 +48,9 @@ export function readVersions(root = ROOT) {
 /** Writes `version` into every package.json, keeping the rest of each file as it was. */
 export function setVersion(version, root = ROOT) {
   if (!isReleaseVersion(version)) {
-    throw new Error(`Not a release version: ${JSON.stringify(version)}. Use MAJOR.MINOR.PATCH.`);
+    throw new Error(
+      `Not a release version: ${JSON.stringify(version)}. Use MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-beta.N.`
+    );
   }
   for (const file of VERSIONED) {
     const path = join(root, file);
@@ -88,7 +100,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       }
       console.log(`Version ${readVersions()['package.json']} everywhere`);
     } else {
-      console.error('Usage: node scripts/version.mjs set <MAJOR.MINOR.PATCH> | check [version]');
+      console.error(
+        'Usage: node scripts/version.mjs set <MAJOR.MINOR.PATCH[-beta.N]> | check [version]'
+      );
       process.exit(2);
     }
   } catch (error) {

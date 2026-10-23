@@ -103,9 +103,12 @@ interface Client {
   sendJson(value: unknown): void;
 }
 
-function connect(options: { origin?: string; host?: string } = {}): Promise<Client> {
+function connect(
+  options: { origin?: string; host?: string; userAgent?: string } = {}
+): Promise<Client> {
   const headers: Record<string, string> = {};
   if (options.host) headers.host = options.host;
+  if (options.userAgent) headers['user-agent'] = options.userAgent;
   const ws = new WebSocket(`ws://${host}/ws`, {
     origin: options.origin ?? ORIGIN,
     headers
@@ -251,6 +254,19 @@ describe('POST /pair', () => {
     expect(pairing.isPaired).toBe(true);
     expect(pairing.state).toBeNull();
     (await authedClient(key)).ws.close();
+  });
+
+  it('notes the browser of the extension that authenticated, for diagnostics', async () => {
+    const key = await pair();
+    expect(server.browser).toBeNull();
+    const client = await connect({ userAgent: 'Mozilla/5.0 Chrome/141.0.7390.54 Safari/537.36' });
+    // Not before it proves itself.
+    expect(server.browser).toBeNull();
+    const { serverNonce } = await challenge(client, key);
+    client.sendJson(auth(sign(key, 'client', 'ws', port, serverNonce)));
+    expect((await client.next()).type).toBe('auth_ok');
+    expect(server.browser).toBe('Chrome 141.0.7390.54');
+    client.ws.close();
   });
 
   it('shows the same fingerprint the extension computes, and proves the key first', async () => {

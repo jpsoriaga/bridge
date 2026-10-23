@@ -2,7 +2,13 @@
 // exists and shows a link to it. It never downloads or installs anything, and it asks only
 // when the user clicks the button or turned on "Check when Bridge starts" (off by default).
 // That request to github.com is the app's only network call that isn't loopback.
+//
+// Channels (Settings → About): `stable` asks for the latest release, which a beta never is
+// (betas are GitHub pre-releases, see scripts/release-flags.mjs); `beta` also reads
+// pre-releases. Either way only a newer version is shown, and never a beta on stable
+// (`offersUpdate`), whatever electron-updater found.
 
+import { offersUpdate, type UpdateChannel } from '@bridge/shared';
 import type { UpdateCheck } from '../preload/api';
 
 /** The repository whose Releases the app checks and links to. */
@@ -34,6 +40,10 @@ export interface UpdaterLike {
 export interface UpdatesOptions {
   /** Null when checking is on. */
   off: UpdatesOff | null;
+  /** This build's version (`app.getVersion()`). */
+  version: string;
+  /** The channel to check, read at every check (the user can switch it). */
+  channel: () => UpdateChannel;
   /** Loads electron-updater on first use, so a build that never checks never loads it. */
   load: () => Promise<UpdaterLike>;
   onChange?: (check: UpdateCheck | null) => void;
@@ -73,15 +83,18 @@ export class Updates {
     if (this.last?.state === 'checking') return this.last;
     this.set({ state: 'checking' });
     try {
+      const channel = this.options.channel();
       const updater = await this.configured();
+      // Pre-releases only on the beta channel. Set every time: the channel can change.
+      updater.allowPrerelease = channel === 'beta';
       const result = await updater.checkForUpdates();
       const checkedAt = this.now();
       if (!result) return this.set({ state: 'failed', checkedAt });
       const { version } = result.updateInfo;
       return this.set(
-        result.isUpdateAvailable
+        result.isUpdateAvailable && offersUpdate(channel, this.options.version, version)
           ? { state: 'available', version, url: releaseUrl(version), checkedAt }
-          : { state: 'current', version, checkedAt }
+          : { state: 'current', version: this.options.version, checkedAt }
       );
     } catch {
       // Offline, rate-limited by GitHub, or no release yet. Nothing to do but say so.

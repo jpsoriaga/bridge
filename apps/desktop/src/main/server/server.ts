@@ -5,6 +5,7 @@ import fastifyWebsocket from '@fastify/websocket';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import type { RawData, WebSocket } from 'ws';
 import {
+  browserFromUserAgent,
   ClientMessage,
   CloseCode,
   FILE_ERROR_MESSAGES,
@@ -198,6 +199,8 @@ export function createBridgeServer(options: BridgeServerOptions) {
 
   /** The protocol of the last extension that said hello, if it wasn't ours. */
   let extensionProtocol: number | null = null;
+  /** From the User-Agent of the last socket that authenticated. */
+  let browser: string | null = null;
   function setExtensionProtocol(protocol: number): void {
     const next = protocol === PROTOCOL_VERSION ? null : protocol;
     if (next === extensionProtocol) return;
@@ -305,8 +308,9 @@ export function createBridgeServer(options: BridgeServerOptions) {
     scope.get(
       '/ws',
       { websocket: true, onRequest: [requireExtensionOrigin, underConnectionLimit] },
-      (socket) => {
+      (socket, request) => {
         open.add(socket);
+        const userAgent = request.headers['user-agent'];
         /** Each operation's count in the current one-second window. */
         const opWindows = new Map<string, { start: number; count: number }>();
         const overOpLimit = (type: string): boolean => {
@@ -398,6 +402,7 @@ export function createBridgeServer(options: BridgeServerOptions) {
             clearTimeout(authTimer);
             stage = 'authed';
             sessions.add(socket);
+            browser = browserFromUserAgent(userAgent);
             resetIdle();
             send(serverMessage(randomUUID(), 'auth_ok', {}));
             send(statusMessage());
@@ -484,6 +489,11 @@ export function createBridgeServer(options: BridgeServerOptions) {
 
     get connected(): boolean {
       return sessions.size > 0;
+    },
+
+    /** The browser of the last extension that authenticated (`Chrome 141.0…`), for diagnostics. */
+    get browser(): string | null {
+      return browser;
     },
 
     /**

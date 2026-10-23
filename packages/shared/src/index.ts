@@ -1,5 +1,6 @@
 export * from './brand';
 export * from './commands';
+export * from './diagnostics';
 export * from './diff';
 export * from './files';
 export * from './loop';
@@ -9,3 +10,4 @@ export * from './protocol';
 export * from './redact';
 export * from './text';
 export * from './types';
+export * from './version';

@@ -501,7 +501,7 @@ describe('Settings → About', () => {
     expect(bridge.checkForUpdates).toHaveBeenCalledTimes(1);
 
     const about = (update: DesktopState['about']['update']) =>
-      makeState({ about: { version: '1.0.0', update, checkOnStart: false } });
+      makeState({ about: { ...makeState().about, update } });
     rerender(<SettingsView state={about({ state: 'checking' })} />);
     expect(
       (screen.getByRole('button', { name: 'Check for updates' }) as HTMLButtonElement).disabled
@@ -525,24 +525,66 @@ describe('Settings → About', () => {
     render(
       <SettingsView
         state={makeState({
-          about: {
-            version: '1.0.0',
-            update: { state: 'off', reason: 'unsigned-mac' },
-            checkOnStart: false
-          }
+          about: { ...makeState().about, update: { state: 'off', reason: 'unsigned-mac' } }
         })}
       />
     );
     expect(screen.getByText(/off in unsigned macOS builds/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Check for updates' })).toBeNull();
     expect(screen.getByRole('link', { name: 'Releases page' })).toBeTruthy();
+    // No channel to pick without checks, but diagnostics still work.
+    expect(screen.queryByRole('radiogroup', { name: 'Update channel' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Copy diagnostics' })).toBeTruthy();
+  });
+
+  it('switches the update channel, and says which one this build starts on', () => {
+    const { bridge } = installBridge();
+    const beta = (channel: 'stable' | 'beta') =>
+      makeState({
+        about: {
+          ...makeState().about,
+          version: '1.2.0-beta.1',
+          channel,
+          defaultChannel: 'beta'
+        }
+      });
+    const { rerender } = render(<SettingsView state={beta('beta')} />);
+    expect(screen.getByText('Bridge 1.2.0-beta.1')).toBeTruthy();
+    const group = screen.getByRole('radiogroup', { name: 'Update channel' });
+    const option = (name: string) => within(group).getByRole('radio', { name });
+    expect(option('Beta').getAttribute('aria-checked')).toBe('true');
+    expect(screen.getByText(/new betas for testers too/)).toBeTruthy();
+    fireEvent.click(option('Stable'));
+    expect(bridge.setUpdateChannel).toHaveBeenCalledWith('stable');
+    fireEvent.keyDown(group, { key: 'ArrowRight' });
+    expect(bridge.setUpdateChannel).toHaveBeenLastCalledWith('stable');
+
+    rerender(<SettingsView state={beta('stable')} />);
+    expect(screen.getByText(/new releases only\. This build starts on Beta\./)).toBeTruthy();
+  });
+
+  it('copies diagnostics and opens the logs folder', () => {
+    const { bridge } = installBridge();
+    render(<SettingsView state={makeState()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Copy diagnostics' }));
+    expect(bridge.copyDiagnostics).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Open logs folder' }));
+    expect(bridge.openLogsFolder).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/Never file contents, keys or tokens/)).toBeTruthy();
+  });
+
+  it('toasts when diagnostics are copied, from the menu or the button', () => {
+    const before = makeState();
+    const after = makeState({ about: { ...before.about, diagnosticsCopied: 1 } });
+    const toasts = toastsFor({ state: before, entries: [] }, { state: after, entries: [] });
+    expect(toasts.map((t) => t.text)).toEqual(['Diagnostics copied']);
   });
 
   it('toasts a newer version once', () => {
     const before = makeState();
     const after = makeState({
       about: {
-        version: '1.0.0',
+        ...before.about,
         update: { state: 'available', version: '1.1.0', url: 'https://x', checkedAt: 1 },
         checkOnStart: true
       }

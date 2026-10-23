@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   Menu,
@@ -13,12 +14,13 @@ import {
   type MenuItemConstructorOptions
 } from 'electron';
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
   candidatePorts,
   DEFAULT_PORT,
+  defaultChannel,
   E2E_PORT,
   formatArgv,
   MAX_RUN_TIMEOUT_MS,
@@ -31,11 +33,13 @@ import {
   type BridgeConfig,
   type LoopReport,
   type Mode,
-  type RunResult
+  type RunResult,
+  type UpdateChannel
 } from '@bridge/shared';
 import {
   IPC,
   type CommandPath,
+  type ActivityEntry,
   type DesktopState,
   type MenuAction,
   type OpenFolderResult,
@@ -50,9 +54,11 @@ import { isUsablePath, loginEnvOnce, withPath, type LoginEnv } from './commands/
 import { CommandRunner } from './commands/runner';
 import { CommandService } from './commands/service';
 import { installNote, suggestAllowlist, suggestInstall } from './commands/suggest';
+import { appDiagnostics } from './diagnostics';
 import { guardIpc, type IpcChannel } from './ipc';
 import { lockDownContents, lockDownSession } from './lockdown';
-import { securePrivateData } from './perms';
+import { Log } from './log';
+import { PRIVATE_DIR_MODE, securePrivateData } from './perms';
 import { DEFAULT_GATED_FILES, GatedFiles, guardedFiles, ModeState } from './policy';
 import { DEFAULT_DENYLIST } from './project/sandbox';
 import { ProjectService } from './project/service';
@@ -87,6 +93,14 @@ let runner: CommandRunner;
 let commands: CommandService;
 let serverFailed = false;
 let updates: Updates;
+let log: Log;
+/** Goes up each time diagnostics are copied, for the window's toast. */
+let diagnosticsCopied = 0;
+/** The connection status last logged, to log only changes. */
+let loggedStatus: string | null = null;
+/** The newest Activity row already logged, and the rows already logged as undone. */
+let loggedActivity: string | null = null;
+const loggedUndone = new Set<string>();
 let expiryTimer: NodeJS.Timeout | undefined;
 /** The project the last change saw, to notice a switch. */
 let lastRoot: string | null = null;
@@ -118,6 +132,11 @@ function commandPath(): CommandPath {
 function allowlist(): string[] | null {
   const key = projects.projectKey;
   return key === null ? null : (settings.read().allowlists[key] ?? null);
+}
+
+/** The channel the user picked, or this build's own (beta builds check for betas). */
+function updateChannel(): UpdateChannel {
+  return settings.read().updateChannel ?? defaultChannel(app.getVersion());
 }
 
 function runSettings(): RunSettings {
@@ -196,9 +215,51 @@ function desktopState(): DesktopState {
     about: {
       version: app.getVersion(),
       update: updates.state,
-      checkOnStart: saved.checkUpdatesOnStart
+      checkOnStart: saved.checkUpdatesOnStart,
+      channel: updateChannel(),
+      defaultChannel: defaultChannel(app.getVersion()),
+      diagnosticsCopied
     }
   };
+}
+
+/** Help → Copy diagnostics: versions, states and the last log lines, redacted. */
+function copyDiagnostics(): boolean {
+  const state = desktopState();
+  clipboard.writeText(
+    appDiagnostics({
+      version: app.getVersion(),
+      packaged: app.isPackaged,
+      platform: process.platform,
+      arch: process.arch,
+      osVersion: process.getSystemVersion(),
+      browser: server.browser,
+      status: state.status,
+      paired: state.paired,
+      port: state.port,
+      mode: state.mode,
+      project: projects.root,
+      updateChannel: updateChannel(),
+      log: log.recent(),
+      home: homedir(),
+      time: new Date()
+    })
+  );
+  diagnosticsCopied += 1;
+  log.info('diagnostics copied');
+  broadcast();
+  return true;
+}
+
+/** Help → Open logs folder. */
+async function openLogsFolder(): Promise<boolean> {
+  try {
+    mkdirSync(log.dir, { recursive: true, mode: PRIVATE_DIR_MODE });
+  } catch {
+    return false;
+  }
+  // An empty string means it opened; anything else is the error.
+  return (await shell.openPath(log.dir)) === '';
 }
 
 /** Tells the window to do something a menu item asked for. */
@@ -297,7 +358,10 @@ function buildMenu(): void {
       role: 'help',
       submenu: [
         { label: 'Getting started', click: () => menuAction('onboarding') },
-        ...(isMac ? [] : [about])
+        { type: 'separator' },
+        { label: 'Copy diagnostics', click: () => copyDiagnostics() },
+        { label: 'Open logs folder', click: () => void openLogsFolder() },
+        ...(isMac ? [] : [{ type: 'separator' } as const, about])
       ]
     }
   ];
@@ -310,11 +374,52 @@ function applyTheme(theme: Theme): void {
 }
 
 function broadcast(): void {
-  mainWindow?.webContents.send(IPC.status, desktopState());
+  const state = desktopState();
+  if (state.status !== loggedStatus) {
+    log.info(`connection: ${state.status}`);
+    loggedStatus = state.status;
+  }
+  mainWindow?.webContents.send(IPC.status, state);
 }
 
 function broadcastActivity(): void {
-  mainWindow?.webContents.send(IPC.activity, projects.activity());
+  const entries = projects.activity();
+  logActivity(entries);
+  mainWindow?.webContents.send(IPC.activity, entries);
+}
+
+/** New Activity rows, as one log line each: what happened to which path, never contents. */
+function logActivity(entries: ActivityEntry[]): void {
+  const newest = entries[0]?.id ?? null;
+  const fresh: ActivityEntry[] = [];
+  for (const entry of entries) {
+    if (entry.id === loggedActivity) break;
+    fresh.push(entry);
+  }
+  // The first list after opening a project is history, not news.
+  const first = loggedActivity === null;
+  loggedActivity = newest;
+  const undone = entries.filter((e) => e.undone && !loggedUndone.has(e.id));
+  for (const entry of undone) loggedUndone.add(entry.id);
+  if (first) return;
+  for (const entry of undone) {
+    if (!fresh.includes(entry)) log.info(`activity: undone ${entry.kind} ${entry.path}`);
+  }
+  for (const entry of fresh.reverse()) {
+    const how = [entry.source && `via ${entry.source}`, entry.trigger, entry.undone && 'undone']
+      .filter(Boolean)
+      .join(', ');
+    const what =
+      entry.kind === 'rejected' || entry.kind === 'failed'
+        ? `refused ${entry.op ?? 'request'} ${entry.path}: ${entry.code ?? 'error'}`
+        : entry.kind === 'run'
+          ? `command ${entry.path}: ${entry.run?.status ?? 'done'}${entry.run?.exitCode != null ? ` (exit ${entry.run.exitCode})` : ''}${entry.run ? `, ${entry.run.durationMs} ms` : ''}`
+          : entry.kind === 'loop'
+            ? `full auto: ${entry.text ?? ''}`
+            : `${entry.kind} ${entry.from ? `${entry.from} -> ` : ''}${entry.path}`;
+    const level = entry.kind === 'rejected' || entry.kind === 'failed' ? 'warn' : 'info';
+    log[level](`activity: ${what}${how ? ` (${how})` : ''}`);
+  }
 }
 
 /** Mode, allowlist, settings or the running command changed: tell the window and the extension. */
@@ -341,6 +446,9 @@ function projectChanged(): void {
   const root = projects.root;
   if (root !== lastRoot) {
     lastRoot = root;
+    log.info(root === null ? 'project closed' : `project opened ${root}`);
+    loggedActivity = null;
+    loggedUndone.clear();
     // A different project ends Full auto, and whatever was running there stops.
     modes.noteProject(root);
     runner.cancelAll();
@@ -453,6 +561,8 @@ function saveList(
 function registerIpc(): void {
   handle(IPC.getStatus, desktopState);
   handle(IPC.startPairing, () => {
+    // Never the code itself.
+    log.info('pairing: code shown');
     const code = pairing.startPairing();
     // Tell the UI when the code lapses so it can drop the countdown.
     clearTimeout(expiryTimer);
@@ -462,14 +572,19 @@ function registerIpc(): void {
   });
   handle(IPC.confirmPairing, () => {
     const confirmed = pairing.confirmFingerprint();
+    log.info(
+      `pairing: fingerprint ${confirmed ? 'confirmed in the app' : 'not confirmed (expired)'}`
+    );
     broadcast();
     return confirmed;
   });
   handle(IPC.cancelPairing, () => {
+    log.info('pairing: cancelled in the app');
     pairing.cancelPairing();
     broadcast();
   });
   handle(IPC.unpair, () => {
+    log.info('unpaired in the app');
     server.unpair();
   });
   handle(IPC.openFolder, openFolder);
@@ -493,7 +608,11 @@ function registerIpc(): void {
     await projects.setDenyPatterns([...new Set(patterns)]);
     return true;
   });
-  handle(IPC.setMode, setMode);
+  handle(IPC.setMode, async (mode) => {
+    const next = await setMode(mode);
+    log.info(`mode: ${next}`);
+    return next;
+  });
   handle(IPC.setAllowlist, (entries): SaveListResult => {
     const key = projects.projectKey;
     if (key === null) return { ok: false, invalid: null };
@@ -636,6 +755,14 @@ function registerIpc(): void {
     settings.update({ checkUpdatesOnStart: on });
     broadcast();
   });
+  handle(IPC.setUpdateChannel, (channel) => {
+    if (channel !== 'stable' && channel !== 'beta') return;
+    settings.update({ updateChannel: channel });
+    log.info(`update channel: ${channel}`);
+    broadcast();
+  });
+  handle(IPC.copyDiagnostics, copyDiagnostics);
+  handle(IPC.openLogsFolder, openLogsFolder);
 }
 
 /**
@@ -655,12 +782,18 @@ function buildInfo(): { updates: boolean } {
 
 async function startServer(): Promise<void> {
   const userData = app.getPath('userData');
-  // userData, the pairing key, settings and backups: private to the user (POSIX).
+  // userData, the pairing key, settings, backups and logs: private to the user (POSIX).
   await securePrivateData(userData).catch(() => []);
+  log = new Log({ dir: join(userData, 'logs'), home: homedir() });
   settings = settingsFile(join(userData, 'settings.json'));
   // Saves any one-time migration (allowlist entries to exact matching) right away.
   settings.update({});
+  log.info(
+    `Bridge ${app.getVersion()}${app.isPackaged ? '' : ' (development)'} started on ${process.platform} ${process.getSystemVersion()} ${process.arch}, update channel ${updateChannel()}`
+  );
   updates = new Updates({
+    version: app.getVersion(),
+    channel: updateChannel,
     off: updatesOff({
       isPackaged: app.isPackaged,
       platform: process.platform,
@@ -668,10 +801,19 @@ async function startServer(): Promise<void> {
     }),
     // Loaded on first check only: a build that never checks never loads it.
     load: async () => (await import('electron-updater')).autoUpdater,
-    onChange: () => broadcast()
+    onChange: (check) => {
+      if (check && check.state !== 'checking') {
+        log.info(
+          `update check: ${check.state}${'version' in check ? ` ${check.version}` : ''}${check.state === 'off' ? ` (${check.reason})` : ''}`
+        );
+      }
+      broadcast();
+    }
   });
   void loginEnv().then((result) => {
     login = result;
+    if (result.warning) log.warn(`PATH for commands: ${result.source}: ${result.warning}`);
+    else log.info(`PATH for commands: from ${result.source}`);
     broadcast();
   });
   modes = new ModeState(settings, configChanged);
@@ -771,14 +913,19 @@ async function startServer(): Promise<void> {
       }
       broadcast();
     },
-    onSessionEnd: sessionBoundary,
+    onSessionEnd: () => {
+      log.info('chat session ended');
+      sessionBoundary();
+    },
     onSessionStart: () => {
+      log.info('chat session started');
       sessionBoundary();
       if (settings.read().sessionStarted) return;
       settings.update({ sessionStarted: true });
       broadcast();
     },
     onUnpaired: () => {
+      log.info('pairing revoked or replaced');
       leaveFullAuto();
       loop = null;
     }
@@ -788,8 +935,10 @@ async function startServer(): Promise<void> {
     const e2e = !app.isPackaged && process.env.BRIDGE_E2E === '1';
     const port = await server.listen(candidatePorts(e2e ? E2E_PORT : DEFAULT_PORT));
     settings.update({ port });
-  } catch {
+    log.info(`server listening on 127.0.0.1:${port}`);
+  } catch (error) {
     serverFailed = true;
+    log.error(`server failed to start: ${(error as Error).message}`);
   }
   broadcast();
 }

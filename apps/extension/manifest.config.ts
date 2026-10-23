@@ -1,4 +1,6 @@
 import { defineManifest } from '@crxjs/vite-plugin';
+// By path: Node loads the config, and can't import the shared package's TS entry.
+import { manifestVersion } from '../../packages/shared/src/version';
 import pkg from './package.json';
 import { CARD_FONTS } from './src/fonts';
 
@@ -26,7 +28,9 @@ const RELEASE = process.env.BRIDGE_RELEASE === '1';
 export default defineManifest({
   manifest_version: 3,
   name: 'Bridge',
-  version: pkg.version,
+  // `version` takes numbers only: a beta (1.2.0-beta.1) is `version` 1.2.0 with
+  // `version_name` 1.2.0-beta.1, which Chrome and the side panel show.
+  ...manifestVersion(pkg.version),
   description: 'Apply file edits from your chat to a local project through the Bridge desktop app.',
   ...(RELEASE ? {} : { key: EXTENSION_PUBLIC_KEY }),
   icons,

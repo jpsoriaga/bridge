@@ -42,7 +42,7 @@ If `pnpm dev` fails with `electron.app` undefined, the shell has `ELECTRON_RUN_A
 
 ## Release rules
 
-- One version everywhere: change it only with `pnpm version:set`; `version:check` (and the release workflow) fail otherwise. `MAJOR.MINOR.PATCH` only.
+- One version everywhere: change it only with `pnpm version:set`; `version:check` (and the release workflow) fail otherwise. `MAJOR.MINOR.PATCH`, or `MAJOR.MINOR.PATCH-beta.N` for a beta (a pre-release, never Latest, no store zip; RELEASE.md "Beta release").
 - Releases come from a `v*` tag through `.github/workflows/release.yml`, which leaves a **draft**; never publish from a script. Every release needs a `CHANGELOG.md` section ([Keep a Changelog](https://keepachangelog.com/en/1.1.0/)). RELEASE.md has the steps.
 - Signing secrets go only in the `env:` of their platform's packaging step. Never in `ci.yml`, never `secrets: inherit`, never echoed. A partial set must fail (`scripts/package.mjs`).
 - Packaging must keep passing `check:package` (fuses, asar contents) and the smoke test. A new runtime dependency goes in `dependencies` only if main `require()`s it; everything bundled by Vite (React, `@bridge/shared`) is a devDependency.

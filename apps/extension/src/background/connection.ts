@@ -121,6 +121,8 @@ export class Connection {
   private projectInfo: ProjectInfo | null = null;
   private readonly projectListeners = new Set<(project: ProjectInfo | null) => void>();
   private configInfo: BridgeConfig | null = null;
+  /** The app's version, from its last /health or `status`. For diagnostics only. */
+  private appVersionInfo: string | null = null;
   private readonly configListeners = new Set<(config: BridgeConfig | null) => void>();
   private readonly eventListeners = new Set<(event: DesktopEvent) => void>();
   private readonly pending = new Map<
@@ -159,6 +161,11 @@ export class Connection {
   /** The app's mode, allowlist and loop settings, from its last `status`. Null while disconnected. */
   get config(): BridgeConfig | null {
     return this.configInfo;
+  }
+
+  /** The Bridge app's version as it last said, or null if no app answered yet. */
+  get appVersion(): string | null {
+    return this.appVersionInfo;
   }
 
   onConfig(listener: (config: BridgeConfig | null) => void): () => void {
@@ -511,6 +518,7 @@ export class Connection {
       });
       if (!response.ok) return null;
       const health = HealthResponse.safeParse(await response.json());
+      if (health.success) this.appVersionInfo = health.data.version;
       return health.success ? health.data : null;
     } catch {
       return null;
@@ -612,6 +620,7 @@ export class Connection {
           this.send(socket, clientMessage(this.deps.randomId(), 'pong', {}));
           break;
         case 'status':
+          this.appVersionInfo = message.payload.version;
           this.setProject(message.payload.project);
           this.setConfig(message.payload.config);
           break;

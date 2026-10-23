@@ -52,3 +52,22 @@ describe('allowlist migration to exact matching', () => {
     expect(settingsFile(path).read().allowlistNote).toBe(false);
   });
 });
+
+describe('update channel', () => {
+  let t: ReturnType<typeof tempProject>;
+  let path: string;
+  beforeEach(() => {
+    t = tempProject('bridge-settings-');
+    path = join(t.base, 'settings.json');
+  });
+  afterEach(() => t.cleanup());
+
+  it('is unset until the user picks one, and only stable or beta', () => {
+    const settings = settingsFile(path);
+    expect(settings.read().updateChannel).toBeUndefined();
+    settings.update({ updateChannel: 'beta' });
+    expect(settings.read().updateChannel).toBe('beta');
+    writeFileSync(path, JSON.stringify({ updateChannel: 'nightly' }));
+    expect(settings.read().updateChannel).toBeUndefined();
+  });
+});

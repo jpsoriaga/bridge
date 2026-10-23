@@ -25,6 +25,8 @@ All of it stays in your Chrome profile, on your computer.
 
 The extension **never stores file contents, command output or messages**. Sessions and card states are deleted 30 days after they were last used. Removing the extension deletes all of it.
 
+The extension also keeps a short list of recent events (connected, paired, a session started, Full auto paused) **in memory only**, for **Copy diagnostics** in the side panel. It's gone whenever Chrome stops the extension's background worker, and it's only copied to your clipboard when you click the button.
+
 The extension reads the chat page on `https://chatgpt.com` only, and only to find Bridge's markers in the assistant's replies, show cards under them, and put text into the message box when you click a button. It doesn't read or keep your conversations.
 
 ## What the desktop app stores, and where
@@ -35,17 +37,20 @@ In its data folder, readable only by your user account:
 - Windows: `%APPDATA%\Bridge`
 - Linux: `~/.config/Bridge`
 
-| What                                                                                                                                                         | Why                                                                                              |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
-| `settings.json`: the open project's path, your last 5 projects, protected and gated patterns, allowlisted commands, mode and other settings, window position | To come back the way you left it                                                                 |
-| `pairing.json` and `server-key.json`: the pairing key and the app's own key, encrypted with your system keychain where available                             | To recognise the paired extension                                                                |
-| `backups/`: a copy of each file before Bridge changed, deleted or renamed it, and a log of those changes                                                     | So you can undo. Kept for 7 days by default (1–90, in Settings), and you can clear them any time |
+| What                                                                                                                                                                                                                               | Why                                                                                              |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `settings.json`: the open project's path, your last 5 projects, protected and gated patterns, allowlisted commands, mode and other settings, window position                                                                       | To come back the way you left it                                                                 |
+| `pairing.json` and `server-key.json`: the pairing key and the app's own key, encrypted with your system keychain where available                                                                                                   | To recognise the paired extension                                                                |
+| `backups/`: a copy of each file before Bridge changed, deleted or renamed it, and a log of those changes                                                                                                                           | So you can undo. Kept for 7 days by default (1–90, in Settings), and you can clear them any time |
+| `logs/bridge.log`: what happened (started, connected, a project opened, a change applied or refused, a command's exit code), never file contents, command output or keys; likely secrets removed and your home folder shown as `~` | For bug reports. At most 5 MB, plus two older files; older lines are deleted                     |
 
 The app writes inside the project folder you opened, and only when you (or a mode you turned on) apply a change. Command output is kept in memory for the Activity page and is gone when the app quits.
 
+**Copy diagnostics** (Help menu, or Settings → About) puts the versions, your system, the mode, the connection state and the last 50 log lines on your clipboard, with likely secrets removed. Nothing is sent anywhere: you decide whether to paste it into a bug report.
+
 ## Update check
 
-Settings → About has **Check for updates**. When you click it, or at launch if you turned on "Check for updates when Bridge starts" (off by default), the app asks GitHub (`github.com`, which hosts Bridge's releases) for the latest version number. That request carries what any web request does (your IP address and a user agent) and nothing about you, your projects or your chats. GitHub's privacy statement applies to it. Nothing is downloaded or installed; the app shows a link if a newer version exists. Unsigned macOS builds never check.
+Settings → About has **Check for updates**. When you click it, or at launch if you turned on "Check for updates when Bridge starts" (off by default), the app asks GitHub (`github.com`, which hosts Bridge's releases) for the latest version number (on the **Beta** update channel, pre-releases too). That request carries what any web request does (your IP address and a user agent) and nothing about you, your projects or your chats. GitHub's privacy statement applies to it. Nothing is downloaded or installed; the app shows a link if a newer version exists. Unsigned macOS builds never check.
 
 ## Permissions the extension asks for
 

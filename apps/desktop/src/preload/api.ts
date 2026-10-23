@@ -5,7 +5,8 @@ import type {
   LoopReport,
   Mode,
   ProjectInfo,
-  RunResult
+  RunResult,
+  UpdateChannel
 } from '@bridge/shared';
 
 export interface PairingCode {
@@ -83,8 +84,19 @@ export interface DesktopState {
   backupRetentionDays: number;
   /** The first-run checklist. */
   onboarding: { dismissed: boolean; sessionStarted: boolean };
-  /** The app's version, the last update check (null: none yet) and whether it checks at launch. */
-  about: { version: string; update: UpdateCheck | null; checkOnStart: boolean };
+  /**
+   * The app's version, the last update check (null: none yet), whether it checks at launch,
+   * the update channel (and the build's own, for "default"), and how many times diagnostics
+   * were copied (goes up: a toast).
+   */
+  about: {
+    version: string;
+    update: UpdateCheck | null;
+    checkOnStart: boolean;
+    channel: UpdateChannel;
+    defaultChannel: UpdateChannel;
+    diagnosticsCopied: number;
+  };
 }
 
 export type Theme = 'system' | 'light' | 'dark';
@@ -244,6 +256,12 @@ export interface BridgeApi {
   checkForUpdates(): Promise<UpdateCheck>;
   /** Check once at every launch (off by default). */
   setCheckUpdatesOnStart(on: boolean): Promise<void>;
+  /** Stable releases only, or betas too. */
+  setUpdateChannel(channel: UpdateChannel): Promise<void>;
+  /** Puts versions, states and the last log lines (redacted) on the clipboard. */
+  copyDiagnostics(): Promise<boolean>;
+  /** Opens userData/logs in Finder/Explorer. */
+  openLogsFolder(): Promise<boolean>;
   /** Menu items that act in the window. Returns an unsubscribe function. */
   onMenu(listener: (action: MenuAction) => void): () => void;
 }
@@ -283,5 +301,8 @@ export const IPC = {
   answerInstallNote: 'bridge:answer-install-note',
   checkForUpdates: 'bridge:check-for-updates',
   setCheckUpdatesOnStart: 'bridge:set-check-updates-on-start',
+  setUpdateChannel: 'bridge:set-update-channel',
+  copyDiagnostics: 'bridge:copy-diagnostics',
+  openLogsFolder: 'bridge:open-logs-folder',
   menu: 'bridge:menu'
 } as const;

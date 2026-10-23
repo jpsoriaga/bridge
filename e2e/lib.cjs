@@ -84,14 +84,16 @@ async function launchChrome(extensionDir = extension()) {
 
 /**
  * Types `code` into the side panel and, once both sides show a fingerprint, checks they're
- * the same and confirms it in the app, then in the panel. Returns the fingerprint.
+ * the same and confirms it in the app, then in the panel. `atFingerprint` runs while both
+ * show it. Returns the fingerprint.
  */
-async function enterCode(win, panel, code) {
+async function enterCode(win, panel, code, atFingerprint) {
   await panel.fill('#pair-code', code);
   await panel.getByRole('button', { name: 'Pair' }).click();
   const fingerprint = (await panel.locator('.pairing-fingerprint').innerText()).trim();
   const app = (await win.locator('.pairing-code').innerText()).trim();
   if (fingerprint !== app) throw new Error(`fingerprints differ: panel ${fingerprint}, app ${app}`);
+  if (atFingerprint) await atFingerprint();
   await win.getByRole('button', { name: 'They match' }).click();
   await win.getByText(/Now confirm it in the side panel/).waitFor();
   await panel.getByRole('button', { name: 'They match' }).click();

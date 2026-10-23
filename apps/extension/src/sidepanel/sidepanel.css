@@ -302,6 +302,18 @@
   border-top: 1px solid var(--border);
   background: var(--bg);
 }
+/* Version and Copy diagnostics, at the end of the panel body. */
+.panel-meta {
+  margin-top: auto;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+.panel-meta .hint {
+  margin: 0;
+}
+.panel-meta [role='status'] {
+  margin-top: var(--space-2);
+}
 .step-count {
   font-size: var(--text-xs);
   color: var(--fg-muted);

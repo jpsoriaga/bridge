@@ -1,4 +1,5 @@
 import { useState, type KeyboardEvent, type ReactNode } from 'react';
+import { UPDATE_CHANNELS, type UpdateChannel } from '@bridge/shared';
 import type { DesktopState, Theme, UpdateCheck } from '../../preload/api';
 import { AllowlistEditor, FullAutoFields, PathOverride, TimeoutField } from './Commands';
 import { STATUS_LABELS, UpdateNotice } from './Header';
@@ -170,9 +171,9 @@ function BackupSettings({ state }: { state: DesktopState }) {
   );
 }
 
-function AppearanceSettings({ state }: { state: DesktopState }) {
-  const choose = (theme: Theme) => void window.bridge.setTheme(theme);
-  const onKeyDown = (event: KeyboardEvent) => {
+/** Arrow keys move the choice in a radio group, wrapping around. */
+function radioKeys<T>(options: readonly T[], current: T, choose: (value: T) => void) {
+  return (event: KeyboardEvent) => {
     const step =
       event.key === 'ArrowRight' || event.key === 'ArrowDown'
         ? 1
@@ -181,9 +182,14 @@ function AppearanceSettings({ state }: { state: DesktopState }) {
           : 0;
     if (step === 0) return;
     event.preventDefault();
-    const at = THEMES.indexOf(state.theme);
-    choose(THEMES[(at + step + THEMES.length) % THEMES.length]!);
+    const at = options.indexOf(current);
+    choose(options[(at + step + options.length) % options.length]!);
   };
+}
+
+function AppearanceSettings({ state }: { state: DesktopState }) {
+  const choose = (theme: Theme) => void window.bridge.setTheme(theme);
+  const onKeyDown = radioKeys(THEMES, state.theme, choose);
   return (
     <Section id="appearance" title="Appearance">
       <div
@@ -216,6 +222,12 @@ function AppearanceSettings({ state }: { state: DesktopState }) {
 }
 
 const RELEASES_URL = 'https://github.com/jpsoriaga/bridge/releases';
+
+const CHANNEL_LABELS: Record<UpdateChannel, string> = { stable: 'Stable', beta: 'Beta' };
+const CHANNEL_HINTS: Record<UpdateChannel, string> = {
+  stable: 'Tells you about new releases only.',
+  beta: 'Tells you about new betas for testers too, and new releases. Betas can have rough edges.'
+};
 
 /** What the last update check found, in a sentence. */
 function UpdateLine({ update }: { update: UpdateCheck | null }) {
@@ -268,6 +280,64 @@ function UpdateLine({ update }: { update: UpdateCheck | null }) {
   }
 }
 
+/** Stable or Beta: which releases "Check for updates" tells you about. */
+function UpdateChannelSetting({ about }: { about: DesktopState['about'] }) {
+  const choose = (channel: UpdateChannel) => void window.bridge.setUpdateChannel(channel);
+  return (
+    <>
+      <p className="label" id="update-channel-label">
+        Update channel
+      </p>
+      <div
+        className="segmented"
+        role="radiogroup"
+        aria-labelledby="update-channel-label"
+        onKeyDown={radioKeys(UPDATE_CHANNELS, about.channel, choose)}
+      >
+        {UPDATE_CHANNELS.map((channel) => (
+          <button
+            key={channel}
+            type="button"
+            role="radio"
+            aria-checked={about.channel === channel}
+            tabIndex={about.channel === channel ? 0 : -1}
+            onClick={() => choose(channel)}
+          >
+            {CHANNEL_LABELS[channel]}
+          </button>
+        ))}
+      </div>
+      <p className="hint">
+        {CHANNEL_HINTS[about.channel]}
+        {about.channel !== about.defaultChannel &&
+          ` This build starts on ${CHANNEL_LABELS[about.defaultChannel]}.`}
+      </p>
+    </>
+  );
+}
+
+/** Copy diagnostics (a toast says it's copied) and the logs folder, for bug reports. */
+function ReportProblem() {
+  return (
+    <>
+      <h3 className="subsection-title">Report a problem</h3>
+      <div className="actions">
+        <button type="button" className="btn" onClick={() => void window.bridge.copyDiagnostics()}>
+          Copy diagnostics
+        </button>
+        <button type="button" className="btn" onClick={() => void window.bridge.openLogsFolder()}>
+          Open logs folder
+        </button>
+      </div>
+      <p className="hint">
+        Diagnostics are versions, your system, the mode, the connection and the last 50 log lines.
+        Never file contents, keys or tokens; likely secrets are removed and paths start at ~. Also
+        in the Help menu.
+      </p>
+    </>
+  );
+}
+
 /** The version, and a check for a newer one: notify only, nothing is downloaded. */
 function AboutSettings({ state }: { state: DesktopState }) {
   const { version, update, checkOnStart } = state.about;
@@ -281,6 +351,7 @@ function AboutSettings({ state }: { state: DesktopState }) {
       <UpdateLine update={update} />
       {!off && (
         <>
+          <UpdateChannelSetting about={state.about} />
           <div className="actions">
             <button
               type="button"
@@ -305,6 +376,7 @@ function AboutSettings({ state }: { state: DesktopState }) {
           </p>
         </>
       )}
+      <ReportProblem />
     </Section>
   );
 }

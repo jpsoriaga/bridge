@@ -41,6 +41,49 @@ Then:
 7. **Publish** the draft. From then on, apps with "Check for updates" see the new version and link to it.
 8. **Upload the extension** to the Chrome Web Store (below).
 
+## Beta release
+
+A beta is a version like `1.2.0-beta.1`, for testers. The same tag-driven workflow builds it, with three differences, all decided from the tag (`scripts/release-flags.mjs`, `scripts/release-extension.mjs`):
+
+- The draft is a **pre-release** and is **never marked Latest** (`--prerelease --latest=false`), so the README's "latest release" links and the Stable update channel never land on it.
+- Only the **Load unpacked** extension zip (`bridge-extension-X.Y.Z-beta.N-unpacked.zip`), which keeps the fixed ID the app accepts. No store zip, and nothing goes to the Chrome Web Store.
+- The notes start with a line pointing testers at [BETA.md](BETA.md).
+
+Apps report the full version (`1.2.0-beta.1` in Settings → About). The extension's manifest gets `version` `1.2.0` (Chrome takes numbers only) and `version_name` `1.2.0-beta.1`, which Chrome and the side panel show. Beta builds start on the **Beta** update channel, so on Windows and Linux **Check for updates** finds newer betas and the final release; unsigned macOS builds don't check at all.
+
+### Cutting a beta
+
+```bash
+git switch main && git pull
+
+# 1. Bump to the beta (the next one is -beta.2, and so on; the final release drops the suffix).
+pnpm version:set 1.2.0-beta.1
+
+# 2. Move the changelog's "Unreleased" notes under a new heading:
+#      ## [1.2.0-beta.1] - YYYY-MM-DD
+#    and add its compare link at the bottom. (For beta.2, a new section with what changed
+#    since beta.1. The final 1.2.0 section sums up everything since 1.1.0.)
+$EDITOR CHANGELOG.md
+
+# 3. Check locally (same as CI), and build the beta's extension zip.
+pnpm format:check && pnpm lint && pnpm typecheck && pnpm build && pnpm test:coverage
+pnpm build:extension:release      # only release/bridge-extension-1.2.0-beta.1-unpacked.zip
+
+# 4. Commit, tag, push.
+git commit -am "chore: release 1.2.0-beta.1"
+git tag -a v1.2.0-beta.1 -m "Bridge 1.2.0-beta.1"
+git push origin main v1.2.0-beta.1
+```
+
+Then:
+
+5. **Watch the run** under Actions → Release (as for a release; to redo it, delete the tag and tag again).
+6. **Check the draft** under Releases: it says **Pre-release**, the notes start with "Beta for testers", and the files are the two dmgs, two mac zips, the Windows setup exe, the AppImage, `latest.yml`, `latest-mac.yml`, `latest-linux.yml`, `bridge-extension-1.2.0-beta.1-unpacked.zip` (and no store zip) and `SHA256SUMS.txt`. Download an installer and the extension zip and go through BETA.md's install steps once yourself.
+7. **Publish** the draft, keeping **Set as a pre-release** ticked and **Set as the latest release** unticked.
+8. **Share** with testers: the release page link (`https://github.com/jpsoriaga/bridge/releases/tag/v1.2.0-beta.1`) and BETA.md (`https://github.com/jpsoriaga/bridge/blob/v1.2.0-beta.1/BETA.md`). Say which file to download for their computer, that the warnings on first open are expected, and that diagnostics can come back to you directly if they have no GitHub account. Reports arrive as issues labelled `beta`.
+
+Never upload a beta to the Chrome Web Store.
+
 ## Chrome Web Store
 
 The store build is `release/bridge-extension-X.Y.Z.zip` (also on the release). It's minified, has no source maps and no manifest `key` (the store assigns the ID and refuses a `key`), and holds only the build's files. Its sibling `bridge-extension-X.Y.Z-unpacked.zip` is the same build with the `key`, for people who load it unpacked; never upload that one.

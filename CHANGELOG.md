@@ -4,6 +4,18 @@ All notable changes to Bridge are listed here. The format follows [Keep a Change
 
 ## [Unreleased]
 
+## [1.2.0-beta.1] - 2026-10-23
+
+The first beta for testers on macOS, Windows and Linux, with install steps in [BETA.md](https://github.com/jpsoriaga/bridge/blob/v1.2.0-beta.1/BETA.md) and an easy way to report problems.
+
+### Added
+
+- **Beta releases.** Versions like `1.2.0-beta.1` are published as GitHub pre-releases, never marked Latest, with the Load unpacked extension zip (no store zip). The app shows the full version in Settings → About, and the extension at the bottom of the side panel and on `chrome://extensions`.
+- **Update channel.** Settings → About → **Stable** or **Beta**. Beta builds start on Beta and hear about newer betas and releases; Stable never shows a beta. Still notify only: nothing is downloaded or installed.
+- **Copy diagnostics.** In the app (Help → Copy diagnostics, or Settings → About) and at the bottom of the side panel: the app and extension versions, the protocol, your system and browser, the mode, the connection and the last 50 log lines, for bug reports. Never file contents, keys or tokens; likely secrets are redacted and paths start at `~`.
+- **A log file.** The app logs what happens (not file contents) to `logs/bridge.log` in its data folder, rotated at 5 MB with two older files kept, with the same redaction. Help → **Open logs folder** shows it.
+- **Beta issue templates** on GitHub: "Beta bug report" (with a field for the diagnostics) and "Beta feedback".
+
 ### Fixed
 
 - **Blank markers are ignored.** A marker with only spaces where its path or command goes (`@@RUN   @@`, `@@FILE   @@`, or `` `@@RUN @` `` with a half-written closer) no longer becomes a card for a blank path or command, or for `@`.
@@ -58,7 +70,8 @@ The first release: a desktop app for macOS, Windows and Linux, and a Chrome exte
 - **Update check, notify only.** Settings → About shows the version and can ask GitHub Releases whether a newer one exists, on a click or (if you turn it on) at launch. It never downloads or installs anything, and it's off in unsigned macOS builds.
 - **Version handshake.** If the app and the extension speak different protocol versions, both say which one to update instead of failing to connect.
 
-[Unreleased]: https://github.com/jpsoriaga/bridge/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/jpsoriaga/bridge/compare/v1.2.0-beta.1...HEAD
+[1.2.0-beta.1]: https://github.com/jpsoriaga/bridge/compare/v1.1.0...v1.2.0-beta.1
 [1.1.0]: https://github.com/jpsoriaga/bridge/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/jpsoriaga/bridge/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/jpsoriaga/bridge/releases/tag/v1.0.0

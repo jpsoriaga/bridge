@@ -1,4 +1,5 @@
 import {
+  browserFromUserAgent,
   buildContextMessage,
   buildSessionPrompt,
   candidatePorts,
@@ -31,7 +32,9 @@ import {
 } from '../messages';
 import { CardStore } from './cards';
 import { Connection, type ConnectionStorage, type ReconnectAlarm } from './connection';
+import { browserVersion, extensionDiagnostics } from './diagnostics';
 import { indexedDbKeyStore, migratingKeyStore } from './key-store';
+import { WorkerLog } from './log';
 import { classifySender, isAllowed, type Sender } from './senders';
 import { Sessions } from './sessions';
 import { chromeArea } from './store';
@@ -40,6 +43,11 @@ import { chromeArea } from './store';
 chrome.runtime.onInstalled.addListener(() => {
   void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 });
+
+/** Recent events for the side panel's Copy diagnostics. Memory only. */
+const log = new WorkerLog();
+const manifest = chrome.runtime.getManifest();
+log.info(`Bridge extension ${manifest.version_name ?? manifest.version} started`);
 
 // The pairing key is in the worker's IndexedDB, out of content scripts' reach. Earlier
 // versions kept it in chrome.storage.local; it moves over once and is deleted there.
@@ -139,6 +147,7 @@ let fullAutoOff = false;
 
 /** Tells the app a session started or ended. The app drops Full auto on both. */
 function sessionBoundary(type: 'session_start' | 'session_end'): void {
+  log.info(type === 'session_start' ? 'chat session started' : 'chat session ended');
   if (connection.config?.mode === 'full-auto' && !fullAutoOff) {
     fullAutoOff = true;
     notifyPanels();
@@ -507,6 +516,10 @@ async function handleChat(
       return null;
     case 'chat-loop':
       // The loop reports every change. The app logs it; the panel shows it.
+      if (loops.get(tabId)?.state !== request.report.state) {
+        const { state, step, limit, reason } = request.report;
+        log.info(`full auto: ${state}, step ${step}/${limit}${reason ? `, ${reason}` : ''}`);
+      }
       loops.set(tabId, request.report);
       connection.notify('loop_report', request.report);
       notifyPanels();
@@ -528,6 +541,37 @@ async function handleChat(
   }
 }
 
+/** The chat tab next to the panel, in a few words, for diagnostics. */
+async function describeChatTab(windowId: number): Promise<string> {
+  const tabId = await activeTabId(windowId);
+  if (tabId === null) return 'no active tab';
+  const { tab, session } = await sessions.panelState(tabId);
+  if (!tab) return 'not a chat tab, or Bridge isn’t running in it';
+  const loop = loops.get(tabId);
+  return [
+    `layout ${tab.layout}`,
+    `session ${session?.state ?? 'none'}`,
+    ...(loop ? [`full auto ${loop.state}${loop.reason ? ` (${loop.reason})` : ''}`] : [])
+  ].join(', ');
+}
+
+async function diagnostics(windowId: number): Promise<string> {
+  const platform = await chrome.runtime.getPlatformInfo().catch(() => null);
+  return extensionDiagnostics({
+    version: manifest.version_name ?? manifest.version,
+    appVersion: connection.appVersion,
+    browser: await browserVersion(navigator, browserFromUserAgent),
+    os: platform?.os ?? null,
+    arch: platform?.arch ?? null,
+    status: connection.current,
+    mode: connection.config?.mode ?? null,
+    project: connection.project?.path ?? null,
+    chatTab: await describeChatTab(windowId),
+    log: log.recent(50),
+    time: new Date()
+  });
+}
+
 async function handlePanel(
   request: Exclude<WorkerRequest, WorkerRequestOf<Parameters<typeof handleChat>[1]['type']>>
 ): Promise<unknown> {
@@ -535,14 +579,23 @@ async function handlePanel(
     case 'get-status':
       void connection.connect();
       return connection.current;
-    case 'pair':
-      return connection.pair(request.code);
-    case 'pair-confirm':
-      return connection.confirmPair();
+    case 'pair': {
+      // Never the code itself.
+      const result = await connection.pair(request.code);
+      log.info(`pairing: code sent, ${result.ok ? 'fingerprint shown' : result.error}`);
+      return result;
+    }
+    case 'pair-confirm': {
+      const result = await connection.confirmPair();
+      log.info(`pairing: confirm, ${result.ok ? 'paired' : result.error}`);
+      return result;
+    }
     case 'pair-cancel':
+      log.info('pairing: cancelled in the side panel');
       connection.cancelPair();
       return null;
     case 'unpair':
+      log.info('unpaired in the side panel');
       await connection.unpair();
       return null;
     case 'retry':
@@ -596,6 +649,9 @@ async function handlePanel(
       const report = tabId === null ? undefined : await tellTab(tabId, { type: 'diagnose' });
       return report ?? { error: 'Bridge isn’t running in this tab. Reload it and try again.' };
     }
+    case 'diagnostics':
+      log.info('diagnostics copied');
+      return diagnostics(request.windowId);
     case 'run-cancel': {
       const running = connection.config?.running;
       if (running) await connection.request('run_cancel', { runId: running.runId });
@@ -732,6 +788,15 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   void sessions.removeTab(tabId);
   requests.delete(tabId);
   forgetLoop(tabId, 'The chat tab closed.');
+});
+
+let loggedStatus: string | null = null;
+connection.onStatus((status) => {
+  if (status === loggedStatus) return;
+  loggedStatus = status;
+  log.info(
+    `connection: ${status}${connection.appVersion ? ` (app ${connection.appVersion})` : ''}`
+  );
 });
 
 // Back online (a new launch of the app, or after sleep): files may have changed meanwhile.

@@ -178,6 +178,8 @@ export const WorkerRequest = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('run-cancel') }),
   // Dev builds: what the page script sees on the panel's active tab, to fix selectors.
   z.strictObject({ type: z.literal('page-diagnostics'), windowId: WindowId }),
+  // Copy diagnostics in the side panel: versions, states and recent events, as text.
+  z.strictObject({ type: z.literal('diagnostics'), windowId: WindowId }),
 
   // Content script on chatgpt.com.
   z.strictObject({
@@ -293,6 +295,7 @@ export const EXTENSION_PAGE_REQUESTS: ReadonlySet<WorkerRequest['type']> = new S
   'loop-control',
   'run-cancel',
   'page-diagnostics',
+  'diagnostics',
   'dev-file'
 ]);
 

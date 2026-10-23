@@ -1,0 +1,19 @@
+name: Beta feedback
+description: Ideas, confusing bits, or anything else about a Bridge beta.
+title: '[beta feedback] '
+labels: ['beta', 'feedback']
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for trying Bridge. Anything goes, big or small.
+  - type: textarea
+    id: feedback
+    attributes:
+      label: Your feedback
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Bridge version (if you know it)
+      placeholder: 1.2.0-beta.1

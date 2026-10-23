@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { crc32, inflateRawSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
-import { releaseProblems } from './release-extension.mjs';
+import { manifestFields, releaseBuilds, releaseProblems } from './release-extension.mjs';
 import { listFiles, zip, zipDir } from './zip.mjs';
 
 /** Reads a zip back through its central directory: name → contents. */
@@ -81,6 +81,41 @@ describe('releaseProblems', () => {
       'assets/a.js.map: source map',
       'assets/panel.js: dev-only code ((dev only))',
       'assets/worker.js: built for the e2e port range'
+    ]);
+  });
+});
+
+describe('betas', () => {
+  it('build only the Load unpacked zip, with the fixed ID', () => {
+    expect(releaseBuilds('1.2.0').map((b) => b.zip)).toEqual([
+      'bridge-extension-1.2.0.zip',
+      'bridge-extension-1.2.0-unpacked.zip'
+    ]);
+    const beta = releaseBuilds('1.2.0-beta.1');
+    expect(beta.map((b) => b.zip)).toEqual(['bridge-extension-1.2.0-beta.1-unpacked.zip']);
+    expect(beta[0].key).toBe(true);
+  });
+
+  it('split the version: numbers in version, the beta in version_name', () => {
+    expect(manifestFields('1.2.0')).toEqual({ version: '1.2.0' });
+    expect(manifestFields('1.2.0-beta.1')).toEqual({
+      version: '1.2.0',
+      version_name: '1.2.0-beta.1'
+    });
+    const manifest = (extra) =>
+      JSON.stringify({ manifest_version: 3, name: 'Bridge', key: 'MIIB', ...extra });
+    const good = tree({
+      'manifest.json': manifest({ version: '1.2.0', version_name: '1.2.0-beta.1' })
+    });
+    expect(releaseProblems(good, '1.2.0-beta.1', { key: true })).toEqual([]);
+    const bad = tree({ 'manifest.json': manifest({ version: '1.2.0-beta.1' }) });
+    expect(releaseProblems(bad, '1.2.0-beta.1', { key: true })).toEqual([
+      'manifest version 1.2.0-beta.1, expected 1.2.0',
+      'manifest version_name undefined, expected 1.2.0-beta.1'
+    ]);
+    const stray = tree({ 'manifest.json': manifest({ version: '1.2.0', version_name: 'x' }) });
+    expect(releaseProblems(stray, '1.2.0', { key: true })).toEqual([
+      'manifest version_name x, expected undefined'
     ]);
   });
 });

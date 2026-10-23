@@ -115,6 +115,33 @@ function readIdbKey() {
   const alarms = await sw.evaluate(() => chrome.alarms.getAll());
   step(`alarms while connected: ${alarms.length}`);
 
+  // Reporting problems: the panel shows the version; both diagnostics blocks and the log
+  // file say what happened and never carry the key.
+  const version = JSON.parse(
+    fs.readFileSync(path.join(__dirname, '../apps/desktop/package.json'), 'utf8')
+  ).version;
+  await panel.locator('.panel-meta').getByText(`Bridge ${version}`).waitFor();
+  const panelDiag = await panel.evaluate(async () => {
+    const { id } = await chrome.windows.getCurrent();
+    return chrome.runtime.sendMessage({ type: 'diagnostics', windowId: id });
+  });
+  await win.evaluate(() => window.bridge.copyDiagnostics());
+  const appDiag = await app.evaluate(({ clipboard }) => clipboard.readText());
+  await win.getByText('Diagnostics copied').waitFor();
+  const logText = fs.readFileSync(path.join(APP_DATA, 'logs', 'bridge.log'), 'utf8');
+  for (const [name, text, wants] of [
+    ['panel', panelDiag, [`Extension:  ${version}`, `App:        ${version}`, 'connected']],
+    ['app', appDiag, [`App:            ${version}`, 'Connection:     connected', 'Browser:']],
+    ['log', logText, [`Bridge ${version}`, 'connection: connected', 'pairing: code shown']]
+  ]) {
+    for (const want of wants) {
+      if (!text.includes(want)) throw new Error(`${name} diagnostics lack "${want}":\n${text}`);
+    }
+    if (text.includes(tokenHash)) throw new Error(`${name} diagnostics carry the key`);
+    if (/pairing: .*\b\d{6}\b/.test(text)) throw new Error(`${name} logs a pairing code`);
+  }
+  step('diagnostics: panel, app and log file, without the key');
+
   // Unpair from the extension (two-step proof over HTTP).
   await panel.getByRole('button', { name: 'Unpair' }).click();
   await panelStatus.filter({ hasText: 'Not paired' }).waitFor();

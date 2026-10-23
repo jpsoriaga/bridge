@@ -1,7 +1,8 @@
 // Screenshots for the README: the app and the chat cards, in light and dark, from the real
 // app and a production build of the extension on the stand-in chat page. Also the Chrome
 // Web Store images: 1280×800 screenshots in both themes and the 440×280 promo tile.
-//   node e2e/screenshots.cjs .   → docs/screenshots/*.png, store/screenshots/*.png,
+//   node e2e/screenshots.cjs .   → docs/screenshots/*.png, docs/screenshots/beta/*.png
+//                                   (BETA.md's pairing steps), store/screenshots/*.png,
 //                                   store/promo-tile-440x280.png
 const fs = require('node:fs');
 const path = require('node:path');
@@ -11,6 +12,7 @@ const EXT = buildExtension({ e2ePorts: false });
 const { step, SHELL, assistantTurn, cardText, clickInCard, waitFor } = require('./chat-lib.cjs');
 
 const OUT = path.join(ROOT, 'docs/screenshots');
+const BETA = path.join(OUT, 'beta');
 const STORE = path.join(ROOT, 'store');
 const TOKENS = fs.readFileSync(path.join(ROOT, 'packages/shared/src/tokens.css'), 'utf8');
 const CONV = 'e2e00000-0000-4000-8000-0000000000ss';
@@ -60,10 +62,23 @@ const PAGE = SHELL.replace(
     route.fulfill({ status: 200, contentType: 'text/html', body: PAGE })
   );
   const panel = await ctx.newPage();
+  await panel.setViewportSize({ width: 360, height: 640 });
+  await panel.emulateMedia({ colorScheme: 'light' });
   await panel.goto(`chrome-extension://${extId}/src/sidepanel/index.html`);
+  await panel.locator('#pair-code').waitFor();
   await win.getByRole('button', { name: 'Pair extension' }).click();
   const code = (await win.locator('.pairing-code').innerText()).replace(/\D/g, '');
-  await enterCode(win, panel, code);
+  // BETA.md's pairing steps: the code in the app, typed in the panel, then both fingerprints.
+  fs.mkdirSync(BETA, { recursive: true });
+  await win.screenshot({ path: path.join(BETA, 'pair-1-app-code.png') });
+  await panel.fill('#pair-code', code);
+  await panel.screenshot({ path: path.join(BETA, 'pair-2-panel-code.png') });
+  await panel.fill('#pair-code', '');
+  await enterCode(win, panel, code, async () => {
+    await win.screenshot({ path: path.join(BETA, 'pair-3-app-fingerprint.png') });
+    await panel.screenshot({ path: path.join(BETA, 'pair-4-panel-fingerprint.png') });
+  });
+  step('pairing screenshots');
   await panel
     .locator('header .status')
     .filter({ hasText: 'Connected' })

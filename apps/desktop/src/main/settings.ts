@@ -9,7 +9,9 @@ import {
   MAX_RUN_TIMEOUT_MS,
   MAX_STEP_LIMIT,
   MIN_RUN_TIMEOUT_MS,
-  parseAllowlistEntry
+  parseAllowlistEntry,
+  UPDATE_CHANNELS,
+  type UpdateChannel
 } from '@bridge/shared';
 import { isValidEnvPattern, MAX_ENV_PATTERNS } from './commands/env';
 import { isUsablePath } from './commands/login-env';
@@ -84,6 +86,11 @@ export interface Settings {
   sessionStarted: boolean;
   /** Check GitHub Releases for a newer version at launch. Off unless the user turns it on. */
   checkUpdatesOnStart: boolean;
+  /**
+   * The update channel the user picked in Settings → About. Unset: the build's own
+   * (`defaultChannel`: beta for a beta build, stable otherwise).
+   */
+  updateChannel?: UpdateChannel;
   windowBounds?: WindowBounds;
 }
 
@@ -210,6 +217,9 @@ export function settingsFile(path: string) {
     if (isWindowBounds(data.windowBounds)) settings.windowBounds = data.windowBounds;
     if (Number.isInteger(data.port)) settings.port = data.port as number;
     if (isAbsolutePath(data.project)) settings.project = data.project;
+    if (UPDATE_CHANNELS.includes(data.updateChannel as UpdateChannel)) {
+      settings.updateChannel = data.updateChannel as UpdateChannel;
+    }
     return settings;
   }
 

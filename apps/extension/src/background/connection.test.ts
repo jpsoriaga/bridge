@@ -794,12 +794,16 @@ describe('file requests', () => {
     const { connection } = makeConnection();
     const seen: unknown[] = [];
     connection.onProject((p) => seen.push(p));
+    expect(connection.appVersion).toBeNull();
     await connection.connect();
     expect(connection.project).toEqual({ name: 'app', path: '~/app' });
+    expect(connection.appVersion).toBe('1');
 
     sockets[0]!.receive(
-      serverMessage('s2', 'status', { version: '1', project: null, config: CONFIG })
+      serverMessage('s2', 'status', { version: '1.2.0-beta.1', project: null, config: CONFIG })
     );
+    // The app's version is kept for diagnostics.
+    expect(connection.appVersion).toBe('1.2.0-beta.1');
     expect(connection.project).toBeNull();
     sockets[0]!.receive(
       serverMessage('s3', 'status', {

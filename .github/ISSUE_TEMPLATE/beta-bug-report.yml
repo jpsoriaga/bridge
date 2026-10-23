@@ -1,0 +1,66 @@
+name: Beta bug report
+description: Something in a Bridge beta didn't work as you expected.
+title: '[beta] '
+labels: ['beta', 'bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing Bridge. Please don't paste file contents, keys or passwords here.
+        A security problem? Report it privately instead (SECURITY.md, "Reporting a problem").
+  - type: dropdown
+    id: os
+    attributes:
+      label: Your computer
+      options:
+        - macOS, Apple silicon (M1 or later)
+        - macOS, Intel
+        - Windows
+        - Linux
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Bridge version
+      description: In the app, Settings → About. In the side panel, at the bottom.
+      placeholder: 1.2.0-beta.1
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: What you did
+      description: The steps, one per line, so someone else can do the same.
+      placeholder: |
+        1. Started a session
+        2. Asked the chat to change a file
+        3. Clicked Apply
+    validations:
+      required: true
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: |
+        In the app: Help → Copy diagnostics. In the side panel: Copy diagnostics at the bottom.
+        Paste both if you can. They hold versions, your system, the mode, the connection and
+        recent log lines, with no file contents, keys or tokens.
+      render: text
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: Screenshots help. Crop out anything private.

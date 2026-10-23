@@ -276,6 +276,44 @@ function ConnectionSection({ project }: { project: ProjectInfo | null }) {
   );
 }
 
+/** The extension's version (a beta's full one), as Chrome shows it. */
+function extensionVersion(manifest: chrome.runtime.Manifest): string {
+  return manifest.version_name ?? manifest.version;
+}
+
+/**
+ * The version, and Copy diagnostics for bug reports: versions, states and recent events,
+ * never file contents or keys. In every state, since pairing problems need it most.
+ */
+function PanelMeta() {
+  const [note, setNote] = useState<string | null>(null);
+  const copy = () => {
+    setNote(null);
+    void panelWindowId()
+      .then((windowId) => request<string>({ type: 'diagnostics', windowId }))
+      .then((text) => navigator.clipboard.writeText(text))
+      .then(
+        () => setNote('Diagnostics copied. Paste them into your bug report.'),
+        () => setNote('Couldn’t copy. Click the panel first, then try again.')
+      );
+  };
+  return (
+    <footer className="panel-meta">
+      <div className="label-row">
+        <span className="hint mono">Bridge {extensionVersion(chrome.runtime.getManifest())}</span>
+        <button type="button" className="link-button" onClick={copy}>
+          Copy diagnostics
+        </button>
+      </div>
+      {note && (
+        <p className="hint" role="status">
+          {note}
+        </p>
+      )}
+    </footer>
+  );
+}
+
 /** Placeholder rows while the worker hasn't answered yet. */
 function Loading() {
   return (
@@ -429,6 +467,7 @@ export function App() {
             live={live}
           />
         )}
+        <PanelMeta />
       </main>
       {update?.status === 'connected' && <LoopFooter loop={chat.loop} />}
     </div>

@@ -368,3 +368,31 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [x] `e2e/catchup.cjs` (in CI): install pre-ticked and the prompt line, a cut-off reply in Full auto (whole file applied, continuation sent), a second cut pausing, Resume sending it
 - [x] Version 1.1.0, CHANGELOG, PLAN.md "1.1.0 decisions", SECURITY.md, README, DESIGN.md "Interrupted card"
 - [ ] Manual run on the real chatgpt.com (e2e README "1.1.0 on the real chatgpt.com"): install, sleep with the lid closed, offline mid-reply
+
+## 1.2.0-beta.1: Beta channel for testers
+
+### Beta pre-releases
+
+- [x] `pnpm version:set` / `version:check` accept `MAJOR.MINOR.PATCH-beta.N` (and nothing else); `parseVersion` in shared has the same rule (tests, including a check that both agree)
+- [x] Extension manifest: `version` numbers only, `version_name` the full beta version (`manifestVersion`; tests in shared, `manifest.test.ts`, `releaseProblems`)
+- [x] The app shows `1.2.0-beta.1` in Settings → About; the side panel shows it at the bottom (`version_name`)
+- [x] `v*-beta.*` tags: draft pre-release, `--latest=false`, notes start with a BETA.md line (`scripts/release-flags.mjs`); normal tags unchanged; a bad tag fails in the version job
+- [x] `release-flags.test.mjs` runs the workflow's notes and create steps from `release.yml` under bash with a stand-in `gh`, for a release and a beta tag
+- [x] A beta builds only `bridge-extension-<v>-unpacked.zip` (fixed ID), no store zip (`releaseBuilds`, tested)
+- [x] Settings → About → Update channel (Stable / Beta): beta builds default to Beta; Stable never offers a beta; Beta offers newer betas and releases (`offersUpdate`, `Updates`, settings, IPC, renderer; tests)
+
+### Reporting problems
+
+- [x] Help → Copy diagnostics and Settings → About → Copy diagnostics: versions, protocol, OS and arch, browser, mode, connection, last 50 log lines; no file contents, tokens or keys; paths with `~`; the whole block redacted (`appDiagnostics`; tests with a fake secret in a log fixture)
+- [x] Side panel → Copy diagnostics: extension and app versions, protocol, OS and arch, browser (client hints), mode, connection, chat tab, last 50 worker events (memory only); `diagnostics` request with a zod schema (tests)
+- [x] App log `userData/logs/bridge.log`, `0700`/`0600`, rotated at 5 MB, 3 files, every line through `logLine`; Help → Open logs folder (tests: rotation, redaction, reading back the tail, write failures)
+- [x] `.github/ISSUE_TEMPLATE/`: Beta bug report (OS, version, steps, happened vs expected, diagnostics), Beta feedback, security link
+- [x] e2e: `run.cjs` checks both diagnostics blocks, the panel's version and the log file after pairing
+
+### Docs
+
+- [x] BETA.md: download, install per OS (Mac chip, right-click → Open, quarantine fix; SmartScreen and why; AppImage, FUSE, Ubuntu 24.04 AppArmor), extension (Load unpacked in Chrome, Edge, Brave; pin), pairing with fingerprint screenshots, 15-minute checklist, Free/Go tips, known issues, reporting (templates, or diagnostics to whoever invited you), uninstall per OS; linked from the top of README
+- [x] Pairing screenshots for BETA.md from `e2e/screenshots.cjs` (`docs/screenshots/beta/`)
+- [x] Version 1.2.0-beta.1, CHANGELOG, RELEASE.md "Beta release", PLAN.md "Beta channel decisions", SECURITY.md, PRIVACY.md (logs, diagnostics), DESIGN.md, README, CLAUDE.md release rule
+- [ ] First beta run of the release workflow on GitHub (the `v1.2.0-beta.1` tag push): pre-release, not Latest, unpacked zip only
+- [ ] BETA.md followed start to finish by a tester on macOS, Windows and Linux

@@ -81,6 +81,9 @@ const api: BridgeApi = {
   checkForUpdates: () => ipcRenderer.invoke(IPC.checkForUpdates) as Promise<UpdateCheck>,
   setCheckUpdatesOnStart: (on) =>
     ipcRenderer.invoke(IPC.setCheckUpdatesOnStart, on) as Promise<void>,
+  setUpdateChannel: (channel) => ipcRenderer.invoke(IPC.setUpdateChannel, channel) as Promise<void>,
+  copyDiagnostics: () => ipcRenderer.invoke(IPC.copyDiagnostics) as Promise<boolean>,
+  openLogsFolder: () => ipcRenderer.invoke(IPC.openLogsFolder) as Promise<boolean>,
   onMenu: (listener) => {
     const handler = (_event: IpcRendererEvent, action: MenuAction) => listener(action);
     ipcRenderer.on(IPC.menu, handler);

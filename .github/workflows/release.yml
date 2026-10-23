@@ -1,7 +1,9 @@
 name: Release
 
 # A version tag builds every installer and the extension zip, checks them, and attaches
-# them to a DRAFT release. Publishing is done by hand (RELEASE.md).
+# them to a DRAFT release. Publishing is done by hand (RELEASE.md). A beta tag
+# (vX.Y.Z-beta.N) makes a pre-release that is never marked Latest, with only the Load
+# unpacked extension zip (scripts/release-flags.mjs, scripts/release-extension.mjs).
 on:
   push:
     tags: ['v*']
@@ -31,6 +33,7 @@ jobs:
       # Every package carries the tag's version, and CHANGELOG.md has a section for it.
       - run: node scripts/version.mjs check "$GITHUB_REF_NAME"
       - run: node scripts/changelog.mjs "$GITHUB_REF_NAME" > /dev/null
+      - run: node scripts/release-flags.mjs "$GITHUB_REF_NAME"
 
   package:
     needs: [checks, version]
@@ -140,7 +143,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       # The store zip (minified, no source maps, no manifest key) and the Load unpacked zip
-      # (the same, with the key); refuses to zip otherwise.
+      # (the same, with the key); refuses to zip otherwise. A beta gets the unpacked one only.
       - run: pnpm build:extension:release
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -169,14 +172,20 @@ jobs:
         working-directory: assets
         run: sha256sum -- * > SHA256SUMS.txt && cat SHA256SUMS.txt
       - name: Release notes from CHANGELOG.md
-        run: node scripts/changelog.mjs "$GITHUB_REF_NAME" > notes.md
+        run: |
+          node scripts/release-flags.mjs --intro "$GITHUB_REF_NAME" > notes.md
+          node scripts/changelog.mjs "$GITHUB_REF_NAME" >> notes.md
       - name: Create the draft release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Nothing for vX.Y.Z; --prerelease --latest=false for vX.Y.Z-beta.N.
+          flags=$(node scripts/release-flags.mjs "$GITHUB_REF_NAME")
+          # shellcheck disable=SC2086 # one flag per word, on purpose
           gh release create "$GITHUB_REF_NAME" assets/* \
             --repo "$GITHUB_REPOSITORY" \
             --draft \
             --verify-tag \
             --title "Bridge ${GITHUB_REF_NAME#v}" \
-            --notes-file notes.md
+            --notes-file notes.md \
+            $flags

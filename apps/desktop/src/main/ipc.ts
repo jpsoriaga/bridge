@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { MODES } from '@bridge/shared';
+import { MODES, UPDATE_CHANNELS } from '@bridge/shared';
 import { IPC } from '../preload/api';
 
 // The renderer is treated as untrusted: every `window.bridge` call reaches main through
@@ -49,7 +49,10 @@ export const IPC_ARGS: Readonly<Record<IpcChannel, z.ZodType<unknown[]>>> = {
   dismissAllowlistNote: none,
   answerInstallNote: z.tuple([z.boolean()]),
   checkForUpdates: none,
-  setCheckUpdatesOnStart: z.tuple([z.boolean()])
+  setCheckUpdatesOnStart: z.tuple([z.boolean()]),
+  setUpdateChannel: z.tuple([z.enum(UPDATE_CHANNELS)]),
+  copyDiagnostics: none,
+  openLogsFolder: none
 };
 
 /** Channels the renderer invokes. The rest of `IPC` are main → renderer events. */
