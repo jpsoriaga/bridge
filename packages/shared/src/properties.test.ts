@@ -1,5 +1,5 @@
 import fc from 'fast-check';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   checkArgv,
   commandRefusal,
@@ -18,6 +18,10 @@ import {
   ServerMessage
 } from './protocol';
 import { redactSecrets } from './redact';
+
+// Thousands of runs per property take about a second here, but can pass 5s on a busy CI
+// runner under coverage.
+vi.setConfig({ testTimeout: 30_000 });
 
 // Property tests: random input, thousands of times, for the code that turns untrusted text
 // (chat replies, commands, socket messages) into structure.

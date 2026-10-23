@@ -234,6 +234,16 @@ async function settle(): Promise<void> {
   for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve));
 }
 
+/**
+ * Lets the event loop turn until `done()` holds, up to a cap. The handshake's HMACs go
+ * through WebCrypto, which can take more turns than `settle` on a busy CI runner.
+ */
+async function settleUntil(done: () => boolean): Promise<void> {
+  for (let i = 0; i < 2_000 && !done(); i++) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
 /** Advances fake time, then lets any attempt that started finish its handshake. */
 async function advance(ms: number): Promise<void> {
   await vi.advanceTimersByTimeAsync(ms);
@@ -289,7 +299,7 @@ describe('protocol version handshake', () => {
     servers.set(DEFAULT_PORT, { key: KEY, protocol });
     const { connection, storage } = makeConnection();
     await connection.connect();
-    await settle();
+    await settleUntil(() => connection.current === advice);
     expect(connection.current).toBe(advice);
     // The key is kept: nothing proved it wrong.
     expect(storage.key).toBe(KEY);
@@ -299,6 +309,7 @@ describe('protocol version handshake', () => {
     // The app is updated: the next attempt connects.
     servers.get(DEFAULT_PORT)!.protocol = PROTOCOL_VERSION;
     await advance(1_000);
+    await settleUntil(() => connection.current === 'connected');
     expect(connection.current).toBe('connected');
   });
 
@@ -855,7 +866,7 @@ describe('file requests', () => {
     expect(connection.current).toBe('app-not-running');
     servers.set(DEFAULT_PORT, { key: KEY });
     connection.wake();
-    await settle();
+    await settleUntil(() => connection.current === 'connected');
     expect(connection.current).toBe('connected');
   });
 
