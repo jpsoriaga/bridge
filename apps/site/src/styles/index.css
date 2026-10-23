@@ -113,7 +113,9 @@
 }
 
 @layer components {
-  /* Buttons, as styles.css draws them in the apps. */
+  /* Buttons, as styles.css draws them in the apps, except the outline: --border-strong, so an
+     outlined button's visible edge is its box, and it reads the same size as a filled one
+     beside it (in dark mode --border nearly vanishes). */
   .btn {
     display: inline-flex;
     flex: none;
@@ -122,7 +124,7 @@
     gap: var(--space-2);
     height: 32px;
     padding: 0 var(--space-3);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: var(--radius-md);
     background: var(--bg);
     color: var(--fg);
@@ -141,7 +143,7 @@
   }
   .btn:hover {
     background: var(--bg-hover);
-    border-color: var(--border-strong);
+    border-color: var(--fg-subtle);
   }
   /* The page's buttons lift a pixel on hover and focus, and press in on click. Neither moves
      anything around them: translate and scale don't touch the layout. */
