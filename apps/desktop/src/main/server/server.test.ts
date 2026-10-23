@@ -834,6 +834,7 @@ describe('modes, commands and the loop (real project, real runner)', () => {
         allowlist: ['node *'],
         stepLimit: 10,
         pauseOnFailure: false,
+        catchUpAfterSleep: true,
         running: runner.current,
         instance: 'test'
       }),

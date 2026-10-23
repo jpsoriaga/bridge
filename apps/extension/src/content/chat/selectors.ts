@@ -35,12 +35,39 @@ export const SELECTORS = {
   markdown: ['[data-markdown-text-style="assistant-message"]', '.markdown', '[class*="markdown"]'],
   /** Present on a message while it streams. */
   streaming: ['.result-streaming', '[data-is-streaming="true"]', '.streaming-animation'],
-  /** The page's stop button, shown while any reply streams. */
+  /**
+   * The page's stop button, shown while any reply streams. Full auto presses it only for a
+   * reply that's stuck after sleep (Stop & continue). In the newer layout the composer's
+   * submit button turns into it.
+   */
   stopButton: [
     '[data-testid="stop-button"]',
     'button[aria-label="Stop streaming"]',
     'button[aria-label="Stop generating"]',
-    'button[aria-label="Stop response"]'
+    'button[aria-label="Stop response"]',
+    'button#composer-submit-button[aria-label^="Stop"]',
+    '[data-testid="composer-stop-button"]'
+  ],
+  /**
+   * The page's own "Continue generating", offered when a reply was cut off. It carries on
+   * the same reply, so Bridge prefers it to asking for a continuation. Best guesses; the
+   * button's text is the last fallback (`CONTINUE_TEXT`).
+   */
+  continueButton: [
+    '[data-testid="continue-generating-button"]',
+    '[data-testid="continue-button"]',
+    'button[aria-label="Continue generating"]'
+  ],
+  /**
+   * An error inside a reply's turn: the reply was cut off (a network error, "Something went
+   * wrong"). Counted only when its text reads like an error (`ERROR_TEXT`). Best guesses.
+   */
+  replyError: [
+    '[data-testid="message-error"]',
+    '[data-testid*="error"]',
+    '.text-token-text-error',
+    '[class*="text-red"]',
+    '[role="alert"]'
   ],
   /** Copy / thumbs / regenerate buttons under a finished reply. */
   turnActions: [
@@ -83,6 +110,17 @@ export const SELECTORS = {
     '[role="alert"]'
   ]
 } as const;
+
+/** The text of the page's Continue generating button, when no selector finds it. */
+export const CONTINUE_TEXT = /^continue generating$/i;
+/**
+ * A page-level banner that means the newest reply was cut off rather than refused: network
+ * and stream errors, not usage limits (those pause Full auto as a page error).
+ */
+export const CUT_OFF_TEXT =
+  /network error|something went wrong|error (?:in (?:message|body) stream|generating)|connection (?:lost|error|interrupted)|timed out/i;
+/** Turn states (`TURN_STATE_ATTRIBUTE`) that mean the reply ended early. Best guesses. */
+export const INTERRUPTED_TURN_STATES = ['error', 'failed', 'interrupted', 'aborted'];
 
 /** Text that marks an error or limit banner, so a stray red element doesn't pause the loop. */
 export const ERROR_TEXT =
@@ -210,6 +248,59 @@ export function composerArea(doc: Document = document): DOMRect[] {
     }
   }
   return boxes;
+}
+
+export function findStopButton(doc: Document = document): HTMLButtonElement | null {
+  const found = first(doc, SELECTORS.stopButton);
+  return found instanceof HTMLButtonElement ? found : null;
+}
+
+/** The page's Continue generating button, by its selectors, then by its text. */
+export function findContinueButton(doc: Document = document): HTMLButtonElement | null {
+  const found = first(doc, SELECTORS.continueButton);
+  if (found instanceof HTMLButtonElement) return found;
+  for (const button of doc.querySelectorAll('button')) {
+    if (button.closest(`[${BRIDGE_HOST_ATTRIBUTE}]`) || button.closest('[contenteditable]')) {
+      continue;
+    }
+    if (CONTINUE_TEXT.test((button.textContent ?? '').replace(/\s+/g, ' ').trim())) return button;
+  }
+  return null;
+}
+
+/** An error shown in the message's own turn, or null. */
+export function replyError(message: Element): string | null {
+  const turn = closest(message, SELECTORS.turn) ?? message;
+  for (const selector of SELECTORS.replyError) {
+    for (const element of turn.querySelectorAll(selector)) {
+      if (element.closest(`[${BRIDGE_HOST_ATTRIBUTE}]`)) continue;
+      if (message.querySelector(SELECTORS.markdown.join(', '))?.contains(element)) continue;
+      const text = (element.textContent ?? '').replace(/\s+/g, ' ').trim();
+      if (text && ERROR_TEXT.test(text)) return text.slice(0, 200);
+    }
+  }
+  return null;
+}
+
+/**
+ * Where a message stands: still streaming, finished, or cut off. Cut off means an error in
+ * its turn, a turn state that says so, or (for the newest reply) the page offering Continue
+ * generating, or the newest reply stopped streaming while the page shows an error banner.
+ */
+export function replyStatus(
+  message: Element,
+  doc: Document = document,
+  newest = false
+): 'streaming' | 'complete' | 'interrupted' {
+  if (replyError(message)) return 'interrupted';
+  const state = message.closest(`[${TURN_STATE_ATTRIBUTE}]`)?.getAttribute(TURN_STATE_ATTRIBUTE);
+  if (state && INTERRUPTED_TURN_STATES.includes(state)) return 'interrupted';
+  const streaming =
+    closest(message, SELECTORS.streaming) !== null || first(message, SELECTORS.streaming) !== null;
+  if (newest && !streaming && findStopButton(doc) === null) {
+    if (findContinueButton(doc) || CUT_OFF_TEXT.test(pageError(doc) ?? '')) return 'interrupted';
+  }
+  return isMessageComplete(message, doc) ? 'complete' : 'streaming';
 }
 
 export function findSendButton(doc: Document = document): HTMLButtonElement | null {

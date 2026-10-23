@@ -14,6 +14,12 @@ export const CHAT_OUTPUT_CHARS = 8_000;
 export const DEFAULT_RUN_TIMEOUT_MS = 120_000;
 export const MAX_RUN_TIMEOUT_MS = 10 * 60_000;
 export const MIN_RUN_TIMEOUT_MS = 5_000;
+/** Installs download and build packages, so they get longer than other commands by default. */
+export const DEFAULT_INSTALL_TIMEOUT_MS = 300_000;
+
+/** Package managers whose bare `<manager> install` Bridge suggests and times separately. */
+export const INSTALL_MANAGERS = ['npm', 'pnpm', 'yarn', 'bun'] as const;
+export type InstallManager = (typeof INSTALL_MANAGERS)[number];
 
 export type CommandRejection =
   | 'empty'
@@ -215,6 +221,19 @@ export function deniedArgument(argv: readonly string[], table = DENIED_FLAGS): s
     if (/^-[^-]/.test(arg) && [...arg.slice(1)].some((c) => shorts.includes(c))) return arg;
   }
   return null;
+}
+
+/**
+ * `npm install`, `pnpm install`, `yarn install` or `bun install` with nothing after it: it
+ * installs only what package.json lists. Anything with more words (`npm install lodash`)
+ * isn't one, and an exact allowlist entry doesn't allow it either.
+ */
+export function isInstallCommand(argv: readonly string[]): boolean {
+  return (
+    argv.length === 2 &&
+    (INSTALL_MANAGERS as readonly string[]).includes(programName(argv[0] ?? '')) &&
+    argv[1] === 'install'
+  );
 }
 
 export type CommandRefusal = 'not-allowlisted' | 'denied-flag';

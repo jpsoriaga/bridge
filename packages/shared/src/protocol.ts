@@ -19,7 +19,7 @@ import { LoopReport, MAX_STEP_LIMIT } from './loop';
 import { MODES } from './types';
 
 /** Bumped when a message shape changes incompatibly. Both sides reject other versions. */
-export const PROTOCOL_VERSION = 6;
+export const PROTOCOL_VERSION = 7;
 
 export { candidatePorts, DEFAULT_PORT, E2E_PORT, PORT_RANGE } from './ports';
 
@@ -228,6 +228,8 @@ export const BridgeConfig = z.strictObject({
   stepLimit: z.number().int().min(1).max(MAX_STEP_LIMIT),
   /** Full auto: pause on a non-zero exit instead of sending the output to the chat. */
   pauseOnFailure: z.boolean(),
+  /** Full auto: after the computer sleeps, wait for the chat and carry on instead of pausing. */
+  catchUpAfterSleep: z.boolean(),
   /** The command running now, if any. */
   running: z.strictObject({ runId: RunId, argv: z.array(z.string()) }).nullable(),
   /**

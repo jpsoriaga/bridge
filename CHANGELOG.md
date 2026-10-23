@@ -4,6 +4,22 @@ All notable changes to Bridge are listed here. The format follows [Keep a Change
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-23
+
+The chat can now install dependencies after you approve a `package.json` change, and Full auto keeps going when your computer sleeps mid-reply instead of waiting for Resume.
+
+### Added
+
+- **The install command, allowed by default.** A new project's suggested commands include its package manager's install command (`npm install`, `pnpm install`, `yarn install` or `bun install`, from the lockfile; npm without one), already ticked. It's an exact entry: it installs only what `package.json` lists, and `npm install <pkg>`, `npm i`, `npx`, `dlx` and `npm create` stay refused. `package.json` and lockfile edits still need your click in every mode. The session prompt asks the chat to run it after changing `package.json`.
+- **Install timeout.** The install command gets its own timeout, 5 minutes by default (other commands keep 2 minutes), under Settings → Commands.
+- **A one-time offer for existing projects.** Settings → Commands asks once whether to add the install command to a list confirmed before this version, with **Add** and **Dismiss**. It's never added on its own.
+- **Catching up after sleep.** On waking, Full auto reconnects and looks at the reply it was waiting for. Still streaming: it waits ("Waiting for the chat to finish (resumed after sleep)") and carries on. Finished meanwhile: it acts on it ("Caught up after sleep"). No new text for 60 seconds: it presses the chat's stop button once, acts on what came through and asks the chat to continue, then pauses with **Stop & continue** if it sticks again. A command running when the computer slept asks **Re-run** or **Skip**. A changed conversation, session or project keeps it paused, saying why. **Settings → Full auto → Catch up automatically after sleep** (on by default) turns it off.
+- **Cut-off replies.** A reply cut off by an error or the network has only its finished blocks applied, never the file it was writing, and a card says where it stopped. Full auto asks the chat once to continue from the last marker that came through (or presses the page's own **Continue generating** when it offers one), and pauses with **Resume** if the next reply is cut off too. In other modes the card's **Insert continuation** puts the request in the message box without sending.
+
+### Changed
+
+- **Protocol 7.** Update the app and the extension together; if one is older, both say which one to update. Your pairing carries over.
+
 ## [1.0.1] - 2026-10-19
 
 When the chat slipped out of Bridge's format (for example `@@RUN npm test` without the closing `@@`), Bridge showed nothing. Now it reads the common slips, says when it can't, and helps get the chat back on track.
@@ -38,6 +54,7 @@ The first release: a desktop app for macOS, Windows and Linux, and a Chrome exte
 - **Update check, notify only.** Settings → About shows the version and can ask GitHub Releases whether a newer one exists, on a click or (if you turn it on) at launch. It never downloads or installs anything, and it's off in unsigned macOS builds.
 - **Version handshake.** If the app and the extension speak different protocol versions, both say which one to update instead of failing to connect.
 
-[Unreleased]: https://github.com/jpsoriaga/bridge/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/jpsoriaga/bridge/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/jpsoriaga/bridge/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/jpsoriaga/bridge/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/jpsoriaga/bridge/releases/tag/v1.0.0

@@ -3,6 +3,7 @@ import type { TreeEntry } from './files';
 import { parseChat } from './parser';
 import {
   buildContextMessage,
+  buildContinuation,
   buildFollowUp,
   buildRunMessage,
   buildSessionPrompt,
@@ -154,6 +155,18 @@ describe('buildSessionPrompt', () => {
     expect(prompt).toContain('Every marker starts AND ends with @@');
   });
 
+  it('asks for the install command after package.json changes, only when it’s allowed', () => {
+    const line = 'After changing package.json, run the install command: `@@RUN pnpm install@@`';
+    expect(prompt).not.toContain('After changing package.json');
+    const withInstall = buildSessionPrompt({
+      projectName: 'demo',
+      tree,
+      allowlist: ['pnpm install', ...allowlist]
+    });
+    expect(withInstall).toContain(line);
+    expect(withInstall.slice(0, withInstall.indexOf('PROJECT FILES')).length).toBeLessThan(1_500);
+  });
+
   it('includes the project name and tree', () => {
     expect(prompt).toContain('"demo"');
     expect(prompt).toContain('PROJECT FILES\n```\nsrc/\n  app.ts\n  util.ts\npackage.json\n```');
@@ -241,6 +254,38 @@ describe('FORMAT_FOOTER', () => {
         issues: []
       });
     }
+  });
+});
+
+describe('continuation', () => {
+  it('names the last complete marker and the cut-off file', () => {
+    expect(
+      buildContinuation({ marker: '@@FILE src/components/Hero.tsx@@', cutOff: 'src/app.ts' })
+    ).toBe(
+      `Your last reply was cut off after @@FILE src/components/Hero.tsx@@. Continue from there using Bridge's format. Resend src/app.ts in full if it was cut off. Don't repeat files that were already complete.\n\n${FORMAT_FOOTER}`
+    );
+  });
+
+  it('leaves out the resend line without a cut-off file, and copes with no marker', () => {
+    const text = buildContinuation({ marker: null, cutOff: null });
+    expect(text).toContain('Your last reply was cut off before its first Bridge marker.');
+    expect(text).not.toContain('Resend');
+    expect(parseChat(text)).toMatchObject({ edits: [], reads: [], runs: [], issues: [] });
+  });
+
+  it('ends a Full auto follow-up, after the results, and says when a command was skipped', () => {
+    const built = buildFollowUp({
+      applied: ['src/one.ts'],
+      skipped: [],
+      files: [],
+      refused: [],
+      runs: [{ command: 'pnpm test', skipped: true }],
+      continuation: { marker: '@@FILE src/one.ts@@', cutOff: 'src/two.ts' }
+    })!.text;
+    expect(built.indexOf('The command `pnpm test` was interrupted and skipped.')).toBeLessThan(
+      built.indexOf('Your last reply was cut off after @@FILE src/one.ts@@.')
+    );
+    expect(built.endsWith(FORMAT_FOOTER)).toBe(true);
   });
 });
 

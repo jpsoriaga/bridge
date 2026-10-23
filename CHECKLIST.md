@@ -341,3 +341,29 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [x] `e2e/format.cjs` (in CI); `chat.cjs` and `phase6.cjs` follow the new prompt
 - [x] Version 1.0.1 (`pnpm version:set 1.0.1`), CHANGELOG, PLAN.md "1.0.1 decisions", DESIGN.md "Format card"
 - [ ] Manual run on the real chatgpt.com (e2e README "1.0.1 on the real chatgpt.com")
+
+## 1.1.0: Install and catch up after sleep
+
+### The install command
+
+- [x] `suggestInstall`: manager from `packageManager`, then `package-lock.json` / `pnpm-lock.yaml` / `yarn.lock` / `bun.lock(b)`, npm with none; `<pm> install` first among the suggestions, ticked, exact (tests per lockfile and none)
+- [x] `isInstallCommand` (shared): bare install of npm, pnpm, yarn or bun; `npm install lodash`, `npm i`, `npx`, `dlx`, `npm create` refused under the exact entry (tests)
+- [x] Install timeout 300s by default (5s–10 min), only for install commands (`CommandService`, settings, IPC, Settings field; tests)
+- [x] One-time "Add `<pm> install` to the allowlist?" note for lists confirmed before 1.1.0, Add and Dismiss (`installNoteSeen`, `answerInstallNote`; tests)
+- [x] Session prompt: "After changing package.json, run the install command" when it's allowlisted (test; rules still under 1,500 characters)
+- [x] `package.json` and lockfiles stay gated in every mode (unchanged)
+
+### Catch up after sleep
+
+- [x] Protocol v7: `config.catchUpAfterSleep`; pause reasons `stalled`, `interrupted`, `command-interrupted`; `loop_report` `detail`, `pageContinue`, `note`
+- [x] Settings → Full auto: "Catch up automatically after sleep", on by default; off keeps the 1.0 pause-and-Resume (tests)
+- [x] On wake: reconnect and re-scan; a streaming reply is waited for ("Waiting for the chat to finish (resumed after sleep)" on the chip, side panel and app), no pause on a lost connection within 2 minutes, a reply that finished meanwhile acted on ("Caught up after sleep") (tests)
+- [x] Stall: no new text for 60s after waking → Stop & continue on its own once, then pause `stalled` with **Stop & continue** (tests)
+- [x] Interrupted reply: only whole blocks applied, the cut-off file held as partial; continuation names the last complete marker and the cut-off file; page's Continue generating preferred; at most once per interruption, then pause with **Resume** (tests: loop, parser, prompts, controller on `interrupted.html`, e2e)
+- [x] Command running at sleep: cancelled, pause `command-interrupted` with **Re-run** and **Skip** ("The command `cmd` was interrupted and skipped.") (tests)
+- [x] Changed conversation, session or project: stays paused with the existing reason (test)
+- [x] Selectors: stop button (newer layout), Continue generating (test ids, then text), in-turn errors, interrupted turn states, network-style banners; fixture `interrupted.html` (tests)
+- [x] Interrupted card in every mode: where it stopped, Continue generating first, **Insert continuation** (never sends outside Full auto) (tests)
+- [x] `e2e/catchup.cjs` (in CI): install pre-ticked and the prompt line, a cut-off reply in Full auto (whole file applied, continuation sent), a second cut pausing, Resume sending it
+- [x] Version 1.1.0, CHANGELOG, PLAN.md "1.1.0 decisions", SECURITY.md, README, DESIGN.md "Interrupted card"
+- [ ] Manual run on the real chatgpt.com (e2e README "1.1.0 on the real chatgpt.com"): install, sleep with the lid closed, offline mid-reply

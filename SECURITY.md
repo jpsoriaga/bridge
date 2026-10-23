@@ -52,10 +52,11 @@ Bridge lets a chat running in your browser change files in a folder on your comp
 
 - `spawn` with `shell: false`, never a shell string. The chat's text becomes argv with shell-quote's tokenizer after refusing `$`, backticks, globs, operators, comments, `VAR=value` and newlines; the app re-checks every word.
 - **Allowlist entries match exactly.** `pnpm test` allows only `pnpm test`; `pnpm test *` allows extra arguments after it. (Entries saved before Phase 7 got a `*`, since that's how they behaved, and Settings says so once.)
+- **The install command** (`npm install`, `pnpm install`, `yarn install` or `bun install`, picked from the lockfile) is suggested, pre-ticked, when a project's list is first confirmed, as an exact entry with no `*`. It installs only what `package.json` lists: `npm install lodash`, `npm i <pkg>`, `npm install --global`, `npx`, `dlx` and `npm create` are all still refused (not allowlisted, or denied options). The chat can only change what it installs by editing `package.json` or a lockfile, which are gated: never written without your click, in any mode. Lists confirmed before 1.1.0 get a one-time note offering to add it; it's never added on its own.
 - **Denied options**, refused even under `*`: `git --output -o -c --config-env --exec --upload-pack --receive-pack -C --git-dir --work-tree`; `node -e --eval -p --print -r --require --import --loader --experimental-loader`; `npm`/`pnpm`/`yarn` `-C --dir --prefix --global -g exec dlx x` (and yarn `--cwd`); `npx`, `pnpx` and `bunx` entirely. Abbreviations (`--outp`), attached values (`-Cdir`) and clusters (`-pe`) count. One table: `DENIED_FLAGS` in `packages/shared/src/commands.ts`.
 - A program that resolves inside the project is refused unless that exact path is allowlisted. Windows `.cmd` shims go through cross-spawn's escaping, and cmd metacharacters are refused in their arguments.
 - Environment: your variables minus `*TOKEN*`, `*SECRET*`, `*KEY*`, `*PASSWORD*`, `AWS_*`, `OPENAI_*`, `GITHUB_TOKEN`, `NPM_TOKEN`, `ELECTRON_RUN_AS_NODE` and your own patterns.
-- Timeout (2 minutes by default) kills the whole process tree. Output is capped at 200 KB, head and tail, and a command that prints without end is throttled by backpressure so it can't stall the app.
+- Timeout (2 minutes by default; 5 minutes for the install command, set separately) kills the whole process tree. Output is capped at 200 KB, head and tail, and a command that prints without end is throttled by backpressure so it can't stall the app.
 
 ### Secret redaction
 
@@ -94,6 +95,7 @@ No telemetry, no analytics, no network calls except loopback between the extensi
 These are real, and Bridge can't close them:
 
 - **Tests run code the model wrote.** Allowlisting `pnpm test` means running test files and config (`vitest.config.ts`, `conftest.py`) the chat may have edited. Gated files cover installs, scripts and CI, not test code. Full auto runs that code without a click. Review what the chat changes before you run it, or keep to Manual.
+- **The install command runs install scripts.** `npm install` (and the others) runs the install scripts of every dependency in `package.json`, with your permissions, and in Full auto without a click. Bridge only makes sure the list of dependencies is one you approved: a `package.json` or lockfile change always waits for your click. Review those diffs as you would any new dependency, or leave the install command off the allowlist.
 - **Allowlisted programs can do more than their name suggests.** The denied-options table covers the well-known escape hatches of git, node and the package managers, not every program or every option. A `*` entry passes whatever arguments the chat chooses; prefer exact entries.
 - **Local malware running as you** can read your files, Bridge's keys and backups, and drive Chrome or the app directly. Bridge narrows races (symlink swaps between check and write) but does not defend against code that already has your user's rights.
 - **Redaction is best effort.** It catches common credential shapes, not every secret. Don't keep secrets in files you send to the chat; keep them in `.env` files, which Bridge never reads.

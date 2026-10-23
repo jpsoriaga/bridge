@@ -28,6 +28,22 @@ import {
 /** A path from the chat. The desktop sandbox decides; this only bounds the size. */
 const ChatPath = ReadParams.shape.path;
 /** Most files one READ card or one "Send files" may send. */
+
+/**
+ * What the side panel can ask of the tab's Full auto loop: Stop, Resume, Continue for N more
+ * at the step limit, and after sleep Skip (an interrupted command), Stop & continue (a stuck
+ * reply) and the page's own Continue generating (a cut-off reply).
+ */
+export const LoopAction = z.enum([
+  'stop',
+  'resume',
+  'continue',
+  'skip',
+  'stop-continue',
+  'continue-reply'
+]);
+export type LoopAction = z.infer<typeof LoopAction>;
+
 export const MAX_FILES_PER_SEND = 50;
 
 /**
@@ -156,7 +172,7 @@ export const WorkerRequest = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('loop-control'),
     windowId: WindowId,
-    action: z.enum(['stop', 'resume', 'continue'])
+    action: LoopAction
   }),
   // Cancels the command running now, whoever started it.
   z.strictObject({ type: z.literal('run-cancel') }),
@@ -300,7 +316,7 @@ export const TabMessage = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('run-exit'), result: RunResult }),
   z.strictObject({
     type: z.literal('loop-control'),
-    action: z.enum(['stop', 'resume', 'continue'])
+    action: LoopAction
   }),
   z.strictObject({ type: z.literal('diagnose') }),
   // Which conversation the tab shows right now, checked on the spot (`TabLocation`).

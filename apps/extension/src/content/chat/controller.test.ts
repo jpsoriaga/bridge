@@ -12,12 +12,14 @@ import { ChatController } from './controller';
 
 const FIXTURES = join(__dirname, '../../../fixtures/chatgpt');
 const page = readFileSync(join(FIXTURES, 'single-edit.html'), 'utf8');
+const interrupted = readFileSync(join(FIXTURES, 'interrupted.html'), 'utf8');
 
 const CONFIG: BridgeConfig = {
   mode: 'auto-apply',
   allowlist: [],
   stepLimit: 10,
   pauseOnFailure: false,
+  catchUpAfterSleep: true,
   running: null,
   instance: 'launch-1'
 };
@@ -64,11 +66,11 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function startWithNewReply(): Promise<ChatController> {
+async function startWithNewReply(html = page): Promise<ChatController> {
   controller = new ChatController(ask);
   controller.start();
   await wait();
-  document.querySelector('main')!.outerHTML = page;
+  document.querySelector('main')!.outerHTML = html;
   // The page swapped <main>; the next poll re-attaches.
   await wait(1_400);
   return controller;
@@ -149,5 +151,33 @@ describe('ChatController', () => {
     history.pushState(null, '', '/c/conv-5678efgh');
     expect(chat.locate().conversationId).toBe('conv-5678efgh');
     expect(calls.at(-1)).toMatchObject({ type: 'chat-sync', conversationId: 'conv-5678efgh' });
+  });
+
+  it('applies only the whole blocks of a cut-off reply, and offers a continuation', async () => {
+    await startWithNewReply(interrupted);
+    expect(hosts('diff-card')).toHaveLength(2);
+    // Auto-apply wrote the finished file; the one the cut fell in waits, marked partial.
+    const writes = calls.filter((c) => c.type === 'chat-write');
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatchObject({ path: 'src/one.ts' });
+    expect(hosts('interrupt-card')).toHaveLength(1);
+    // Nothing reads as a format slip: the reply was cut, not misformatted.
+    expect(hosts('format-card')).toHaveLength(0);
+  });
+});
+
+describe('ChatController after sleep', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('notices the computer slept, reconnects at once and looks at the conversation again', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'Date'] });
+    controller = new ChatController(ask);
+    controller.start();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(calls.some((c) => c.type === 'chat-sync' && 'wake' in c)).toBe(false);
+    // Timers stop while the lid is closed: the next poll comes minutes late.
+    vi.setSystemTime(Date.now() + 3 * 60_000);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(calls.filter((c) => c.type === 'chat-sync').at(-1)).toMatchObject({ wake: true });
   });
 });

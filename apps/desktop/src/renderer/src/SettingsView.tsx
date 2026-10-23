@@ -362,7 +362,10 @@ export function SettingsView({ state }: { state: DesktopState }) {
       <Section id="commands" title="Commands">
         <h3 className="subsection-title">Allowed commands</h3>
         <AllowlistEditor state={state} />
-        <TimeoutField key={state.runSettings.timeoutMs} settings={state.runSettings} />
+        <TimeoutField
+          key={`${state.runSettings.timeoutMs}:${state.runSettings.installTimeoutMs}`}
+          settings={state.runSettings}
+        />
         <PatternList
           label="Hidden from commands"
           hint="Environment variables commands never see (* matches anything). CI=1 and FORCE_COLOR=0 are always set."

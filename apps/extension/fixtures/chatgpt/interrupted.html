@@ -1,0 +1,34 @@
+<main class="relative h-full w-full flex-1">
+  <article class="w-full text-token-text-primary" dir="auto" data-testid="conversation-turn-4" data-scroll-anchor="true">
+    <h6 class="sr-only">ChatGPT said:</h6>
+    <div class="text-base my-auto mx-auto py-5">
+      <div class="group/conversation-turn relative flex w-full min-w-0 flex-col agent-turn">
+        <div class="flex-col gap-1 md:gap-3">
+          <div class="flex max-w-full flex-col flex-grow">
+            <div data-message-author-role="assistant" data-message-id="a1b2c3d4-0007-4000-8000-000000000007" dir="auto" class="min-h-8 text-message relative flex w-full flex-col">
+              <div class="flex w-full flex-col gap-1 empty:hidden first:pt-[3px]">
+                <div class="markdown prose w-full break-words dark:prose-invert light">
+                  <p>Two files:</p>
+                  <p><code>@@FILE src/one.ts@@</code></p>
+                  <pre class="overflow-visible!"><div class="contain-inline-size rounded-2xl relative"><div class="flex items-center px-4 py-2 text-xs justify-between h-9 select-none">ts</div><div class="overflow-y-auto p-4" dir="ltr"><code class="whitespace-pre! language-ts"><span>export const one = 1;
+</span></code></div></div></pre>
+                  <p>And the second:</p>
+                  <p><code>@@FILE src/two.ts@@</code></p>
+                  <pre class="overflow-visible!"><div class="contain-inline-size rounded-2xl relative"><div class="flex items-center px-4 py-2 text-xs justify-between h-9 select-none">ts</div><div class="overflow-y-auto p-4" dir="ltr"><code class="whitespace-pre! language-ts"><span>export const values = [
+  1,
+  2,
+</span></code></div></div></pre>
+                </div>
+              </div>
+            </div>
+            <div class="text-token-text-error border-token-border-error rounded-lg border p-3" role="alert">Network error. Check your connection and try again.</div>
+          </div>
+          <div class="flex min-h-[46px] justify-start">
+            <button class="text-token-text-secondary rounded-lg" aria-label="Regenerate response"><span class="flex h-8 w-8 items-center justify-center"><svg width="20" height="20" viewBox="0 0 20 20"><path d="M0 0h20v20H0z"></path></svg></span></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </article>
+</main>
+<form class="w-full"><div id="prompt-textarea" contenteditable="true" translate="no" class="ProseMirror" data-virtualkeyboard="true"><p data-placeholder="Ask anything" class="placeholder"><br class="ProseMirror-trailingBreak"></p></div></form>

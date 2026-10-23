@@ -121,6 +121,7 @@ export function createBridgeServer(options: BridgeServerOptions) {
       allowlist: [],
       stepLimit: 10,
       pauseOnFailure: false,
+      catchUpAfterSleep: true,
       running: null,
       instance: 'default'
     }),

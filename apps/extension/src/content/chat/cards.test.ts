@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  buildContinuation,
   FORMAT_FOOTER,
   FORMAT_REMINDER,
   type BridgeConfig,
@@ -13,6 +14,7 @@ import type { RequestOutcome, WorkerRequest } from '../../messages';
 import { applyAllTargets, MessageBar, undoAllTargets } from './cards/message-bar';
 import { DiffCard, type Ask } from './cards/diff-card';
 import { FormatCard, issueLines } from './cards/format-card';
+import { InterruptCard } from './cards/interrupt-card';
 import { ReadCard } from './cards/read-card';
 import { RunCard } from './cards/run-card';
 import { autoApply, editSummary } from './controller';
@@ -342,6 +344,7 @@ const CONFIG: BridgeConfig = {
   allowlist: ['pnpm test *', 'git status', 'node *'],
   stepLimit: 10,
   pauseOnFailure: false,
+  catchUpAfterSleep: true,
   running: null,
   instance: 'launch-1'
 };
@@ -698,6 +701,76 @@ describe('FormatCard', () => {
     expect(root.querySelector('.hint')?.textContent).toBe('Full auto sent a format reminder.');
     c.setDisabled(true);
     expect(root.querySelector<HTMLButtonElement>('[data-focus="remind"]')!.disabled).toBe(true);
+    spy.mockRestore();
+  });
+});
+
+describe('InterruptCard', () => {
+  const cut = { marker: '@@FILE src/one.ts@@', cutOff: 'src/two.ts' };
+  const fake = (canContinue: boolean) => {
+    const inserted: string[] = [];
+    let presses = 0;
+    return {
+      inserted,
+      presses: () => presses,
+      actions: {
+        canContinue: () => canContinue,
+        continueReply: () => {
+          presses += 1;
+          return canContinue;
+        },
+        insert: (text: string) => {
+          inserted.push(text);
+          return { ok: true as const, method: 'paste' as const, chars: text.length };
+        }
+      }
+    };
+  };
+
+  it('says where the reply stopped and that the cut-off file isn’t applied', () => {
+    const spy = openShadows();
+    const c = new InterruptCard(cut, fake(false).actions);
+    const root = c.host.shadowRoot!;
+    expect(root.querySelector('.title')?.textContent).toBe('The chat’s reply was interrupted');
+    expect([...root.querySelectorAll('.issue')].map((li) => li.textContent)).toEqual([
+      'It stopped after @@FILE src/one.ts@@.',
+      'src/two.ts was cut off, so Bridge won’t apply it.'
+    ]);
+    expect(root.textContent).not.toMatch(/chatgpt|openai/i);
+    spy.mockRestore();
+  });
+
+  it('inserts the continuation without sending', () => {
+    const spy = openShadows();
+    const f = fake(false);
+    const c = new InterruptCard(cut, f.actions);
+    const root = c.host.shadowRoot!;
+    expect(root.querySelector('[data-focus="continue"]')).toBeNull();
+    root.querySelector<HTMLButtonElement>('[data-focus="continuation"]')!.click();
+    expect(f.inserted).toEqual([buildContinuation(cut)]);
+    expect(root.querySelector('.hint')?.textContent).toBe(
+      'The request is in the message box. Press send.'
+    );
+    spy.mockRestore();
+  });
+
+  it('offers the page’s Continue generating first when it’s there', () => {
+    const spy = openShadows();
+    const f = fake(true);
+    const c = new InterruptCard(cut, f.actions);
+    const root = c.host.shadowRoot!;
+    const primary = root.querySelector<HTMLButtonElement>('.btn-primary')!;
+    expect(primary.textContent).toBe('Continue generating');
+    primary.click();
+    expect(f.presses()).toBe(1);
+    expect(f.inserted).toEqual([]);
+    expect(root.querySelector('.hint')?.textContent).toBe('The chat is continuing the same reply.');
+    c.markAutoSent();
+    expect(root.querySelector('.hint')?.textContent).toBe('Full auto asked the chat to continue.');
+    c.setDisabled(true);
+    expect(root.querySelector<HTMLButtonElement>('[data-focus="continuation"]')!.disabled).toBe(
+      true
+    );
     spy.mockRestore();
   });
 });

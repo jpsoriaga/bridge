@@ -1,14 +1,15 @@
 import {
   formatArgv,
+  LOOP_NOTE_TEXT,
   LOOP_STATE_LABELS,
   MODE_DESCRIPTIONS,
   MODE_LABELS,
-  PAUSE_REASON_TEXT,
+  pauseReasonText,
   type BridgeConfig,
   type LoopReport,
   type RunResult
 } from '@bridge/shared';
-import type { WorkerRequest } from '../messages';
+import type { LoopAction, WorkerRequest } from '../messages';
 import { panelWindowId, request } from './request';
 
 /** Lines of live output the panel keeps. The card in the chat has the rest. */
@@ -27,7 +28,7 @@ export function appendOutput(text: string, chunk: string): string {
   return lines.length > OUTPUT_LINES ? lines.slice(-OUTPUT_LINES).join('\n') : next;
 }
 
-const loopRequest = (action: 'stop' | 'resume' | 'continue') =>
+const loopRequest = (action: LoopAction) =>
   void panelWindowId().then((windowId) =>
     request({ type: 'loop-control', windowId, action } satisfies WorkerRequest)
   );
@@ -90,32 +91,18 @@ export function LoopSection({
         <span>
           {state === 'idle'
             ? 'Waiting for a reply with edits, files or commands'
-            : LOOP_STATE_LABELS[state]}
+            : loop?.note && state !== 'paused'
+              ? LOOP_NOTE_TEXT[loop.note]
+              : LOOP_STATE_LABELS[state]}
           {loop && state !== 'idle' && ` · ${loop.step} / ${loop.limit}`}
         </span>
       </p>
       {state === 'paused' && loop?.reason && (
         <p className="notice" role="status">
-          {PAUSE_REASON_TEXT[loop.reason]}
+          {pauseReasonText(loop.reason, loop.detail)}
         </p>
       )}
-      {state === 'paused' && (
-        <div className="actions">
-          {loop?.reason === 'step-limit' ? (
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => loopRequest('continue')}
-            >
-              Continue for {config?.stepLimit ?? loop.limit} more
-            </button>
-          ) : (
-            <button type="button" className="btn btn-primary" onClick={() => loopRequest('resume')}>
-              Resume
-            </button>
-          )}
-        </div>
-      )}
+      {state === 'paused' && <PauseActions loop={loop} stepLimit={config?.stepLimit} />}
       {state === 'stopped' && (
         <>
           <p className="hint">Stopped. Nothing was reverted; undo is still available.</p>
@@ -127,6 +114,53 @@ export function LoopSection({
         </>
       )}
     </section>
+  );
+}
+
+/** How to carry on from a pause: the reason decides which buttons, one of them primary. */
+function PauseActions({ loop, stepLimit }: { loop: LoopReport | null; stepLimit?: number }) {
+  const button = (action: LoopAction, label: string, primary = false) => (
+    <button
+      key={action}
+      type="button"
+      className={primary ? 'btn btn-primary' : 'btn'}
+      onClick={() => loopRequest(action)}
+    >
+      {label}
+    </button>
+  );
+  const buttons = (() => {
+    switch (loop?.reason) {
+      case 'step-limit':
+        return [button('continue', `Continue for ${stepLimit ?? loop.limit} more`, true)];
+      case 'stalled':
+        return [button('stop-continue', 'Stop & continue', true)];
+      case 'interrupted':
+        // The page's own Continue generating keeps the same reply, so it comes first.
+        return loop.pageContinue
+          ? [button('continue-reply', 'Continue generating', true), button('resume', 'Resume')]
+          : [button('resume', 'Resume', true)];
+      case 'command-interrupted':
+        return [button('resume', 'Re-run', true), button('skip', 'Skip')];
+      default:
+        return [button('resume', 'Resume', true)];
+    }
+  })();
+  return (
+    <>
+      {loop?.reason === 'stalled' && (
+        <p className="hint">
+          Stop & continue stops the reply, applies what came through whole and asks the chat to
+          continue.
+        </p>
+      )}
+      {loop?.reason === 'interrupted' && (
+        <p className="hint">
+          Resume applies what came through whole and asks the chat to continue from there.
+        </p>
+      )}
+      <div className="actions">{buttons}</div>
+    </>
   );
 }
 

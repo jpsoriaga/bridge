@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute } from 'node:path';
 import {
+  DEFAULT_INSTALL_TIMEOUT_MS,
   DEFAULT_RUN_TIMEOUT_MS,
   DEFAULT_STEP_LIMIT,
   MAX_ALLOWLIST_ENTRIES,
@@ -61,8 +62,17 @@ export interface Settings {
   /** The user's additions to the environment filter. */
   envPatterns: string[];
   runTimeoutMs: number;
+  /** The timeout for `<manager> install` (`isInstallCommand`), which takes longer. */
+  installTimeoutMs: number;
+  /**
+   * Projects (by id) that already answered, or never needed, the one-time "Add
+   * `<manager> install`?" note: lists confirmed before 1.1.0 get it once.
+   */
+  installNoteSeen: string[];
   stepLimit: number;
   pauseOnFailure: boolean;
+  /** Full auto syncs with the chat after the computer sleeps, instead of pausing. */
+  catchUpAfterSleep: boolean;
   /** The PATH commands get instead of the login shell's. Empty: no override. */
   pathOverride: string;
   theme: Theme;
@@ -171,8 +181,20 @@ export function settingsFile(path: string) {
         MAX_RUN_TIMEOUT_MS,
         DEFAULT_RUN_TIMEOUT_MS
       ),
+      installTimeoutMs: clampInt(
+        data.installTimeoutMs,
+        MIN_RUN_TIMEOUT_MS,
+        MAX_RUN_TIMEOUT_MS,
+        DEFAULT_INSTALL_TIMEOUT_MS
+      ),
+      installNoteSeen: Array.isArray(data.installNoteSeen)
+        ? data.installNoteSeen
+            .filter((id): id is string => typeof id === 'string' && /^[0-9a-f]{16}$/.test(id))
+            .slice(-1000)
+        : [],
       stepLimit: clampInt(data.stepLimit, 1, MAX_STEP_LIMIT, DEFAULT_STEP_LIMIT),
       pauseOnFailure: data.pauseOnFailure === true,
+      catchUpAfterSleep: data.catchUpAfterSleep !== false,
       pathOverride: isUsablePath(data.pathOverride) ? data.pathOverride : '',
       theme: THEMES.includes(data.theme as Theme) ? (data.theme as Theme) : 'system',
       backupRetentionDays: clampInt(

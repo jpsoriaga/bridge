@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   checkArgv,
   formatArgv,
+  isInstallCommand,
   commandRefusal,
   deniedArgument,
   matchAllowlist,
@@ -177,6 +178,28 @@ describe('matchAllowlist', () => {
     expect(parseAllowlistEntry('*')).toBeNull();
     expect(parseAllowlistEntry('pnpm * test')).toBeNull();
     expect(parseAllowlistEntry('pnpm test*')).toBeNull();
+  });
+});
+
+describe('isInstallCommand', () => {
+  it('is the bare install of a known package manager, nothing more', () => {
+    for (const manager of ['npm', 'pnpm', 'yarn', 'bun', '/usr/local/bin/npm', 'NPM.CMD']) {
+      expect(isInstallCommand([manager, 'install'])).toBe(true);
+    }
+    expect(isInstallCommand(['npm', 'install', 'lodash'])).toBe(false);
+    expect(isInstallCommand(['npm', 'i'])).toBe(false);
+    expect(isInstallCommand(['npm', 'ci'])).toBe(false);
+    expect(isInstallCommand(['pip', 'install'])).toBe(false);
+    expect(isInstallCommand(['npm'])).toBe(false);
+  });
+
+  it('allows only `npm install` under an exact entry, never a package after it', () => {
+    expect(commandRefusal(['npm', 'install'], ['npm install'])).toBeNull();
+    expect(commandRefusal(['npm', 'install', 'lodash'], ['npm install'])).toBe('not-allowlisted');
+    expect(commandRefusal(['npm', 'i', 'lodash'], ['npm install'])).toBe('not-allowlisted');
+    expect(commandRefusal(['npx', 'cowsay'], ['npm install'])).toBe('not-allowlisted');
+    expect(commandRefusal(['npm', 'create', 'vite'], ['npm install'])).toBe('not-allowlisted');
+    expect(commandRefusal(['pnpm', 'dlx', 'x'], ['pnpm install'])).toBe('not-allowlisted');
   });
 });
 

@@ -37,7 +37,10 @@ export const PAUSE_REASONS = [
   'needs-click',
   'app-restarted',
   'slept',
-  'format-issues'
+  'format-issues',
+  'stalled',
+  'interrupted',
+  'command-interrupted'
 ] as const;
 export const PauseReason = z.enum(PAUSE_REASONS);
 export type PauseReason = z.infer<typeof PauseReason>;
@@ -61,7 +64,42 @@ export const PAUSE_REASON_TEXT: Record<PauseReason, string> = {
     'The Bridge app restarted, which turns Full auto off. Turn it on again in the app, then Resume.',
   slept: 'The computer slept in the middle of a step. Check the cards, then Resume.',
   'format-issues':
-    'The chat kept missing Bridge’s format after two reminders. Check the reply, then Resume.'
+    'The chat kept missing Bridge’s format after two reminders. Check the reply, then Resume.',
+  stalled: 'The chat seems stuck after sleep.',
+  interrupted: 'The chat’s reply was interrupted.',
+  'command-interrupted': 'A command was interrupted by sleep.'
+};
+
+/**
+ * A pause reason in words, with what it's about where that helps: the last complete marker
+ * of an interrupted reply, or the interrupted command.
+ */
+export function pauseReasonText(reason: PauseReason, detail?: string): string {
+  if (reason === 'interrupted') {
+    return detail
+      ? `The chat’s reply was interrupted after ${detail}.`
+      : 'The chat’s reply was interrupted before its first Bridge marker.';
+  }
+  if (reason === 'command-interrupted' && detail) {
+    return `A command was interrupted by sleep: ${detail}`;
+  }
+  return PAUSE_REASON_TEXT[reason];
+}
+
+/** How long a reply may show as streaming with no new text, after sleep, before it's stuck. */
+export const STALL_MS = 60_000;
+
+/**
+ * Extra words on a report after the computer slept: `after-sleep` while Full auto waits for
+ * a reply that was streaming when it slept, `caught-up` while it acts on that reply.
+ */
+export const LOOP_NOTES = ['after-sleep', 'caught-up'] as const;
+export const LoopNote = z.enum(LOOP_NOTES);
+export type LoopNote = z.infer<typeof LoopNote>;
+
+export const LOOP_NOTE_TEXT: Record<LoopNote, string> = {
+  'after-sleep': 'Waiting for the chat to finish (resumed after sleep)',
+  'caught-up': 'Caught up after sleep'
 };
 
 export const LOOP_STATE_LABELS: Record<LoopState, string> = {
@@ -88,6 +126,11 @@ export const LoopReport = z.strictObject({
   step: z.number().int().nonnegative().max(1000),
   limit: z.number().int().positive().max(1000),
   reason: PauseReason.optional(),
+  /** What the pause is about (`pauseReasonText`): a marker, a path or a command. */
+  detail: z.string().max(300).optional(),
+  /** The chat page shows its own "Continue generating" button for the interrupted reply. */
+  pageContinue: z.boolean().optional(),
+  note: LoopNote.optional(),
   event: LoopEvent.optional()
 });
 export type LoopReport = z.infer<typeof LoopReport>;

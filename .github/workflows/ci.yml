@@ -82,3 +82,4 @@ jobs:
       - run: xvfb-run -a node e2e/sessions.cjs .
       - run: xvfb-run -a node e2e/stale.cjs .
       - run: xvfb-run -a node e2e/format.cjs .
+      - run: xvfb-run -a node e2e/catchup.cjs .

@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { LOOP_STATE_LABELS, PAUSE_REASON_TEXT, type LoopReport } from '@bridge/shared';
+import {
+  LOOP_NOTE_TEXT,
+  LOOP_STATE_LABELS,
+  pauseReasonText,
+  type LoopReport
+} from '@bridge/shared';
 import type { ActivityEntry, DesktopState } from '../../preload/api';
 import type { Tone } from './errors';
 
@@ -17,11 +22,11 @@ export function LoopStatus({ state }: { state: DesktopState }) {
         <span className="dot" data-tone={tone} />
         {!loop || loop.state === 'idle'
           ? 'Full auto is on. It starts when a reply asks for edits, files or commands.'
-          : `${LOOP_STATE_LABELS[loop.state]} · step ${loop.step} of ${loop.limit}`}
+          : `${loop.note && loop.state !== 'paused' ? LOOP_NOTE_TEXT[loop.note] : LOOP_STATE_LABELS[loop.state]} · step ${loop.step} of ${loop.limit}`}
       </p>
       {loop?.state === 'paused' && loop.reason && (
         <p className="hint" data-tone="warning">
-          {PAUSE_REASON_TEXT[loop.reason]} Resume from the side panel in Chrome.
+          {pauseReasonText(loop.reason, loop.detail)} Resume from the side panel in Chrome.
         </p>
       )}
     </div>
@@ -43,8 +48,9 @@ export function LoopStrip({ loop }: { loop: LoopReport | null }) {
     <div className="loop-strip" role="region" aria-label="Full auto run">
       <span className="dot" data-tone={paused ? 'warning' : 'success'} />
       <span className="loop-strip-text">
-        <strong>Full auto</strong> · {LOOP_STATE_LABELS[loop!.state]}
-        {paused && loop!.reason ? ` · ${PAUSE_REASON_TEXT[loop!.reason]}` : ''}
+        <strong>Full auto</strong> ·{' '}
+        {loop!.note && !paused ? LOOP_NOTE_TEXT[loop!.note] : LOOP_STATE_LABELS[loop!.state]}
+        {paused && loop!.reason ? ` · ${pauseReasonText(loop!.reason, loop!.detail)}` : ''}
       </span>
       <span className="step-count">
         Step {loop!.step} of {loop!.limit}
@@ -119,7 +125,7 @@ export function toastsFor(
           id: `loop:${loopNow.loopId}:${loopNow.step}:paused`,
           tone: 'warning',
           text: 'Full auto paused',
-          hint: loopNow.reason ? PAUSE_REASON_TEXT[loopNow.reason] : undefined
+          hint: loopNow.reason ? pauseReasonText(loopNow.reason, loopNow.detail) : undefined
         });
       } else if (loopNow.state === 'idle' && active(loopWas)) {
         toasts.push({
