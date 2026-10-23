@@ -1,5 +1,5 @@
-# Weekly update PRs for the workspace's npm packages, the e2e scripts' Playwright, and the
-# pinned GitHub Actions. Nothing merges on its own.
+# Update PRs for the workspace's npm packages, the e2e scripts' Playwright (weekly, minor and
+# patch only) and the pinned GitHub Actions (monthly, majors included). Nothing merges on its own.
 version: 2
 updates:
   - package-ecosystem: npm
@@ -10,11 +10,28 @@ updates:
     groups:
       minor-and-patch:
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: '*'
+        update-types: [version-update:semver-major]
+      # Stay on the Node major in .nvmrc (24).
+      - dependency-name: '@types/node'
+        versions: ['>=25']
   - package-ecosystem: npm
     directory: /e2e
     schedule:
       interval: weekly
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: '*'
+        update-types: [version-update:semver-major]
+      - dependency-name: '@types/node'
+        versions: ['>=25']
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    groups:
+      actions:
+        patterns: ['*']
