@@ -25,7 +25,7 @@
     "cross-spawn": "^7.0.6",
     "electron-updater": "^6.8.10",
     "fastify": "^5.12.7",
-    "ignore": "^7.0.12",
+    "ignore": "^7.0.13",
     "zod": "^4.6.7"
   },
   "devDependencies": {
@@ -41,7 +41,7 @@
     "@types/ws": "^8.18.2",
     "@vitejs/plugin-react": "^5.2.0",
     "axe-core": "^4.10.0",
-    "electron": "^44.9.0",
+    "electron": "^44.9.1",
     "electron-builder": "26.17.0",
     "electron-vite": "^6.0.0",
     "jsdom": "^26.1.0",
