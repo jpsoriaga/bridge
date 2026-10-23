@@ -143,7 +143,7 @@ describe('Sandbox.resolve', () => {
     symlinkSync(target, join(root, at), dir ? 'junction' : 'file');
 
   beforeEach(async () => {
-    base = realpathSync(mkdtempSync(join(tmpdir(), 'bridge-sandbox-')));
+    base = realpathSync.native(mkdtempSync(join(tmpdir(), 'bridge-sandbox-')));
     root = join(base, 'project');
     outside = join(base, 'outside');
     mkdirSync(join(root, 'src'), { recursive: true });
