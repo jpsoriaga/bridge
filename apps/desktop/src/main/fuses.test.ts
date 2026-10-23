@@ -36,7 +36,7 @@ describe('Electron fuses', () => {
   });
 
   it('finds the binary in each platform’s packaged app', () => {
-    expect(afterPack.electronBinary('/out', 'darwin', 'Bridge')).toBe('/out/Bridge.app');
+    expect(afterPack.electronBinary('/out', 'darwin', 'Bridge')).toBe(join('/out', 'Bridge.app'));
     expect(afterPack.electronBinary('/out', 'win32', 'Bridge')).toBe(join('/out', 'Bridge.exe'));
     expect(afterPack.electronBinary('/out', 'linux', 'Bridge')).toBe(join('/out', 'bridge'));
   });

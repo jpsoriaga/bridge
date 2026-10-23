@@ -4,7 +4,8 @@ import { dirname, join } from 'node:path';
 
 /** A real temp folder with helpers to lay out files. Call `cleanup` in afterEach. */
 export function tempProject(prefix = 'bridge-project-') {
-  const base = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+  // `.native` expands Windows short names (C:\Users\RUNNER~1), as the app's own realpath does.
+  const base = realpathSync.native(mkdtempSync(join(tmpdir(), prefix)));
   const root = join(base, 'project');
   mkdirSync(root);
   return {
@@ -16,7 +17,8 @@ export function tempProject(prefix = 'bridge-project-') {
       writeFileSync(abs, content);
       return abs;
     },
-    cleanup: () => rmSync(base, { recursive: true, force: true })
+    // Windows can hold a folder a just-finished command ran in for a moment (EPERM).
+    cleanup: () => rmSync(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
   };
 }
 

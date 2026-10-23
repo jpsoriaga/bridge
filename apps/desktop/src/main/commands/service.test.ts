@@ -233,7 +233,8 @@ describe('CommandService', () => {
     const bin = join(t.base, 'bin');
     mkdirSync(bin);
     writeFileSync(join(bin, 'tool.cmd'), '@echo hi\r\n');
-    allowlist = ['tool'];
+    // `*`: allowlist entries match exactly since Phase 7, and this checks arguments.
+    allowlist = ['tool *'];
     pathEnv = bin;
     for (const arg of ['a&calc', '"x"', '%PATH%', 'a|b']) {
       expect(await code(['tool', arg])).toBe('invalid-command');

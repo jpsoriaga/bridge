@@ -1,5 +1,5 @@
 import { mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { PROTOCOL_VERSION, type FileRequest } from '@bridge/shared';
 import { settingsFile } from '../settings';
@@ -100,7 +100,7 @@ describe('ProjectService', () => {
     const home = join(project.base, 'home');
     mkdirSync(join(home, 'code/app'), { recursive: true });
     await service.open(join(home, 'code/app'));
-    expect(service.project).toEqual({ name: 'app', path: '~/code/app' });
+    expect(service.project).toEqual({ name: 'app', path: ['~', 'code', 'app'].join(sep) });
   });
 
   it('refuses a file, the filesystem root, home, and anything overlapping userData', async () => {
