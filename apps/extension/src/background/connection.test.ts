@@ -230,17 +230,34 @@ const fakeFetch = vi.fn(async (input: string | URL | Request, init?: RequestInit
 });
 
 /** Lets microtasks and Web Crypto (which resolves off-thread) settle. */
-async function settle(): Promise<void> {
-  for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve));
+/**
+ * Web Crypto calls still running. They finish on another thread, so a busy machine can take
+ * any number of event-loop turns; `settle` waits for them instead of counting turns.
+ */
+let cryptoPending = 0;
+const subtle = crypto.subtle as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
+for (const name of [
+  'digest',
+  'importKey',
+  'sign',
+  'verify',
+  'generateKey',
+  'exportKey',
+  'deriveBits'
+]) {
+  const original = subtle[name]!.bind(crypto.subtle);
+  subtle[name] = (...args) => {
+    cryptoPending += 1;
+    return original(...args).finally(() => (cryptoPending -= 1));
+  };
 }
 
-/**
- * Lets the event loop turn until `done()` holds, up to a cap. The handshake's HMACs go
- * through WebCrypto, which can take more turns than `settle` on a busy CI runner.
- */
-async function settleUntil(done: () => boolean): Promise<void> {
-  for (let i = 0; i < 2_000 && !done(); i++) {
+/** Lets the event loop turn until no Web Crypto call is left and things have been quiet. */
+async function settle(): Promise<void> {
+  let quiet = 0;
+  for (let i = 0; i < 10_000 && quiet < 20; i++) {
     await new Promise((resolve) => setImmediate(resolve));
+    quiet = cryptoPending === 0 ? quiet + 1 : 0;
   }
 }
 
@@ -299,7 +316,7 @@ describe('protocol version handshake', () => {
     servers.set(DEFAULT_PORT, { key: KEY, protocol });
     const { connection, storage } = makeConnection();
     await connection.connect();
-    await settleUntil(() => connection.current === advice);
+    await settle();
     expect(connection.current).toBe(advice);
     // The key is kept: nothing proved it wrong.
     expect(storage.key).toBe(KEY);
@@ -309,7 +326,7 @@ describe('protocol version handshake', () => {
     // The app is updated: the next attempt connects.
     servers.get(DEFAULT_PORT)!.protocol = PROTOCOL_VERSION;
     await advance(1_000);
-    await settleUntil(() => connection.current === 'connected');
+    await settle();
     expect(connection.current).toBe('connected');
   });
 
@@ -866,7 +883,7 @@ describe('file requests', () => {
     expect(connection.current).toBe('app-not-running');
     servers.set(DEFAULT_PORT, { key: KEY });
     connection.wake();
-    await settleUntil(() => connection.current === 'connected');
+    await settle();
     expect(connection.current).toBe('connected');
   });
 
