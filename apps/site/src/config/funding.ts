@@ -28,7 +28,8 @@ export const FUNDING_GOALS: readonly FundingGoal[] = [
   {
     id: 'domain',
     title: 'A domain for this page',
-    detail: 'A short address of its own. Until then the page lives on bridge.jpsoriaga.me.',
+    detail:
+      'A short address of its own. Until then the page lives on trybridge-landingpage.vercel.app.',
     goal: 12,
     raised: 0, // TODO: Jaypee: update when support comes in
     cadence: 'per year',
