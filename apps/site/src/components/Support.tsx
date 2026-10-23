@@ -98,7 +98,7 @@ export function Support({
             </a>
             <a
               href={LINKS.issues}
-              className="inline-flex items-center rounded-sm text-sm font-medium text-fg-muted no-underline transition-colors duration-120 hover:text-fg"
+              className="inline-flex items-center rounded-sm text-sm font-medium text-fg-muted no-underline transition-colors duration-(--motion-fast) hover:text-fg"
             >
               Report a bug
             </a>
@@ -147,7 +147,7 @@ function FundingItem({ goal }: { goal: FundingGoal }) {
       <p className="mt-1 mb-0 flex-1 text-sm text-fg-muted">{goal.detail}</p>
       <div className="mt-6">
         {funded ? (
-          <p className="m-0 flex items-center gap-2 text-sm font-medium text-success">
+          <p className="m-0 flex items-center gap-2 text-sm font-medium text-fg">
             <Icon name="check" />
             Funded, thank you!
           </p>

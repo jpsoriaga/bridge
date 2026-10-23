@@ -1,10 +1,11 @@
 // Screenshots of the built page for docs/screenshots/site/, plus the checks they stand for:
-// no horizontal scroll at any width, the footer wordmark spanning the footer. Also records
-// the hero demo. Uses the Chromium the e2e scripts use:
+// no horizontal scroll at any width, every reveal shown, no footer wordmark. Then it watches
+// three loops of the hero demo (its height never changes, every part fades out together at
+// the end) and records it. Uses the Chromium the e2e scripts use:
 //   npm ci --prefix e2e && npx --prefix e2e playwright-core install chromium
 //   pnpm --filter site build && pnpm --filter site preview   (in another terminal)
 //   node apps/site/scripts/screenshots.mjs [http://localhost:4173]
-/* global document, innerHeight, innerWidth, scrollTo -- inside page.evaluate(), in the browser */
+/* global document, getComputedStyle, innerHeight, innerWidth, scrollTo -- inside page.evaluate(), in the browser */
 import { mkdirSync, renameSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
@@ -22,6 +23,7 @@ const SIZES = [
   { name: 'phone', width: 390, height: 844 },
   { name: 'tablet', width: 768, height: 1024 },
   { name: 'desktop', width: 1280, height: 800 },
+  { name: 'full-hd', width: 1920, height: 1080 },
   { name: 'wide', width: 2560, height: 1440 }
 ];
 // The committed screenshots; the other sizes are only checked.
@@ -51,13 +53,10 @@ for (const size of SIZES) {
         scrollTo(0, 0);
       });
       const check = await page.evaluate(() => {
-        const svg = document.querySelector('footer svg.wordmark').getBoundingClientRect();
-        const footer = document.querySelector('footer').getBoundingClientRect();
         const hidden = [...document.querySelectorAll('[data-reveal]:not([data-shown])')].length;
         return {
           overflow: document.documentElement.scrollWidth - innerWidth,
-          wordmark: Math.round(svg.width),
-          footer: Math.round(footer.width),
+          wordmark: document.querySelector('footer svg text, .wordmark') !== null,
           motion: document.documentElement.hasAttribute('data-motion'),
           hidden
         };
@@ -65,8 +64,7 @@ for (const size of SIZES) {
       const label = `${size.name} ${theme} ${motion}`;
       const problems = [];
       if (check.overflow > 0) problems.push(`scrolls ${check.overflow}px sideways`);
-      if (check.footer - check.wordmark > 32)
-        problems.push(`wordmark ${check.wordmark}px of ${check.footer}px`);
+      if (check.wordmark) problems.push('the footer has a wordmark');
       if (check.motion && check.hidden) problems.push(`${check.hidden} reveals never shown`);
       if (motion === 'reduce' && check.motion) problems.push('reveals run under reduced motion');
       console.log(
@@ -81,6 +79,54 @@ for (const size of SIZES) {
   }
 }
 
+// Three loops of the hero demo at a phone and a desktop width: the frame and the page keep
+// their height, and during the exit every part has the same opacity.
+for (const width of [390, 1280]) {
+  const page = await browser.newPage({ viewport: { width, height: 900 } });
+  await page.goto(url, { waitUntil: 'networkidle' });
+  await page.evaluate(() => document.querySelector('figure').scrollIntoView({ block: 'center' }));
+  const watch = await page.evaluate(
+    () =>
+      new Promise((resolve) => {
+        const figure = document.querySelector('figure');
+        const heights = new Set();
+        const pages = new Set();
+        const exits = [];
+        let loops = 0;
+        let last = figure.dataset.step;
+        const timer = setInterval(() => {
+          heights.add(Math.round(figure.getBoundingClientRect().height));
+          pages.add(document.documentElement.scrollHeight);
+          const step = figure.dataset.step;
+          if (step === 'exit') {
+            // The top-level parts that are drawn (the side panel isn't, on phones).
+            const parts = [...figure.querySelectorAll('.demo-part')].filter(
+              (el) => !el.parentElement.closest('.demo-part') && el.getClientRects().length
+            );
+            const values = parts.map((el) => Number(getComputedStyle(el).opacity).toFixed(2));
+            exits.push(new Set(values).size);
+          }
+          if (step === 'empty' && last !== 'empty') loops += 1;
+          last = step;
+          if (loops > 3) {
+            clearInterval(timer);
+            resolve({ heights: [...heights], pages: [...pages], exits });
+          }
+        }, 50);
+      })
+  );
+  const problems = [];
+  if (watch.heights.length > 1) problems.push(`demo heights ${watch.heights.join(', ')}`);
+  if (watch.pages.length > 1) problems.push(`page heights ${watch.pages.join(', ')}`);
+  if (!watch.exits.length) problems.push('never saw the exit');
+  if (watch.exits.some((n) => n > 1)) problems.push('parts fade out at different rates');
+  console.log(
+    `${problems.length ? '✗' : '✓'} demo loops at ${width}px${problems.length ? `: ${problems.join(', ')}` : ''}`
+  );
+  if (problems.length) failed = true;
+  await page.close();
+}
+
 // About two loops of the hero demo, light theme, at desktop width.
 const video = join(out, '.video');
 const context = await browser.newContext({
@@ -91,7 +137,7 @@ const context = await browser.newContext({
 const page = await context.newPage();
 await page.goto(url, { waitUntil: 'networkidle' });
 await page.evaluate(() => document.querySelector('figure').scrollIntoView({ block: 'center' }));
-await page.waitForTimeout(20_000);
+await page.waitForTimeout(25_000);
 const file = await page.video().path();
 await context.close();
 renameSync(file, join(out, 'hero-demo.webm'));

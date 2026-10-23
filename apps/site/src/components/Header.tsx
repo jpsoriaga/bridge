@@ -34,7 +34,7 @@ export function Header() {
               <li key={item.href}>
                 <a
                   href={item.href}
-                  className="rounded-md px-2.5 py-1.5 text-sm font-medium text-fg-muted no-underline transition-colors duration-120 hover:text-fg"
+                  className="rounded-md px-2.5 py-1.5 text-sm font-medium text-fg-muted no-underline transition-colors duration-(--motion-fast) hover:text-fg"
                 >
                   {item.label}
                 </a>

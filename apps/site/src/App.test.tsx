@@ -53,12 +53,20 @@ describe.each(['light', 'dark'] as const)('the page in the %s theme', (theme) =>
     ).toBe('true');
   });
 
-  it('draws the footer wordmark as an SVG hidden from assistive technology', async () => {
+  it('ends the footer at its bottom bar, with no wordmark', async () => {
     await renderApp();
-    const wordmark = document.querySelector('footer svg.wordmark');
-    expect(wordmark?.textContent).toBe('Bridge');
-    expect(wordmark?.getAttribute('aria-hidden')).toBe('true');
-    expect(wordmark?.getAttribute('viewBox')).toMatch(/^[\d.-]+ [\d.-]+ [\d.]+ [\d.]+$/);
+    const footer = screen.getByRole('contentinfo');
+    expect(footer.querySelector('svg text, .wordmark')).toBeNull();
+    expect(footer.lastElementChild?.lastElementChild?.textContent).toMatch(/made by/i);
+  });
+
+  it('draws no button in the accent green', async () => {
+    await renderApp();
+    const buttons = document.querySelectorAll('.btn');
+    expect(buttons.length).toBeGreaterThan(0);
+    for (const button of buttons) {
+      expect(button.className).not.toMatch(/btn-accent|bg-success|bg-danger/);
+    }
   });
 });
 
@@ -101,7 +109,7 @@ describe('the page', () => {
     const buttons = hero.querySelectorAll('a.btn, button.btn');
     expect(buttons).toHaveLength(1);
     expect(buttons[0]?.textContent).toBe('Download');
-    expect(buttons[0]?.classList.contains('btn-accent')).toBe(true);
+    expect(buttons[0]?.classList.contains('btn-primary')).toBe(true);
     expect(buttons[0]?.getAttribute('href')).toBe('#download');
     expect(within(hero).getByRole('link', { name: 'GitHub' }).classList.contains('btn')).toBe(
       false

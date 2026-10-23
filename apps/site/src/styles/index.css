@@ -1,6 +1,7 @@
 /* Bridge landing page. Spec: DESIGN.md (tokens, type, components) and its "Landing page"
    section (what the site adds). Colours, radii, type sizes and fonts all come from
-   @bridge/shared/tokens.css; nothing here is a raw colour. */
+   @bridge/shared/tokens.css; the only raw colours are the demo cursor's, which stays black on
+   white in both themes (macOS's pointer). */
 @import 'tailwindcss';
 @import '@bridge/shared/tokens.css';
 @import '@fontsource-variable/geist';
@@ -49,8 +50,24 @@
   --text-quote--letter-spacing: -0.02em;
   --text-lead: clamp(1.0625rem, 0.98rem + 0.35vw, 1.25rem);
   --text-lead--line-height: 1.6;
-  --ease-bridge: var(--ease);
-  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* The site's motion tokens (DESIGN.md, "Landing page"): every enter and exit on the page and in
+   the hero demo uses these durations and the two curves, nothing else. */
+:root {
+  --motion-fast: 150ms;
+  --motion-base: 250ms;
+  --motion-slow: 400ms;
+  /* The demo cursor's trip to Apply, the one movement longer than an enter. */
+  --motion-travel: 640ms;
+  /* The gap between the items of a group (reveals, the reply's code lines). */
+  --motion-stagger: 60ms;
+  --motion-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  /* The demo cursor: the same in both themes. */
+  --cursor-fill: #000;
+  --cursor-edge: #fff;
+  --cursor-shadow: rgb(0 0 0 / 0.35);
 }
 
 @layer base {
@@ -69,10 +86,9 @@
     line-height: 1.6;
     overflow-x: clip;
   }
-  /* 2px ring, offset 2px, keyboard only (DESIGN.md, "Focus"). The site draws it in the
-     accent green (DESIGN.md, "Landing page"). */
+  /* 2px ring, offset 2px, keyboard only (DESIGN.md, "Focus"). */
   :focus-visible {
-    outline: 2px solid var(--success);
+    outline: 2px solid var(--fg);
     outline-offset: 2px;
   }
   ::selection {
@@ -117,23 +133,24 @@
     white-space: nowrap;
     cursor: pointer;
     transition:
-      background-color 120ms var(--ease),
-      border-color 120ms var(--ease),
-      opacity 120ms var(--ease),
-      translate 160ms var(--ease-out),
-      scale 120ms var(--ease-out);
+      background-color var(--motion-fast) var(--motion-ease-out),
+      border-color var(--motion-fast) var(--motion-ease-out),
+      opacity var(--motion-fast) var(--motion-ease-out),
+      translate var(--motion-fast) var(--motion-ease-out),
+      scale var(--motion-fast) var(--motion-ease-out);
   }
   .btn:hover {
     background: var(--bg-hover);
     border-color: var(--border-strong);
   }
-  /* The page's buttons lift a pixel on hover and focus, and press in on click. */
+  /* The page's buttons lift a pixel on hover and focus, and press in on click. Neither moves
+     anything around them: translate and scale don't touch the layout. */
   :is(a, button).btn:is(:hover, :focus-visible) {
     translate: 0 -1px;
   }
   :is(a, button).btn:active {
     translate: 0;
-    scale: 0.98;
+    scale: 0.97;
   }
   .btn:disabled {
     opacity: 0.4;
@@ -155,23 +172,11 @@
     color: var(--inverse-fg);
     font-weight: 600;
   }
+  /* Black on white, white on black in dark mode: the page's buttons have no colour. */
   .btn-primary:hover {
     background: var(--inverse-bg);
     border-color: var(--inverse-bg);
     opacity: 0.86;
-  }
-  /* The page's one call to action (Download), in the Created green: the site's only accent
-     (DESIGN.md, "Landing page"). --bg on --success passes AA in both themes. */
-  .btn-accent {
-    background: var(--success);
-    border-color: var(--success);
-    color: var(--bg);
-    font-weight: 600;
-  }
-  .btn-accent:hover {
-    background: var(--success);
-    border-color: var(--success);
-    opacity: 0.9;
   }
 
   /* Mono tags with a 1px border; the tone is the text and a 35% border, never a fill. */
@@ -233,8 +238,8 @@
     color: var(--fg-muted);
     cursor: pointer;
     transition:
-      background-color 120ms var(--ease),
-      color 120ms var(--ease);
+      background-color var(--motion-fast) var(--motion-ease-out),
+      color var(--motion-fast) var(--motion-ease-out);
   }
   .segmented button:hover {
     color: var(--fg);
@@ -251,7 +256,7 @@
     text-decoration: underline;
     text-decoration-color: var(--border-strong);
     text-underline-offset: 3px;
-    transition: text-decoration-color 120ms var(--ease);
+    transition: text-decoration-color var(--motion-fast) var(--motion-ease-out);
   }
   .link:hover {
     text-decoration-color: var(--fg);
@@ -276,43 +281,15 @@
     color: var(--fg-subtle);
   }
 
-  /* The footer's wordmark (Footer.tsx): an SVG whose viewBox is the word's ink box in Geist
-     900, so at width: 100% it spans the footer exactly at every size. Its gradient is the one
-     in the system (DESIGN.md, "Landing page"): --border fading to transparent. A negative
-     bottom margin of 36% of its height (a margin percentage is of the width, hence the ratio)
-     pushes the lower part past the footer, whose overflow clips it at the page's bottom edge:
-     the bottom of the g and about a quarter of the other letters. */
-  .wordmark {
-    display: block;
-    width: 100%;
-    height: auto;
-    aspect-ratio: 314 / 91;
-    margin-bottom: calc(-36% * 91 / 314);
-    user-select: none;
-    pointer-events: none;
-  }
-  .wordmark text {
-    font-family: var(--font-sans);
-    font-size: 100px;
-    font-weight: 900;
-  }
-  .wordmark-from {
-    stop-color: var(--border);
-  }
-  .wordmark-to {
-    stop-color: var(--border);
-    stop-opacity: 0;
-  }
-
   /* The FAQ: the answer fades in under its question. Closing waits for the fade out
      (Faq.tsx). Only opacity and transform move. */
   .faq-answer {
     transition:
-      opacity 160ms var(--ease),
-      translate 160ms var(--ease);
+      opacity var(--motion-fast) var(--motion-ease-out),
+      translate var(--motion-fast) var(--motion-ease-out);
   }
   details[open] > .faq-answer {
-    animation: faq-in 320ms var(--ease-out);
+    animation: faq-in var(--motion-base) var(--motion-ease-out);
   }
   details[data-closing] > .faq-answer {
     opacity: 0;
@@ -333,8 +310,8 @@
   :root[data-motion] [data-reveal],
   :root[data-motion] [data-reveal='group'] > * {
     transition:
-      opacity 800ms var(--ease-out),
-      translate 800ms var(--ease-out);
+      opacity var(--motion-slow) var(--motion-ease-out),
+      translate var(--motion-slow) var(--motion-ease-out);
   }
   :root[data-motion] [data-reveal='group'] {
     transition: none;
@@ -345,26 +322,16 @@
     translate: 0 14px;
   }
   [data-reveal='group'] > :nth-child(2) {
-    transition-delay: 80ms;
+    transition-delay: var(--motion-stagger);
   }
   [data-reveal='group'] > :nth-child(3) {
-    transition-delay: 160ms;
+    transition-delay: calc(2 * var(--motion-stagger));
   }
   [data-reveal='group'] > :nth-child(4) {
-    transition-delay: 240ms;
+    transition-delay: calc(3 * var(--motion-stagger));
   }
   [data-reveal='group'] > :nth-child(n + 5) {
-    transition-delay: 300ms;
-  }
-  /* The wordmark rises out of the page's edge, slowly. */
-  :root[data-motion] .wordmark[data-reveal] {
-    transition:
-      opacity 1600ms var(--ease-out),
-      translate 1600ms var(--ease-out);
-  }
-  :root[data-motion] .wordmark[data-reveal]:not([data-shown]) {
-    opacity: 0;
-    translate: 0 14%;
+    transition-delay: calc(4 * var(--motion-stagger));
   }
   @media (prefers-reduced-motion: reduce) {
     :root[data-motion] [data-reveal],
@@ -376,32 +343,39 @@
 }
 
 /* The hero demo (ChatDemo.tsx). Every part is laid out from the start, so the frame never
-   changes size; a part that hasn't happened yet is transparent and 8px low. */
+   changes size between loops; a part that hasn't happened yet is transparent and 8px low.
+   The stage's phase sets how the loop ends: on `exit` every part fades out together (one
+   duration, one curve, a small rise), on `reset` they all jump back to their start, unseen. */
 @layer components {
-  .demo-stage {
-    transition: opacity 420ms var(--ease);
-  }
-  .demo-stage[data-fading] {
-    opacity: 0;
-  }
   .demo-part {
     transition:
-      opacity 520ms var(--ease-out),
-      translate 520ms var(--ease-out);
+      opacity var(--motion-base) var(--motion-ease-out),
+      translate var(--motion-base) var(--motion-ease-out);
   }
   .demo-part:not([data-on]) {
     opacity: 0;
     translate: 0 8px;
   }
+  .demo-card {
+    transition-duration: var(--motion-slow);
+  }
   .demo-card:not([data-on]) {
     translate: 0 16px;
   }
-  /* The reply's code streams in, a line at a time. */
-  .demo-line:nth-child(2) {
-    transition-delay: 140ms;
+  /* The reply's code streams in, a line at a time (the delay is set per line). */
+  .demo-line {
+    transition-duration: var(--motion-fast);
   }
-  .demo-line:nth-child(3) {
-    transition-delay: 280ms;
+  .demo-stage[data-phase='exit'] .demo-part:not(.demo-part .demo-part) {
+    opacity: 0;
+    translate: 0 -6px;
+    transition:
+      opacity var(--motion-slow) var(--motion-ease-in-out),
+      translate var(--motion-slow) var(--motion-ease-in-out);
+  }
+  .demo-stage[data-phase='reset'] *,
+  .demo-stage[data-phase='reset'] .demo-swap > :not([data-on]) {
+    transition: none;
   }
   /* Two states sharing one cell (the card's footer, the RUN badge): they crossfade. */
   .demo-swap {
@@ -409,42 +383,81 @@
   }
   .demo-swap > * {
     grid-area: 1 / 1;
-    transition: opacity 360ms var(--ease);
+    transition: opacity var(--motion-base) var(--motion-ease-out);
   }
   .demo-swap > :not([data-on]) {
     opacity: 0;
     visibility: hidden;
     transition:
-      opacity 360ms var(--ease),
-      visibility 0s 360ms;
+      opacity var(--motion-base) var(--motion-ease-out),
+      visibility 0s var(--motion-base);
   }
+  /* Apply, pressed: a dip in opacity and 97% from its centre, then back. Its box never
+     changes, so nothing around it moves. */
   .demo-press {
-    transition: scale 140ms var(--ease-out);
+    transform-origin: center;
+    transition:
+      opacity var(--motion-fast) var(--motion-ease-out),
+      scale var(--motion-fast) var(--motion-ease-out);
   }
   .demo-press[data-pressed] {
-    scale: 0.95;
+    opacity: 0.8;
+    scale: 0.97;
   }
+
+  /* The cursor: its tip (2px in from the corner of its box) sits on the centre of Apply.
+     It travels there on two axes with different curves, so the path bends, then pauses and
+     presses from the tip. */
   .demo-cursor {
     position: absolute;
-    top: 55%;
-    left: 50%;
+    top: calc(50% - 2px);
+    left: calc(50% - 2px);
     z-index: 1;
-    color: var(--fg);
     pointer-events: none;
     opacity: 0;
-    translate: -120px -72px;
+    translate: -150px 0;
     transition:
-      opacity 300ms var(--ease),
-      translate 720ms var(--ease-out),
-      scale 140ms var(--ease-out);
+      opacity var(--motion-fast) var(--motion-ease-out),
+      translate var(--motion-travel) var(--motion-ease-in-out);
   }
-  .demo-cursor[data-at='button'],
-  .demo-cursor[data-at='press'] {
+  .demo-cursor > span {
+    display: block;
+    translate: 0 -84px;
+    transition: translate var(--motion-travel) var(--motion-ease-out);
+  }
+  .demo-cursor svg {
+    display: block;
+    transform-origin: 2px 2px;
+    filter: drop-shadow(0 1px 1.5px var(--cursor-shadow));
+    transition: scale var(--motion-fast) var(--motion-ease-out);
+  }
+  .demo-cursor:not([data-at='away']) {
     opacity: 1;
     translate: 0 0;
   }
-  .demo-cursor[data-at='press'] {
-    scale: 0.86;
+  .demo-cursor:not([data-at='away']) > span {
+    translate: 0 0;
+  }
+  .demo-cursor[data-at='press'] svg {
+    scale: 0.92;
+  }
+  .demo-cursor path {
+    fill: var(--cursor-fill);
+    stroke: var(--cursor-edge);
+  }
+
+  /* The reply's TSX, in the neutral tokens only: keywords in weight, strings and JSX tags
+     muted, punctuation subtle. */
+  .tsx-kw {
+    color: var(--fg);
+    font-weight: 600;
+  }
+  .tsx-str,
+  .tsx-tag {
+    color: var(--fg-muted);
+  }
+  .tsx-punct {
+    color: var(--fg-subtle);
   }
 }
 

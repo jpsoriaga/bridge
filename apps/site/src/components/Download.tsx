@@ -137,7 +137,10 @@ function Ready({ release, detected }: { release: PickedRelease; detected: Detect
             <p className="mt-0 mb-3 text-xs text-fg-muted">1. The app, for your computer</p>
             {primary ? (
               <>
-                <a href={primary.url} className="btn btn-accent btn-xl w-full sm:w-auto">
+                <a
+                  href={primary.url}
+                  className="btn btn-primary btn-xl w-full sm:w-auto sm:min-w-72"
+                >
                   <Icon name="download" />
                   {LABELS[primary.key].button}
                 </a>
@@ -161,7 +164,7 @@ function Ready({ release, detected }: { release: PickedRelease; detected: Detect
             <p className="mt-0 mb-3 text-xs text-fg-muted">2. The extension, for your browser</p>
             {extension ? (
               <>
-                <a href={extension.url} className="btn btn-xl w-full sm:w-auto">
+                <a href={extension.url} className="btn btn-xl w-full sm:w-auto sm:min-w-72">
                   <Icon name="download" />
                   {LABELS.extension.button}
                 </a>
@@ -219,7 +222,7 @@ function Fallback({ reason }: { reason: keyof typeof FALLBACK_TEXT }) {
       <p className="mt-1 mb-0 text-sm text-fg-muted">
         Every installer and the extension zip are on GitHub’s Releases page, under Assets.
       </p>
-      <a href={RELEASES_URL} className="btn btn-accent btn-xl mt-6">
+      <a href={RELEASES_URL} className="btn btn-primary btn-xl mt-6">
         Open the Releases page
         <Icon name="external" />
       </a>

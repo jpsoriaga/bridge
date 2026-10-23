@@ -19,13 +19,13 @@ export function Hero() {
           </p>
           <div className="flex flex-col gap-4 lg:items-end">
             <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-              <a href="#download" className="btn btn-accent btn-xl">
+              <a href="#download" className="btn btn-primary btn-xl">
                 <Icon name="download" />
                 Download
               </a>
               <a
                 href={LINKS.github}
-                className="inline-flex items-center gap-2 rounded-md text-sm font-medium text-fg-muted no-underline transition-colors duration-120 hover:text-fg"
+                className="inline-flex items-center gap-2 rounded-md text-sm font-medium text-fg-muted no-underline transition-colors duration-(--motion-fast) hover:text-fg"
               >
                 <GithubMark />
                 GitHub

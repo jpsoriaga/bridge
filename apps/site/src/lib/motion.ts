@@ -1,7 +1,6 @@
 import { useEffect, useSyncExternalStore } from 'react';
 
-// The page's motion (DESIGN.md, "Landing page"): scroll reveals, the hero demo's loop and the
-// footer wordmark. Everything is visible by default; motion only starts once the script runs,
+// The page's motion (DESIGN.md, "Landing page"): scroll reveals and the hero demo's loop. Everything is visible by default; motion only starts once the script runs,
 // and never under prefers-reduced-motion.
 
 const REDUCED = '(prefers-reduced-motion: reduce)';
@@ -41,8 +40,6 @@ export function useScrollReveal(): void {
     }
     root.dataset.motion = '';
 
-    // No inset: the footer wordmark shows only a short strip on phones, so it must count as
-    // soon as any of it is on screen.
     const observer = new IntersectionObserver((entries) => {
       for (const entry of entries) {
         if (!entry.isIntersecting) continue;

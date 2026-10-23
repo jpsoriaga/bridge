@@ -5,23 +5,31 @@ import { Logo } from './Logo';
 
 // The hero's picture: a short loop of what Bridge does, drawn like the real chat cards and
 // side panel (DESIGN.md "Diff card", "RUN card", "Activity log row"), not a video. The chat
-// asks for a fix, the reply carries an @@FILE block, Bridge shows its diff, the cursor clicks
-// Apply, and the allowed test command passes. About 10s a loop; it stops off screen, in a
-// hidden tab, when paused, and under reduced motion, where it shows the final frame.
+// is asked for a loading state, the reply carries an @@FILE block, Bridge shows its diff, the
+// cursor clicks Apply, and the side panel logs the write and the allowed test command passing.
+// About 12s a loop, ending with everything fading out together and a short empty pause; it
+// stops off screen, in a hidden tab, when paused, and under reduced motion, where it shows
+// the final frame.
 
 const STEPS = [
-  { name: 'clear', ms: 450 },
-  { name: 'ask', ms: 800 },
-  { name: 'reply', ms: 550 },
+  // Everything jumps back to its start, unseen, then a beat of empty frame.
+  { name: 'empty', ms: 600 },
+  { name: 'ask', ms: 700 },
+  { name: 'reply', ms: 450 },
   { name: 'marker', ms: 350 },
-  { name: 'code', ms: 750 },
-  { name: 'card', ms: 1400 },
-  { name: 'point', ms: 750 },
-  { name: 'press', ms: 260 },
-  { name: 'applied', ms: 1000 },
-  { name: 'run', ms: 1000 },
-  { name: 'pass', ms: 2800 },
-  { name: 'fade', ms: 450 }
+  { name: 'code', ms: 1300 },
+  { name: 'card', ms: 1200 },
+  // The cursor's trip (--motion-travel) and a short pause before the click.
+  { name: 'point', ms: 950 },
+  { name: 'press', ms: 150 },
+  { name: 'applied', ms: 600 },
+  { name: 'logged', ms: 700 },
+  { name: 'run', ms: 500 },
+  { name: 'output', ms: 900 },
+  { name: 'pass', ms: 600 },
+  { name: 'ran', ms: 2400 },
+  // Every part fades out together (--motion-slow).
+  { name: 'exit', ms: 400 }
 ] as const;
 
 type StepName = (typeof STEPS)[number]['name'];
@@ -29,20 +37,83 @@ type StepName = (typeof STEPS)[number]['name'];
 const index = (name: StepName): number => STEPS.findIndex((s) => s.name === name);
 
 /** The frame the page is prerendered with, and the one reduced motion keeps. */
-export const FINAL_STEP: StepName = 'pass';
+export const FINAL_STEP: StepName = 'ran';
 const FINAL = index(FINAL_STEP);
 
-const PATH = 'src/math.js';
+export const PATH = 'src/components/Button.tsx';
 
-const CODE = ['export function add(a, b) {', '  return a + b;', '}'];
+const CODE = [
+  "type ButtonProps = React.ComponentProps<'button'> & {",
+  '  loading?: boolean;',
+  '};',
+  '',
+  'export function Button({ loading, disabled, children, ...rest }: ButtonProps) {',
+  '  return (',
+  '    <button {...rest} disabled={disabled || loading} aria-busy={loading}>',
+  '      {loading && <span className="spinner" aria-hidden />}',
+  '      {children}',
+  '    </button>',
+  '  );',
+  '}'
+];
 
 const DIFF: { kind: 'hunk' | 'ctx' | 'add' | 'del'; text: string }[] = [
-  { kind: 'hunk', text: '@@ -1,3 +1,3 @@' },
-  { kind: 'ctx', text: '  export function add(a, b) {' },
-  { kind: 'del', text: '-   return a - b;' },
-  { kind: 'add', text: '+   return a + b;' },
-  { kind: 'ctx', text: '  }' }
+  { kind: 'hunk', text: '@@ -1,6 +1,9 @@' },
+  { kind: 'del', text: "- type ButtonProps = React.ComponentProps<'button'>;" },
+  { kind: 'add', text: "+ type ButtonProps = React.ComponentProps<'button'> & {" },
+  { kind: 'add', text: '+   loading?: boolean;' },
+  { kind: 'add', text: '+ };' },
+  { kind: 'ctx', text: '  ' },
+  { kind: 'del', text: '- export function Button({ disabled, children, ...rest }: ButtonProps) {' },
+  {
+    kind: 'add',
+    text: '+ export function Button({ loading, disabled, children, ...rest }: ButtonProps) {'
+  },
+  { kind: 'ctx', text: '    return (' },
+  { kind: 'del', text: '-     <button {...rest} disabled={disabled}>' },
+  {
+    kind: 'add',
+    text: '+     <button {...rest} disabled={disabled || loading} aria-busy={loading}>'
+  },
+  { kind: 'add', text: '+       {loading && <span className="spinner" aria-hidden />}' },
+  { kind: 'ctx', text: '        {children}' }
 ];
+
+const ADDED = DIFF.filter((row) => row.kind === 'add').length;
+const REMOVED = DIFF.filter((row) => row.kind === 'del').length;
+
+const OUTPUT = [
+  ' ✓ Button.test.tsx (3 tests) 24ms',
+  ' Test Files  1 passed (1)',
+  '      Tests  3 passed (3)'
+];
+
+// Monochrome highlighting for the reply's TSX: keywords, strings, JSX tags and punctuation,
+// each a neutral token (index.css, ".tsx-*").
+const TOKEN =
+  /('[^']*'|"[^"]*")|\b(type|export|function|return)\b|(<\/?[a-z]+|\/?>)|([{}()[\];:&|=.?,<>]+)/g;
+const KINDS = ['tsx-str', 'tsx-kw', 'tsx-tag', 'tsx-punct'] as const;
+
+function highlight(line: string) {
+  const parts: { text: string; kind?: (typeof KINDS)[number] }[] = [];
+  let last = 0;
+  for (const match of line.matchAll(TOKEN)) {
+    if (match.index > last) parts.push({ text: line.slice(last, match.index) });
+    const group = match.slice(1).findIndex((g) => g !== undefined);
+    parts.push({ text: match[0], kind: KINDS[group] });
+    last = match.index + match[0].length;
+  }
+  if (last < line.length) parts.push({ text: line.slice(last) });
+  return parts.map((part, i) =>
+    part.kind ? (
+      <span key={i} className={part.kind}>
+        {part.text}
+      </span>
+    ) : (
+      part.text
+    )
+  );
+}
 
 function subscribeVisibility(onChange: () => void): () => void {
   document.addEventListener('visibilitychange', onChange);
@@ -69,6 +140,11 @@ function useOnScreen(ref: RefObject<HTMLElement | null>): boolean {
 
 const on = (shown: boolean) => (shown ? '' : undefined);
 
+// Reject, Apply and Undo: one size, so the pair matches and the swap to Undo doesn't move.
+const BUTTON = 'btn btn-lg min-w-20';
+
+type Cursor = 'away' | 'button' | 'press';
+
 export function ChatDemo() {
   const figure = useRef<HTMLElement>(null);
   const reduced = useReducedMotion();
@@ -87,10 +163,12 @@ export function ChatDemo() {
     return () => clearTimeout(timer);
   }, [playing, step]);
 
-  const at = (name: StepName) => frame >= index(name);
+  const name = STEPS[frame]!.name;
+  // The exit fades what's there, so it counts as the last frame.
+  const at = (when: StepName) => name === 'exit' || frame >= index(when);
   const applied = at('applied');
-  const passed = at('pass');
-  const cursor = frame === index('press') ? 'press' : frame === index('point') ? 'button' : 'away';
+  const cursor: Cursor = name === 'press' ? 'press' : at('point') ? 'button' : 'away';
+  const phase = name === 'exit' ? 'exit' : name === 'empty' ? 'reset' : undefined;
 
   const togglePause = () => {
     if (!paused) setStep(FINAL);
@@ -102,7 +180,7 @@ export function ChatDemo() {
       ref={figure}
       className="m-0 w-full min-w-0 overflow-hidden rounded-xl border border-border bg-bg"
       aria-labelledby="demo-caption"
-      data-step={STEPS[frame]!.name}
+      data-step={name}
       data-playing={playing}
     >
       <div className="flex h-11 items-center gap-2 border-b border-border px-4">
@@ -111,7 +189,7 @@ export function ChatDemo() {
         {reduced ? null : (
           <button
             type="button"
-            className="ml-auto inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-md border-0 bg-transparent px-2 text-xs text-fg-muted transition-colors duration-120 hover:bg-bg-muted hover:text-fg"
+            className="ml-auto inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-md border-0 bg-transparent px-2 text-xs text-fg-muted transition-colors duration-(--motion-fast) hover:bg-bg-muted hover:text-fg"
             aria-pressed={paused}
             onClick={togglePause}
           >
@@ -123,8 +201,8 @@ export function ChatDemo() {
       </div>
 
       <div
-        className="demo-stage grid lg:grid-cols-[minmax(0,1fr)_18.5rem]"
-        data-fading={on(frame === index('fade'))}
+        className="demo-stage grid lg:grid-cols-[minmax(0,1fr)_20rem]"
+        data-phase={phase}
         aria-hidden="true"
       >
         <div className="flex min-w-0 flex-col gap-4 p-4 sm:p-6 lg:px-10 lg:py-8">
@@ -132,20 +210,29 @@ export function ChatDemo() {
             className="demo-part m-0 max-w-[85%] self-end rounded-xl bg-bg-muted px-4 py-2.5 text-base"
             data-on={on(at('ask'))}
           >
-            Fix the add function in math.js
+            Add a loading state to the Button component
           </p>
 
           <div className="text-base leading-normal">
             <p className="demo-part m-0" data-on={on(at('reply'))}>
-              <code className="font-mono">add</code> subtracts. Here’s the fixed file:
+              It takes a <code className="font-mono text-sm">loading</code> prop now, and stays
+              disabled while it’s set:
             </p>
             <p className="demo-part mt-2 mb-0" data-on={on(at('marker'))}>
               <code className="rounded-sm bg-bg-muted px-[5px] py-px text-sm">@@FILE {PATH}@@</code>
             </p>
-            <pre className="mt-2 mb-0 overflow-hidden rounded-lg bg-bg-muted px-4 py-3 font-mono text-sm leading-[21px]">
-              {CODE.map((line) => (
-                <span key={line} className="demo-part demo-line block" data-on={on(at('code'))}>
-                  {line}
+            <pre
+              className="demo-part mt-2 mb-0 overflow-hidden rounded-lg bg-bg-muted px-4 py-3 font-mono text-xs leading-5 text-fg"
+              data-on={on(at('marker'))}
+            >
+              {CODE.map((line, i) => (
+                <span
+                  key={i}
+                  className="demo-part demo-line block min-h-5"
+                  style={{ transitionDelay: `calc(${i} * var(--motion-stagger))` }}
+                  data-on={on(at('code'))}
+                >
+                  {highlight(line)}
                 </span>
               ))}
             </pre>
@@ -162,13 +249,13 @@ export function ChatDemo() {
               <span className="min-w-0 truncate font-mono text-sm">{PATH}</span>
               <span className="badge">modified</span>
               <span className="text-xs text-fg-muted">
-                Modified · <span className="text-success">+1</span>{' '}
-                <span className="text-danger">−1</span>
+                <span className="text-success">+{ADDED}</span>{' '}
+                <span className="text-danger">−{REMOVED}</span>
               </span>
             </div>
             <div className="overflow-hidden border-t border-border py-1">
               {DIFF.map((row, i) => (
-                <span key={i} className="diff-row" data-kind={row.kind}>
+                <span key={i} className="diff-row text-xs leading-5" data-kind={row.kind}>
                   {row.text}
                 </span>
               ))}
@@ -181,10 +268,13 @@ export function ChatDemo() {
                   <span className="hidden sm:inline">Review before applying.</span>
                 </p>
                 <span className="ml-auto flex gap-2">
-                  <span className="btn">Reject</span>
+                  <span className={BUTTON} data-demo-button="reject">
+                    Reject
+                  </span>
                   <span className="relative">
                     <span
-                      className="demo-press btn btn-primary btn-lg"
+                      className={`demo-press ${BUTTON} btn-primary`}
+                      data-demo-button="apply"
                       data-pressed={on(cursor === 'press')}
                     >
                       Apply
@@ -197,56 +287,28 @@ export function ChatDemo() {
                 <Icon name="pencil" className="text-fg-muted" />
                 <span className="text-sm font-medium">Modified</span>
                 <span className="text-xs text-fg-muted">· just now</span>
-                <span className="btn ml-auto">Undo</span>
+                <span className={`${BUTTON} ml-auto`}>Undo</span>
               </div>
-            </div>
-          </div>
-
-          <div
-            className="demo-part rounded-lg border border-dashed border-border-strong"
-            data-on={on(at('run'))}
-          >
-            <div className="flex min-h-11 items-center gap-2 px-4 py-2">
-              <span className="font-mono text-sm text-fg-subtle">$</span>
-              <span className="font-mono text-sm">npm test</span>
-              <span className="demo-swap">
-                <span className="badge" data-tone="warning" data-on={on(!passed)}>
-                  running
-                </span>
-                <span className="badge" data-tone="success" data-on={on(passed)}>
-                  exit 0
-                </span>
-              </span>
-              <span className="demo-part text-xs text-fg-muted" data-on={on(passed)}>
-                0.8s
-              </span>
-            </div>
-            <div
-              className="demo-part border-t border-dashed border-border-strong px-4 py-2 font-mono text-sm leading-[21px] text-fg-muted"
-              data-on={on(passed)}
-            >
-              <span className="block">
-                <span className="text-success">PASS</span> src/math.test.js
-              </span>
-              <span className="block">Tests: 3 passed, 3 total</span>
             </div>
           </div>
         </div>
 
-        <SidePanel applied={applied} passed={passed} />
+        <SidePanel at={at} />
       </div>
 
       <figcaption id="demo-caption" className="sr-only">
-        Example: you ask the chat to fix the add function in {PATH}. Its reply has the fixed file,
-        and Bridge shows the change as a diff card under it. Nothing is written until you click
-        Apply; then the card reads Modified, and the allowed command npm test runs and passes.
+        Example: you ask the chat to add a loading state to the Button component. Its reply has the
+        new {PATH}, and Bridge shows the change as a diff card under it. Nothing is written until
+        you click Apply; then the card reads Modified, and Bridge’s side panel logs the write and
+        runs the allowed command npm test, which passes.
       </figcaption>
     </figure>
   );
 }
 
 /** The Bridge side panel beside the chat, on wide screens only. */
-function SidePanel({ applied, passed }: { applied: boolean; passed: boolean }) {
+function SidePanel({ at }: { at: (when: StepName) => boolean }) {
+  const passed = at('pass');
   return (
     <div className="hidden min-w-0 flex-col border-l border-border lg:flex">
       <div className="flex h-12 items-center gap-2 border-b border-border px-5">
@@ -260,8 +322,8 @@ function SidePanel({ applied, passed }: { applied: boolean; passed: boolean }) {
       <div className="flex flex-col gap-6 px-5 py-5">
         <div>
           <p className="m-0 mb-2 text-xs text-fg-muted">Project</p>
-          <p className="m-0 text-base">my-app</p>
-          <p className="m-0 truncate font-mono text-xs text-fg-muted">~/code/my-app</p>
+          <p className="m-0 text-base">my-react-app</p>
+          <p className="m-0 truncate font-mono text-xs text-fg-muted">~/code/my-react-app</p>
         </div>
         <div>
           <p className="m-0 mb-2 text-xs text-fg-muted">Mode</p>
@@ -280,19 +342,52 @@ function SidePanel({ applied, passed }: { applied: boolean; passed: boolean }) {
         </div>
         <div>
           <p className="m-0 mb-3 text-xs text-fg-muted">Activity</p>
-          <ul className="m-0 flex list-none flex-col gap-3 p-0">
-            <li className="demo-part flex items-start gap-2" data-on={on(passed)}>
-              <span className="dot mt-1.5" data-tone="success" />
-              <span className="min-w-0">
-                <span className="block font-mono text-sm">npm test</span>
-                <span className="block text-xs text-success">Passed · 0.8s</span>
-              </span>
-            </li>
-            <li className="demo-part flex items-start gap-2" data-on={on(applied)}>
+          <ul className="m-0 flex list-none flex-col gap-3 p-0" data-demo="activity">
+            <li className="demo-part flex items-start gap-2" data-on={on(at('logged'))}>
               <Icon name="pencil" className="mt-0.5 text-fg-muted" />
               <span className="min-w-0">
-                <span className="block truncate font-mono text-sm">{PATH}</span>
-                <span className="block text-xs text-fg-muted">Just now · Modified · via chat</span>
+                <span className="block truncate text-sm">
+                  Modified <span className="font-mono">{PATH}</span>
+                </span>
+                <span className="block text-xs text-fg-muted">Just now · via chat</span>
+              </span>
+            </li>
+            <li
+              className="demo-part rounded-lg border border-dashed border-border-strong"
+              data-on={on(at('run'))}
+            >
+              <div className="flex min-h-10 items-center gap-2 px-3 py-1.5">
+                <span className="font-mono text-sm text-fg-subtle">$</span>
+                <span className="font-mono text-sm">npm test</span>
+                <span className="demo-swap ml-auto">
+                  <span className="badge" data-tone="warning" data-on={on(!passed)}>
+                    running
+                  </span>
+                  <span className="badge" data-tone="success" data-on={on(passed)}>
+                    exit 0
+                  </span>
+                </span>
+              </div>
+              <div className="border-t border-dashed border-border-strong px-3 py-2 font-mono text-xs leading-5 whitespace-pre text-fg-muted">
+                {OUTPUT.map((line, i) => (
+                  <span
+                    key={i}
+                    className="demo-part demo-line block overflow-hidden text-ellipsis"
+                    style={{ transitionDelay: `calc(${i * 3} * var(--motion-stagger))` }}
+                    data-on={on(at('output'))}
+                  >
+                    {line}
+                  </span>
+                ))}
+              </div>
+            </li>
+            <li className="demo-part flex items-start gap-2" data-on={on(at('ran'))}>
+              <span className="dot mt-1.5" />
+              <span className="min-w-0">
+                <span className="block text-sm">
+                  Ran <span className="font-mono">npm test</span> · exit 0
+                </span>
+                <span className="block text-xs text-fg-muted">Just now · 0.8s</span>
               </span>
             </li>
           </ul>
@@ -302,24 +397,23 @@ function SidePanel({ applied, passed }: { applied: boolean; passed: boolean }) {
   );
 }
 
-/** The pointer that clicks Apply. */
-function Pointer({ at }: { at: 'away' | 'button' | 'press' }) {
+/**
+ * The macOS-style pointer that clicks Apply: a black arrow with a white edge and a soft shadow,
+ * 24px tall. Its tip, at (2, 2), is the click point; the outer span moves it across, the inner
+ * one down, each on its own curve.
+ */
+function Pointer({ at }: { at: Cursor }) {
   return (
-    <svg
-      className="demo-cursor"
-      data-at={at}
-      width="18"
-      height="22"
-      viewBox="0 0 18 22"
-      aria-hidden="true"
-      focusable="false"
-    >
-      <path
-        d="M1.5 1.5v16.2l4.3-4.1 2.7 6.4 3-1.3-2.7-6.2h6z"
-        className="fill-fg stroke-bg"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
-    </svg>
+    <span className="demo-cursor" data-at={at} aria-hidden="true">
+      <span>
+        <svg width="17" height="24" viewBox="0 0 17 24" focusable="false">
+          <path
+            d="M2 2v17.6l4.4-4.1 2.9 6.4 2.9-1.2-2.8-6.3H15z"
+            strokeWidth="1.75"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </span>
+    </span>
   );
 }

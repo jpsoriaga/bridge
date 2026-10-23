@@ -111,11 +111,11 @@ export function Faq() {
       <div className="divide-y divide-border border-y border-border" data-reveal="">
         {QUESTIONS.map(({ q, a }) => (
           <details key={q} className="group" onClick={closeSmoothly}>
-            <summary className="flex cursor-pointer list-none items-center gap-4 rounded-sm py-5 text-lg font-medium tracking-[-0.01em] transition-colors duration-120 hover:text-fg-muted [&::-webkit-details-marker]:hidden">
+            <summary className="flex cursor-pointer list-none items-center gap-4 rounded-sm py-5 text-lg font-medium tracking-[-0.01em] transition-colors duration-(--motion-fast) hover:text-fg-muted [&::-webkit-details-marker]:hidden">
               <span className="flex-1">{q}</span>
               <Icon
                 name="chevron"
-                className="text-fg-muted transition-transform duration-200 group-open:rotate-180 group-data-closing:rotate-0"
+                className="text-fg-muted transition-transform duration-(--motion-base) group-open:rotate-180 group-data-closing:rotate-0"
               />
             </summary>
             <div className="faq-answer max-w-[42rem] pb-6 text-base text-fg-muted">{a}</div>
@@ -138,5 +138,5 @@ function closeSmoothly(event: MouseEvent<HTMLDetailsElement>) {
   window.setTimeout(() => {
     details.open = false;
     delete details.dataset.closing;
-  }, 160);
+  }, 150); // --motion-fast, the answer's fade out
 }
