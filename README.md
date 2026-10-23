@@ -2,6 +2,8 @@
 
 <img src="packages/shared/assets/logo.svg" width="48" alt="" />
 
+**[bridge.jpsoriaga.me](https://bridge.jpsoriaga.me)**: what Bridge is, in one page, with the downloads for your system.
+
 > **Testing a beta?** Start with **[BETA.md](BETA.md)**: install steps for macOS, Windows and Linux, a 15-minute test checklist, and how to report problems.
 
 Bridge lets the chat on chatgpt.com edit a project on your computer, with you in charge. The chat writes whole files in a simple `@@FILE` format; Bridge shows each one as a diff card right under the reply, and writes it into your project only when you click **Apply** (or, if you choose, as soon as the reply finishes, with Undo).
@@ -17,7 +19,13 @@ Everything runs on your computer. The Bridge desktop app does the reading and wr
 
 More in [`docs/screenshots/`](docs/screenshots): the Activity and Settings pages and the side panel, in both themes.
 
-**Contents:** [How it works](#how-it-works) · [Install the app](#install-the-app) · [Install the extension](#install-the-extension) · [Pair](#pair-the-extension) · [Open a project](#open-a-project) · [Use it in the chat](#use-it-in-the-chat) · [Modes](#modes) · [Commands and the allowlist](#commands-and-the-allowlist) · [Full auto](#full-auto) · [Updates](#updates) · [Troubleshooting](#troubleshooting) · [Where data lives](#where-data-lives) · [Uninstall](#uninstall) · [Development](#development) · [FAQ](docs/FAQ.md) · [Security](SECURITY.md) · [Privacy](PRIVACY.md)
+**Contents:** [Why Bridge exists](#why-bridge-exists) · [How it works](#how-it-works) · [Install the app](#install-the-app) · [Install the extension](#install-the-extension) · [Pair](#pair-the-extension) · [Open a project](#open-a-project) · [Use it in the chat](#use-it-in-the-chat) · [Modes](#modes) · [Commands and the allowlist](#commands-and-the-allowlist) · [Full auto](#full-auto) · [Updates](#updates) · [Troubleshooting](#troubleshooting) · [Where data lives](#where-data-lives) · [Uninstall](#uninstall) · [Development](#development) · [FAQ](docs/FAQ.md) · [Security](SECURITY.md) · [Privacy](PRIVACY.md)
+
+## Why Bridge exists
+
+I built Bridge because I couldn't afford the paid AI coding tools. I had the ChatGPT web chat, so I pasted files in one by one and copied the answers back by hand. Bridge does that part for you, and shows each change before it lands. It's for programmers in that same boat.
+
+If Bridge helps you, you can help it reach the Chrome Web Store: see [Support Bridge](https://bridge.jpsoriaga.me/#support) on the site.
 
 ## How it works
 
@@ -259,6 +267,7 @@ End-to-end scripts (Playwright, against the built app and a stand-in chat page) 
 apps/
   desktop/          Electron app (electron-vite): src/main, src/preload, src/renderer; scripts/ for packaging
   extension/        Chrome MV3 extension (CRXJS + Vite): manifest.config.ts, src/content, src/background, src/sidepanel
+  site/             The landing page (Vite + React + Tailwind), deployed to Vercel; see apps/site/README.md
 packages/
   shared/           @bridge/shared: types, chat parser and prompts, diff, protocol, logo and icon, design tokens
 scripts/            version, extension release zip, changelog notes

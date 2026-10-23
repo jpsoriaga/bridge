@@ -5,7 +5,15 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['**/node_modules', '**/dist', '**/out', '**/release', '.pnpm-store', 'archive']
+    ignores: [
+      '**/node_modules',
+      '**/dist',
+      '**/dist-ssr',
+      '**/out',
+      '**/release',
+      '.pnpm-store',
+      'archive'
+    ]
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
@@ -34,6 +42,11 @@ export default tseslint.config(
       globals: { ...globals.node, ...globals.browser, ...globals.webextensions }
     },
     rules: { '@typescript-eslint/no-require-imports': 'off' }
+  },
+  {
+    // The landing page's pre-paint theme script (apps/site/public/theme.js), a classic script.
+    files: ['apps/site/public/**/*.js'],
+    languageOptions: { sourceType: 'script', globals: { ...globals.browser } }
   },
   {
     // Release tooling run by Node (version, packaging checks).

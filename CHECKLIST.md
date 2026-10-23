@@ -416,3 +416,19 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [x] Dry run on GitHub: mac x64 smoke still timed out under Rosetta (step dropped, above); everything else passed
 - [ ] Dry run on GitHub green without the x64 smoke step
 - [ ] Release workflow run for `v1.2.0-beta.3` on GitHub: pre-release, not Latest, unpacked zip only
+
+## Landing page (`apps/site`)
+
+- [x] `@bridge/site`: Vite 7, React 18, TypeScript, Tailwind v4 (`@tailwindcss/vite`) with the tokens mapped into its theme; self-hosted Geist; private, outside `version:set`, the release workflow and the root build
+- [x] Hero with an HTML diff card (Apply, Reject, Undo work), How it works, Modes (Full auto opt-in, Free/Go note), Safe by design (links SECURITY.md), Why Bridge exists (`TODO: Jaypee review`), FAQ, Support, footer with the oversized wordmark
+- [x] Download: OS and architecture from the User-Agent and Client Hints, the matching installer first, files from the Releases API (cached in memory, stable over beta, `beta` badge), Releases-page fallback on error, rate limit or no release; unsigned-app notes linking BETA.md (tests)
+- [x] Support: goals and links from `src/config/funding.ts`, "Funded, thank you!", buttons only for set links, GCash QR in a focus-trapped dialog, lazy image (tests); `.github/FUNDING.yml` commented out
+- [x] System / Light / Dark switch, remembered in a try/catch; no analytics, cookies or third-party scripts; strict CSP in `vercel.json`
+- [x] Prerendered HTML, hydrated; `SITE_URL` in one place for canonical, Open Graph, `robots.txt`, `sitemap.xml`; icons and the 1200×630 share image (`scripts/images.mjs`)
+- [x] Lighthouse (local, gzip): mobile 99 / 100 / 96 / 100, desktop 100 / 100 / 96 / 100; the 96 is the rate-limited API call from the test machine
+- [x] CI: `changes` job (`scripts/ci-changes.mjs`, tests), `site` job (20 min), check and e2e skip site-only changes; Vercel `ignoreCommand`
+- [x] Screenshots at phone, tablet and desktop in both themes (`docs/screenshots/site/`); the wordmark fills the width and is cut about 25% at every size, no horizontal scroll
+- [x] `apps/site/README.md` (local, Vercel, DNS, new domain, funding), README link and "Why Bridge exists", PLAN.md "Landing page decisions", DESIGN.md "Landing page"
+- [ ] Vercel project and the `bridge.jpsoriaga.me` DNS record (by hand, `apps/site/README.md`)
+- [ ] Funding links and the GCash QR (`src/config/funding.ts`, `public/gcash-qr.png`)
+- [ ] Jaypee reviews the "Why Bridge exists" text

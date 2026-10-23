@@ -9,6 +9,8 @@ export default defineConfig({
       provider: 'v8',
       include: ['apps/*/src/**/*.{ts,tsx}', 'packages/shared/src/**/*.ts'],
       exclude: [
+        // The landing page runs its own tests (apps/site, `pnpm --filter site test`).
+        'apps/site/**',
         '**/*.test.{ts,tsx}',
         '**/test-utils.{ts,tsx}',
         '**/test-pairing.ts',

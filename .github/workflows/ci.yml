@@ -13,7 +13,29 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    # Which jobs this push or pull request needs (scripts/ci-changes.mjs): a change only under
+    # apps/site skips check and e2e, and the site job runs only when the site's files change.
+    # The release workflow's call has no base, so everything runs.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      app: ${{ steps.diff.outputs.app }}
+      site: ${{ steps.diff.outputs.site }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: diff
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'push' && github.event.before || '' }}
+          HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: node scripts/ci-changes.mjs
+
   check:
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -58,6 +80,8 @@ jobs:
       - run: pnpm audit --prod --audit-level high
 
   e2e:
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     # The stand-in scripts (e2e/README.md) against the built app and extension, headless
     # Chrome, and Electron under a virtual display.
     runs-on: ubuntu-latest
@@ -86,3 +110,26 @@ jobs:
       - run: xvfb-run -a node e2e/stale.cjs .
       - run: xvfb-run -a node e2e/format.cjs .
       - run: xvfb-run -a node e2e/catchup.cjs .
+
+  site:
+    # The landing page (apps/site): its own lint, typecheck, tests and build. It installs only
+    # the site's dependencies and the root's tooling, so no Electron download.
+    needs: changes
+    if: needs.changes.outputs.site == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter bridge --filter "@bridge/site..."
+      - run: pnpm exec prettier --check apps/site
+      - run: pnpm exec eslint apps/site
+      - run: pnpm --filter @bridge/site typecheck
+      - run: pnpm --filter @bridge/site test
+      - run: pnpm --filter @bridge/site build

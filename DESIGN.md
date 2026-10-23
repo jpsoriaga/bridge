@@ -380,10 +380,21 @@ The mark is a plus and a minus set on a diagonal, the two sides of a diff, drawn
 
 Use outline icons 16px with a 1.5px stroke (Lucide style). Icons inherit `currentColor` and are hidden from screen readers; a button with only an icon has an `aria-label`. The chat cards draw theirs with `createElementNS` from path data in `cards/dom.ts` (file, plus, pencil, chevron, alert, trash, arrow, copy, terminal). The desktop app draws its own the same way from `renderer/src/Icon.tsx` (chevron, check, circle, folder, session, activity, settings, help, back, close, search, plus, pencil, arrow, trash), so no icon package is needed. The check is only the onboarding checklist's.
 
+## Landing page
+
+`apps/site` (https://bridge.jpsoriaga.me) uses the same tokens, mapped into Tailwind v4's theme in `apps/site/src/styles/index.css` (`bg-bg-muted`, `text-fg-subtle`, `border-border-strong`…; Tailwind's palette is removed, so nothing else is available). Its buttons, badges, dots, segmented control and diff rows copy the rules above. What it adds, for a marketing page only:
+
+- **Type**: display sizes above the app scale: the hero title (`text-display`, 36–60px, 600, `-0.035em`), section titles (`text-title`, 26–36px, 600) and lead text (`text-lead`, 16–18px). Body copy is 16px/1.6. Section labels are the 12px muted label over the title.
+- **Layout**: one 1120px column, 16px gutters on phones and 32px from 640px; sections separated by a hairline and 64–96px of space.
+- **Buttons**: `.btn-xl` (44px, 14px text) for the hero's and the download's calls to action. Download is the one primary per view.
+- **Hero picture**: a chat reply and a diff card drawn in HTML from the "Diff card" spec, not a screenshot. Its Apply, Reject and Undo work on the picture.
+- **Footer wordmark**: "Bridge" in Geist 900 at `-0.05em`, sized with `clamp()`/`vw` so it spans the content width at every size, cut off by the page's bottom edge (about a quarter of the letters). It's a faint grey a step off the background (`--border` fading into `--bg`) through `background-clip: text`: **the one gradient in the system**, decorative only (`aria-hidden`, not selectable), and exempt from the contrast rule. It fades in once when scrolled to, except under `prefers-reduced-motion`.
+- **Theme**: follows the system, with a System / Light / Dark segmented switch in the header that sets `data-theme` and remembers the choice.
+
 ## Don'ts
 
 - Don't use colour outside the semantic tokens, and don't add a brand accent hue.
-- Don't use shadows beyond the two `--shadow-xs` uses, and no gradients or blur.
+- Don't use shadows beyond the two `--shadow-xs` uses (the site's theme switch reuses the segmented control's), and no gradients or blur (except the site's footer wordmark).
 - Don't use raw hex values in components.
 - Don't use all-caps labels or Title Case buttons.
 - Don't use OpenAI or Codex names, logos or colours anywhere in Bridge's UI.

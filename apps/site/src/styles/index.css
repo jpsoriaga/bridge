@@ -1,0 +1,304 @@
+/* Bridge landing page. Spec: DESIGN.md (tokens, type, components) and its "Landing page"
+   section (what the site adds). Colours, radii, type sizes and fonts all come from
+   @bridge/shared/tokens.css; nothing here is a raw colour. */
+@import 'tailwindcss';
+@import '@bridge/shared/tokens.css';
+@import '@fontsource-variable/geist';
+@import '@fontsource-variable/geist-mono';
+
+/* The tokens as Tailwind colours: `bg-bg-muted`, `text-fg-subtle`, `border-border-strong`,
+   `text-success`… They're `inline` so each utility reads the token, which switches with
+   light-dark(). Tailwind's own palette is removed, so only tokens can be used.
+
+   Names Tailwind and the tokens share (--font-sans, --font-mono, --text-xs…xl, --radius-*,
+   --shadow-xs) aren't repeated here: tokens.css sets them unlayered on :root, which beats
+   Tailwind's defaults, so `font-mono`, `text-sm` (13px), `rounded-lg` (12px) and
+   `shadow-xs` are the design system's. Tailwind's 4px spacing step matches --space-*. */
+@theme inline {
+  --color-*: initial;
+  --color-bg: var(--bg);
+  --color-bg-muted: var(--bg-muted);
+  --color-bg-hover: var(--bg-hover);
+  --color-bg-raised: var(--bg-raised);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-subtle: var(--fg-subtle);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-inverse-bg: var(--inverse-bg);
+  --color-inverse-fg: var(--inverse-fg);
+  --color-success: var(--success);
+  --color-success-bg: var(--success-bg);
+  --color-danger: var(--danger);
+  --color-danger-bg: var(--danger-bg);
+  --color-warning: var(--warning);
+  --color-idle: var(--idle);
+}
+
+/* Display sizes, for the page only (the apps stop at 24px). */
+@theme {
+  --text-display: clamp(2.25rem, 1.45rem + 3.4vw, 3.75rem);
+  --text-display--line-height: 1.04;
+  --text-display--letter-spacing: -0.035em;
+  --text-title: clamp(1.625rem, 1.3rem + 1.3vw, 2.25rem);
+  --text-title--line-height: 1.12;
+  --text-title--letter-spacing: -0.025em;
+  --text-lead: clamp(1rem, 0.95rem + 0.25vw, 1.125rem);
+  --text-lead--line-height: 1.6;
+  --ease-bridge: var(--ease);
+}
+
+@layer base {
+  html {
+    background: var(--bg);
+    color: var(--fg);
+    -webkit-font-smoothing: antialiased;
+    scroll-behavior: smooth;
+    scroll-padding-top: 72px;
+  }
+  body {
+    margin: 0;
+    background: var(--bg);
+    font-family: var(--font-sans);
+    font-size: 16px;
+    line-height: 1.6;
+    overflow-x: clip;
+  }
+  /* 2px ring in --fg, offset 2px, keyboard only (DESIGN.md, "Focus"). */
+  :focus-visible {
+    outline: 2px solid var(--fg);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: var(--inverse-bg);
+    color: var(--inverse-fg);
+  }
+  code,
+  kbd {
+    font-family: var(--font-mono);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    *,
+    *::before,
+    *::after {
+      transition: none !important;
+      animation: none !important;
+    }
+  }
+}
+
+@layer components {
+  /* Buttons, as styles.css draws them in the apps. */
+  .btn {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    height: 32px;
+    padding: 0 var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg);
+    color: var(--fg);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    line-height: 1;
+    text-decoration: none;
+    white-space: nowrap;
+    cursor: pointer;
+    transition:
+      background-color 120ms var(--ease),
+      border-color 120ms var(--ease),
+      opacity 120ms var(--ease);
+  }
+  .btn:hover {
+    background: var(--bg-hover);
+    border-color: var(--border-strong);
+  }
+  .btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .btn-lg {
+    height: 40px;
+    padding: 0 var(--space-4);
+  }
+  /* The page's big calls to action; the apps' buttons stop at 40px. */
+  .btn-xl {
+    height: 44px;
+    padding: 0 var(--space-5);
+    font-size: var(--text-base);
+  }
+  .btn-primary {
+    background: var(--inverse-bg);
+    border-color: var(--inverse-bg);
+    color: var(--inverse-fg);
+    font-weight: 600;
+  }
+  .btn-primary:hover {
+    background: var(--inverse-bg);
+    border-color: var(--inverse-bg);
+    opacity: 0.86;
+  }
+
+  /* Mono tags with a 1px border; the tone is the text and a 35% border, never a fill. */
+  .badge {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    height: 18px;
+    padding: 0 var(--space-1);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    line-height: 1;
+  }
+  .badge[data-tone='success'] {
+    color: var(--success);
+    border-color: color-mix(in srgb, var(--success) 35%, transparent);
+  }
+  .badge[data-tone='warning'] {
+    color: var(--warning);
+    border-color: color-mix(in srgb, var(--warning) 35%, transparent);
+  }
+
+  .dot {
+    width: 8px;
+    height: 8px;
+    flex: none;
+    border-radius: var(--radius-full);
+    background: var(--idle);
+  }
+  .dot[data-tone='success'] {
+    background: var(--success);
+  }
+  .dot[data-tone='warning'] {
+    background: var(--warning);
+  }
+
+  /* The segmented control (theme switch), as the app's Appearance setting. */
+  .segmented {
+    display: inline-grid;
+    grid-auto-columns: 1fr;
+    grid-auto-flow: column;
+    gap: 2px;
+    padding: 3px;
+    border-radius: var(--radius-lg);
+    background: var(--bg-muted);
+  }
+  .segmented button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 26px;
+    border: 0;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--fg-muted);
+    cursor: pointer;
+    transition:
+      background-color 120ms var(--ease),
+      color 120ms var(--ease);
+  }
+  .segmented button:hover {
+    color: var(--fg);
+  }
+  .segmented button[aria-checked='true'] {
+    background: var(--bg-raised);
+    color: var(--fg);
+    box-shadow: var(--shadow-xs);
+  }
+
+  /* Text links inside prose. */
+  .link {
+    color: var(--fg);
+    text-decoration: underline;
+    text-decoration-color: var(--border-strong);
+    text-underline-offset: 3px;
+    transition: text-decoration-color 120ms var(--ease);
+  }
+  .link:hover {
+    text-decoration-color: var(--fg);
+  }
+
+  /* Diff rows, as the chat cards draw them: mono 13px/21px, tinted added and removed rows. */
+  .diff-row {
+    display: block;
+    padding: 0 var(--space-4);
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    line-height: 21px;
+    white-space: pre;
+  }
+  .diff-row[data-kind='add'] {
+    background: var(--success-bg);
+  }
+  .diff-row[data-kind='del'] {
+    background: var(--danger-bg);
+  }
+  .diff-row[data-kind='hunk'] {
+    color: var(--fg-subtle);
+  }
+
+  /* The footer's oversized wordmark. The one gradient in the system (DESIGN.md, "Landing
+     page"): a faint grey a step off the background, fading into it towards the bottom. It
+     sizes to the content width (1120px at most, 16px or 32px gutters) so the word fills it,
+     and the footer's overflow cuts off its lower quarter. */
+  .wordmark {
+    display: block;
+    margin: 0;
+    font-size: clamp(4rem, calc((min(100vw, 1120px + 4rem) - 2rem) * 0.3255), 24rem);
+    font-weight: 900;
+    line-height: 0.9;
+    letter-spacing: -0.05em;
+    /* background-clip: text paints only inside the box, so give the glyphs' overhang room. */
+    padding: 0.04em 0.05em 0;
+    margin-inline: -0.05em;
+    text-align: center;
+    white-space: nowrap;
+    background: linear-gradient(to bottom, var(--border) 15%, var(--bg) 92%);
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    user-select: none;
+    pointer-events: none;
+    translate: 0 30%;
+    margin-top: -0.12em;
+  }
+  @media (width >= 40rem) {
+    .wordmark {
+      font-size: clamp(4rem, calc((min(100vw, 1120px + 4rem) - 4rem) * 0.3252), 24rem);
+    }
+  }
+  .wordmark[data-reveal] {
+    opacity: 0;
+    transition: opacity 900ms var(--ease);
+  }
+  .wordmark[data-reveal='shown'] {
+    opacity: 1;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .wordmark[data-reveal] {
+      opacity: 1;
+    }
+  }
+}
+
+@utility container-page {
+  width: 100%;
+  max-width: calc(1120px + 2 * var(--space-4));
+  margin-inline: auto;
+  padding-inline: var(--space-4);
+  @media (width >= 40rem) {
+    max-width: calc(1120px + 2 * var(--space-8));
+    padding-inline: var(--space-8);
+  }
+}

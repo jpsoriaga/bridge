@@ -429,6 +429,23 @@ Open points:
 - **Release dry run.** `release.yml` also runs on `workflow_dispatch`: the version job takes `v` + the packages' version as the tag (`Tag` step, `needs.version.outputs.tag`), `checks`, `package` and `extension` run as for a tag, the `release` job runs on tag pushes only, and a read-only `dry-run` job writes the would-be files, checksums, `gh` flags and notes to the run summary and uploads the notes. RELEASE.md runs it before every tag. `release-flags.test.mjs` runs the `Tag` and dry-run steps under bash.
 - Unsigned macOS betas can't check for updates, so mac testers rely on the Releases page.
 
+## Landing page decisions
+
+The one-page site at https://bridge.jpsoriaga.me, for programmers on the chat's Free and Go plans. Code: `apps/site` ([its README](apps/site/README.md)).
+
+- **Separate package.** `@bridge/site` is a private workspace package outside the release: not in `version:set`/`version:check` (which list their files), not in the root `pnpm build` (now filtered to the desktop and the extension), not in the release workflow, and outside the root Vitest run and coverage. It imports only `tokens.css` and the logo geometry from `@bridge/shared` (through a Vite alias to `brand.ts`, so zod and the parser stay out of the bundle).
+- **Stack.** Vite 7, React 18, Tailwind CSS v4 through `@tailwindcss/vite`, the tokens mapped with `@theme inline`. Fonts are self-hosted from `@fontsource-variable` (no font CDN). Static build, no server.
+- **Downloads.** The visitor's browser asks the GitHub Releases API (unauthenticated, no credentials or referrer, once per page load, kept in memory) and the page picks the newest stable release with an installer, else the newest beta (shown with a `beta` badge). The extension is the `-unpacked.zip`, the one that can pair. Any failure (network, rate limit, no published release) shows a link to the Releases page. The system comes from the User-Agent; Apple silicon only from User-Agent Client Hints (Chromium), so other Mac browsers get Apple silicon first with the Intel build beside it.
+- **Privacy.** No analytics, cookies or third-party scripts. `localStorage` keeps only the theme choice. Support links leave the site only on a click. Vercel's headers set a CSP that allows only the site's own files and `api.github.com`.
+- **Support.** `src/config/funding.ts`, updated by hand: two costs (the Chrome Web Store fee, a domain) with progress, and buttons only for the links that are set. `.github/FUNDING.yml` is commented out until then.
+- **SITE_URL** in `src/config/site.ts` is the one place the domain goes; the build writes it into the HTML, `robots.txt` and `sitemap.xml`.
+- **CI.** A `changes` job (`scripts/ci-changes.mjs`) skips `check` and `e2e` for changes only under `apps/site/`, and runs the new `site` job only when the site or what it's built from changes. Vercel's `ignoreCommand` skips deployments the same way.
+
+Open points:
+
+- No release is published yet, so the live page shows the Releases-page fallback until the first non-draft release.
+- The "Why Bridge exists" text is a draft for Jaypee to review (`TODO: Jaypee review` in `Why.tsx`).
+
 ## Modes
 
 | Mode           | Edits                                                                                                  | Commands                                                                       | Sending                                 |
@@ -498,3 +515,4 @@ The "Start session" prompt (`buildSessionPrompt`) puts the rules first and the t
 | 1.0.1        | Make the chat format stick | The chat's format slips no longer fail silently                    | New session prompt (rules first). Format line on everything Bridge inserts. Lenient markers with `format fixed`. Format issues, format card and Send format reminder. Full auto reminders (2 per run, then `format-issues`). Protocol v6. Junk files hidden                                 |
 | 1.1.0        | Install and catch up       | Dependencies install; sleep doesn't stall Full auto                | Install command suggested (exact), own timeout, one-time note. Session prompt line. Catch up after sleep: wait, stall Stop & continue, interrupted replies with continuation or Continue generating, Re-run / Skip. Interrupted card. Protocol v7                                           |
 | 1.2.0-beta.1 | Beta channel               | Testers on every OS can install, test and report                   | `-beta.N` versions (manifest `version_name`), pre-releases never Latest with the unpacked zip only, Stable / Beta update channel, Copy diagnostics in the app and side panel, a rotated redacted log file, beta issue templates, BETA.md                                                    |
+| Site         | Landing page               | One page that explains Bridge and offers the right download        | `apps/site` (Vite, React, Tailwind v4): hero with a live diff card, how it works, modes, safety, why, downloads from the Releases API with OS detection and fallback, FAQ, support, footer wordmark. Themes, a11y, SEO, share image. Vercel config, CI job                                  |

@@ -6,7 +6,7 @@
   "description": "Lets a chat in the browser propose file edits that a local desktop app applies to your project.",
   "scripts": {
     "dev": "pnpm --parallel --filter @bridge/desktop --filter @bridge/extension dev",
-    "build": "pnpm -r build",
+    "build": "pnpm --filter @bridge/desktop --filter @bridge/extension build",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

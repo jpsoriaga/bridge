@@ -1,0 +1,6 @@
+# GitHub shows a "Sponsor" button on the repository once one of these is set.
+# TODO: Jaypee: uncomment the ones you use, with your usernames. Keep them in step with
+# apps/site/src/config/funding.ts (SUPPORT_LINKS), which the landing page reads.
+# github: [your-github-username]
+# ko_fi: your-ko-fi-username
+# custom: ['https://bridge.jpsoriaga.me/#support']
