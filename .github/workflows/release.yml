@@ -118,19 +118,13 @@ jobs:
       - name: Check package contents
         run: pnpm --filter @bridge/desktop check:package
 
-      # One app per run, each with its own fresh userData (smoke.mjs).
-      - name: Smoke test (macOS arm64)
+      # arm64 only. The x64 build gets verify:fuses and check:package above but no smoke
+      # test: under Rosetta on the arm64 runner its window never loaded, even in 120s and a
+      # run of its own (v1.2.0-beta.2, and the 1.2.0-beta.3 dry run). PLAN.md, RELEASE.md.
+      - name: Smoke test (macOS)
         if: matrix.platform == 'mac'
         working-directory: apps/desktop
         run: node scripts/smoke.mjs dist/mac-arm64/Bridge.app
-      - name: Smoke test (macOS x64)
-        if: matrix.platform == 'mac'
-        working-directory: apps/desktop
-        run: |
-          # The x64 build runs under Rosetta on the arm64 runner; smoke.mjs gives its window
-          # 120s to load (Rosetta translates Electron on the first launch).
-          /usr/bin/pgrep -q oahd || softwareupdate --install-rosetta --agree-to-license
-          node scripts/smoke.mjs dist/mac/Bridge.app
       - name: Smoke test (Windows)
         if: matrix.platform == 'win'
         working-directory: apps/desktop

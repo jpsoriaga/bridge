@@ -409,9 +409,10 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 
 - [x] `smoke.mjs`: a fresh temp `--user-data-dir` per app; the next app starts only after the previous one's process group is gone and its port is free (test: two runs on a fixed port, no overlap, different userData)
 - [x] `smoke.mjs`: 120s window-load timeout for an x64 Mac app on an arm64 Mac (`loadTimeoutFor`, from the Mach-O header; tests), 90s otherwise; 3-minute hard cap per app
-- [x] `release.yml`: arm64 and x64 mac smoke tests in separate steps
+- [x] `release.yml`: mac x64 smoke test dropped after it timed out again on its own with 120s (dry run); x64 keeps `verify:fuses` and `check:package`; RELEASE.md and PLAN.md say so
 - [x] `release.yml`: `workflow_dispatch` dry run (builds, verifies, smoke-tests and uploads everything; no release); `release` job on tag pushes only; tests for the `Tag` and dry-run steps
 - [x] RELEASE.md "Dry run", run before tagging; PLAN.md
 - [x] Version 1.2.0-beta.3, CHANGELOG
-- [ ] Dry run on GitHub: mac x64 smoke test passes under Rosetta (or its smoke step is dropped, keeping `verify:fuses` and `check:package`)
+- [x] Dry run on GitHub: mac x64 smoke still timed out under Rosetta (step dropped, above); everything else passed
+- [ ] Dry run on GitHub green without the x64 smoke step
 - [ ] Release workflow run for `v1.2.0-beta.3` on GitHub: pre-release, not Latest, unpacked zip only

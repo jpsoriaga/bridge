@@ -14,7 +14,7 @@ The release build for 1.2.0-beta.2 failed on the Intel Mac smoke test, so this b
 
 ### Fixed
 
-- **Intel Mac smoke test.** The release smoke test now gives the Intel Mac build 120 seconds to open its window when it runs under Rosetta on an Apple silicon Mac (other builds keep 90 seconds), still stopping after 3 minutes at most. It tests each build in its own run with fresh app data, and starts the next only after the previous one has fully quit and freed its port.
+- **Intel Mac release build.** The release workflow no longer smoke-tests the Intel Mac build, which never opened its window under Rosetta on GitHub's Apple silicon runner. It is still checked for its security settings and package contents, and is launched by hand before publishing. Run locally, the smoke test gives an Intel build under Rosetta 120 seconds to open its window (other builds keep 90 seconds), tests each build with fresh app data, and starts the next only after the previous one has fully quit and freed its port.
 
 ## [1.2.0-beta.2] - 2026-10-23
 

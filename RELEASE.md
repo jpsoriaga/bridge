@@ -7,7 +7,7 @@ A release is one version number for the desktop app, the extension and `@bridge/
 1. Runs the full CI suite (format, lint, typecheck, build, tests with coverage, `pnpm audit`, the e2e scripts) by calling [`ci.yml`](.github/workflows/ci.yml). It gets no secrets.
 2. Checks every package has the tag's version (`pnpm version:check vX.Y.Z`) and that `CHANGELOG.md` has a section for it.
 3. Builds on `macos-latest` (dmg and zip, arm64 and x64), `windows-latest` (NSIS installer, x64) and `ubuntu-latest` (AppImage, x64). Signing secrets reach only the packaging step for their platform.
-4. For each app: `verify:fuses`, `check:package` (fuses again, and app.asar holds only the built app and its production dependencies), and a smoke test (launch with a fresh temp userData, window loads, `/health` answers on `127.0.0.1`, quit, wait until every process is gone and the port is free). The window gets 90s to load, or 120s for the x64 mac build, which runs under Rosetta on the arm64 runner; each app's run stops after 3 minutes at most.
+4. For each app: `verify:fuses`, `check:package` (fuses again, and app.asar holds only the built app and its production dependencies), and a smoke test (launch with a fresh temp userData, window loads, `/health` answers on `127.0.0.1`, quit, wait until every process is gone and the port is free). The window gets 90s to load; each app's run stops after 3 minutes at most. The **x64 mac build is not smoke-tested** in CI: the runner is arm64, and under Rosetta its window never loaded there (not even in 120s, on its own). It still gets `verify:fuses` and `check:package`. Smoke-test it yourself on an Intel Mac, or under Rosetta on Apple silicon (`smoke.mjs` gives it 120s there), before publishing.
 5. Builds the extension zips (`pnpm build:extension:release`): `bridge-extension-X.Y.Z.zip` for the store and `bridge-extension-X.Y.Z-unpacked.zip` for Load unpacked.
 6. Creates a draft release named "Bridge X.Y.Z" with every installer, `latest*.yml` (for the app's update check), both extension zips, `SHA256SUMS.txt`, and that version's `CHANGELOG.md` section as the notes.
 
@@ -54,7 +54,7 @@ git push origin v1.1.0
 Then:
 
 7. **Watch the run** under Actions → Release. A red check means no release was created; fix, delete the tag (`git push --delete origin v1.1.0 && git tag -d v1.1.0`), and tag again.
-8. **Check the draft** under Releases: every file is there (two dmgs, two mac zips, the Windows setup exe, the AppImage, `latest.yml`, `latest-mac.yml`, `latest-linux.yml`, both extension zips, `SHA256SUMS.txt`), the notes read right, and the logs say whether each build was signed. Download one installer and try it.
+8. **Check the draft** under Releases: every file is there (two dmgs, two mac zips, the Windows setup exe, the AppImage, `latest.yml`, `latest-mac.yml`, `latest-linux.yml`, both extension zips, `SHA256SUMS.txt`), the notes read right, and the logs say whether each build was signed. Download one installer and try it, and check the x64 mac build launches (CI doesn't smoke-test it).
 9. **Publish** the draft. From then on, apps with "Check for updates" see the new version and link to it.
 10. **Upload the extension** to the Chrome Web Store (below).
 
