@@ -424,6 +424,7 @@ Open points:
 Open points:
 
 - The release workflow's beta path runs for real only on the `v1.2.0-beta.1` push; `release-flags.test.mjs` runs its steps locally with a stand-in `gh`.
+- That run failed (fixed in 1.2.0-beta.2). macOS: Actions passes a missing secret as an empty variable, and electron-builder took the empty `CSC_LINK` for a path; `package.mjs` now drops empty signing variables (`builderEnv`). Linux: after `SMOKE OK` the step ran for 3h51m, because killing the AppImage's runtime left Electron holding the output pipes; `smoke.mjs` now spawns the app in its own process group, kills the group (SIGTERM, then SIGKILL) or the tree (`taskkill /T` on Windows), exits explicitly, and stops itself after 3 minutes. Every job has `timeout-minutes` (30 for packaging, 20 for the rest).
 - Unsigned macOS betas can't check for updates, so mac testers rely on the Releases page.
 
 ## Modes

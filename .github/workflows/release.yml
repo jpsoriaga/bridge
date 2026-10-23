@@ -19,10 +19,12 @@ concurrency:
 jobs:
   checks:
     # The full CI suite (format, lint, typecheck, build, coverage, audit, e2e). No secrets.
+    # A job that calls a workflow can't set timeout-minutes; ci.yml's jobs set their own.
     uses: ./.github/workflows/ci.yml
 
   version:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -48,6 +50,7 @@ jobs:
           - os: ubuntu-latest
             platform: linux
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     defaults:
       run:
         shell: bash
@@ -132,6 +135,7 @@ jobs:
   extension:
     needs: [checks, version]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -154,6 +158,7 @@ jobs:
   release:
     needs: [package, extension]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # The only job that may write: it creates the draft release. No signing secrets here.
     permissions:
       contents: write

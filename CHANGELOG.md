@@ -4,6 +4,15 @@ All notable changes to Bridge are listed here. The format follows [Keep a Change
 
 ## [Unreleased]
 
+## [1.2.0-beta.2] - 2026-10-23
+
+The release build for 1.2.0-beta.1 failed, so this is the first beta testers can download. It has everything listed under 1.2.0-beta.1, plus the fixes below.
+
+### Fixed
+
+- **Unsigned macOS packaging.** When no signing secrets are set, empty signing variables are now dropped before packaging, so the unsigned macOS build no longer fails with "not a file".
+- **Linux smoke test hang.** The release smoke test now ends the app's whole process tree when it passes or fails, exits, and stops after 3 minutes at most. Every release and CI job also has a time limit.
+
 ## [1.2.0-beta.1] - 2026-10-23
 
 The first beta for testers on macOS, Windows and Linux, with install steps in [BETA.md](https://github.com/jpsoriaga/bridge/blob/v1.2.0-beta.1/BETA.md) and an easy way to report problems.
@@ -70,7 +79,8 @@ The first release: a desktop app for macOS, Windows and Linux, and a Chrome exte
 - **Update check, notify only.** Settings → About shows the version and can ask GitHub Releases whether a newer one exists, on a click or (if you turn it on) at launch. It never downloads or installs anything, and it's off in unsigned macOS builds.
 - **Version handshake.** If the app and the extension speak different protocol versions, both say which one to update instead of failing to connect.
 
-[Unreleased]: https://github.com/jpsoriaga/bridge/compare/v1.2.0-beta.1...HEAD
+[Unreleased]: https://github.com/jpsoriaga/bridge/compare/v1.2.0-beta.2...HEAD
+[1.2.0-beta.2]: https://github.com/jpsoriaga/bridge/compare/v1.2.0-beta.1...v1.2.0-beta.2
 [1.2.0-beta.1]: https://github.com/jpsoriaga/bridge/compare/v1.1.0...v1.2.0-beta.1
 [1.1.0]: https://github.com/jpsoriaga/bridge/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/jpsoriaga/bridge/compare/v1.0.0...v1.0.1

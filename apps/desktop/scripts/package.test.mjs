@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { builderArgs, SECRETS, signingPlan } from './package.mjs';
+import { builderArgs, builderEnv, SECRETS, signingPlan } from './package.mjs';
 
 const all = (platform) => Object.fromEntries(SECRETS[platform].map((name) => [name, 'x']));
 
@@ -57,5 +57,22 @@ describe('builderArgs', () => {
       args: ['--win', '--publish', 'never'],
       env: { CSC_IDENTITY_AUTO_DISCOVERY: 'false' }
     });
+  });
+});
+
+describe('builderEnv', () => {
+  it('empty secrets build unsigned and never reach electron-builder', () => {
+    const empty = Object.fromEntries([...SECRETS.mac, ...SECRETS.win].map((name) => [name, '']));
+    empty.CSC_KEY_PASSWORD = '  ';
+    for (const platform of ['mac', 'win']) {
+      const plan = signingPlan(platform, empty);
+      expect(plan).toEqual({ sign: false });
+      const env = builderEnv({ ...empty, PATH: '/usr/bin' }, builderArgs(platform, plan).env);
+      expect(env).toEqual({ PATH: '/usr/bin', CSC_IDENTITY_AUTO_DISCOVERY: 'false' });
+    }
+  });
+
+  it('keeps secrets that are set', () => {
+    expect(builderEnv(all('mac'), {})).toEqual(all('mac'));
   });
 });

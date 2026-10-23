@@ -23,3 +23,20 @@ describe('the version rule', () => {
     }
   });
 });
+
+describe('workflows', () => {
+  it('give every job a timeout (a job that calls a workflow gets it from that workflow)', () => {
+    for (const file of ['.github/workflows/ci.yml', '.github/workflows/release.yml']) {
+      const jobs = read(file)
+        .split(/^jobs:\n/m)[1]
+        .split(/^ {2}(?=[\w-]+:\n)/m)
+        .filter(Boolean);
+      expect(jobs.length, file).toBeGreaterThan(2);
+      for (const job of jobs) {
+        const name = job.split(':')[0];
+        if (/^ {4}uses: /m.test(job)) continue;
+        expect(job, `${file} ${name}`).toMatch(/^ {4}timeout-minutes: \d+$/m);
+      }
+    }
+  });
+});

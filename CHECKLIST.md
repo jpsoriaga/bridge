@@ -394,5 +394,13 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [x] BETA.md: download, install per OS (Mac chip, right-click → Open, quarantine fix; SmartScreen and why; AppImage, FUSE, Ubuntu 24.04 AppArmor), extension (Load unpacked in Chrome, Edge, Brave; pin), pairing with fingerprint screenshots, 15-minute checklist, Free/Go tips, known issues, reporting (templates, or diagnostics to whoever invited you), uninstall per OS; linked from the top of README
 - [x] Pairing screenshots for BETA.md from `e2e/screenshots.cjs` (`docs/screenshots/beta/`)
 - [x] Version 1.2.0-beta.1, CHANGELOG, RELEASE.md "Beta release", PLAN.md "Beta channel decisions", SECURITY.md, PRIVACY.md (logs, diagnostics), DESIGN.md, README, CLAUDE.md release rule
-- [ ] First beta run of the release workflow on GitHub (the `v1.2.0-beta.1` tag push): pre-release, not Latest, unpacked zip only
+- [x] First beta run of the release workflow on GitHub (the `v1.2.0-beta.1` tag push): ran, and failed on unsigned macOS packaging and a hung Linux smoke test (fixed in 1.2.0-beta.2)
 - [ ] BETA.md followed start to finish by a tester on macOS, Windows and Linux
+
+## 1.2.0-beta.2: Release workflow fixes
+
+- [x] `package.mjs`: signing variables that are set but empty are dropped before electron-builder runs (`builderEnv`); unsigned keeps `CSC_IDENTITY_AUTO_DISCOVERY=false` (test: empty secrets build unsigned and pass nothing on)
+- [x] `smoke.mjs`: the app is spawned detached; pass or fail, its process group gets SIGTERM, then SIGKILL after up to 5s (`taskkill /T /F` on Windows), and the script exits with its code; a hard 3-minute timeout (tests with a fake app whose SIGTERM-ignoring helper holds the pipes: passing and never ready)
+- [x] `timeout-minutes` on every job: 30 for packaging, 20 for the rest (ci.yml's jobs cover the reusable `checks` call); `repo.test.mjs` checks it
+- [x] Version 1.2.0-beta.2, CHANGELOG
+- [ ] Release workflow run for `v1.2.0-beta.2` on GitHub: pre-release, not Latest, unpacked zip only

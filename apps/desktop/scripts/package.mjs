@@ -70,6 +70,19 @@ export function builderArgs(platform, plan) {
 }
 
 /**
+ * The environment electron-builder runs with. A signing variable that is set but empty
+ * (what Actions passes for a secret that doesn't exist) is removed: electron-builder takes
+ * an empty CSC_LINK for a path and fails on the folder it resolves to.
+ */
+export function builderEnv(env, extra) {
+  const childEnv = { ...env };
+  for (const name of [...SECRETS.mac, ...SECRETS.win]) {
+    if (name in childEnv && (childEnv[name] ?? '').trim() === '') delete childEnv[name];
+  }
+  return { ...childEnv, ...extra };
+}
+
+/**
  * notarytool wants APPLE_API_KEY as a path to the .p8 file. CI secrets hold its contents,
  * so those go into a private temp file.
  */
@@ -94,7 +107,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     process.exit(2);
   }
   const { args, env } = builderArgs(platform, plan);
-  const childEnv = { ...process.env, ...env };
+  const childEnv = builderEnv(process.env, env);
   if (platform === 'mac' && plan.sign)
     childEnv.APPLE_API_KEY = apiKeyPath(process.env.APPLE_API_KEY);
 
