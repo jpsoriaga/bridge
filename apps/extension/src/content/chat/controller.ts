@@ -1,8 +1,16 @@
-import { parseChat, type BridgeConfig, type ChatParse, type RunResult } from '@bridge/shared';
+import {
+  interruptionOf,
+  parseChat,
+  type BridgeConfig,
+  type ChatParse,
+  type Interruption,
+  type RunResult
+} from '@bridge/shared';
 import type {
   CardRecord,
   ChatSyncReply,
   DiffCardRecord,
+  LoopAction,
   PendingRequest,
   ReadCardRecord,
   SessionState,
@@ -14,6 +22,7 @@ import { ChangeCard, type FileChange } from './cards/change-card';
 import { DiffCard, type Ask } from './cards/diff-card';
 import { FormatCard } from './cards/format-card';
 import { loadFonts } from './cards/host';
+import { InterruptCard } from './cards/interrupt-card';
 import { LoopChip } from './cards/loop-chip';
 import { MessageBar } from './cards/message-bar';
 import { PageNotice } from './cards/page-notice';
@@ -27,7 +36,7 @@ import {
   type EditSummary,
   type ReplyActions
 } from './loop';
-import { livePage } from './page';
+import { livePage, newestReply } from './page';
 import {
   all,
   assistantMessages,
@@ -38,10 +47,12 @@ import {
   SELECTORS,
   conversationIdFrom,
   conversationMissing,
+  findContinueButton,
   findConversation,
   isMessageComplete,
   messageBody,
   messageIdOf,
+  replyStatus,
   type LayoutHealth
 } from './selectors';
 
@@ -78,6 +89,11 @@ interface MessageView {
   bar: MessageBar | null;
   /** What in the reply missed Bridge's format, with **Send format reminder**. */
   format: FormatCard | null;
+  /** The reply was cut off: where, and the card that offers a way on. */
+  interruption: Interruption | null;
+  interrupt: InterruptCard | null;
+  /** The card of the file the cut fell in. Never applied on its own; not in Full auto's step. */
+  cutOff: DiffCard | null;
   /** Every card has read what it needs. */
   ready: Promise<unknown>;
 }
@@ -167,6 +183,8 @@ export class ChatController {
   private readonly notice = new PageNotice();
   /** Replies already handed to the mode once. A remounted one is never acted on again. */
   private readonly acted = new Set<string>();
+  /** Replies Bridge stopped because they were stuck after sleep: they count as cut off. */
+  private readonly stopped = new Set<string>();
   private lastPoll = Date.now();
   private missingStrikes = 0;
   private pollTimer: ReturnType<typeof setInterval> | undefined;
@@ -181,7 +199,7 @@ export class ChatController {
       () => composerArea()
     );
     this.loop = new FullAutoLoop({
-      page: livePage,
+      page: { ...livePage, stopReply: () => this.stopReply() },
       config: () => this.config,
       report: (report) => {
         void this.ask({ type: 'chat-loop', report });
@@ -394,11 +412,31 @@ export class ChatController {
     };
   }
 
-  /** Stop, Resume or Continue from the side panel or the app. */
-  loopControl(action: 'stop' | 'resume' | 'continue'): void {
-    if (action === 'stop') this.loop.stop();
-    else if (action === 'resume') this.loop.resume();
-    else this.loop.continueFor();
+  /** Stop, Resume, Continue and the sleep catch-up buttons, from the side panel or the app. */
+  loopControl(action: LoopAction): void {
+    switch (action) {
+      case 'stop':
+        return this.loop.stop();
+      case 'resume':
+        return this.loop.resume();
+      case 'continue':
+        return this.loop.continueFor();
+      case 'skip':
+        return this.loop.skipRun();
+      case 'stop-continue':
+        return this.loop.stopAndContinue();
+      case 'continue-reply':
+        return this.loop.continueReply();
+    }
+  }
+
+  /** Presses the page's stop button for the newest reply, which then counts as cut off. */
+  private stopReply(): boolean {
+    const messages = this.observed ? assistantMessages(this.observed) : [];
+    const newest = newestReply();
+    if (!livePage.stopReply()) return false;
+    if (newest) this.stopped.add(messageIdOf(newest, messages.length - 1));
+    return true;
   }
 
   private deliver(card: RunCard, runId: string, event: RunEvent): void {
@@ -418,7 +456,7 @@ export class ChatController {
 
   private renderChip(): void {
     const mode = this.config?.mode;
-    const { state, step, limit, reason } = this.loop;
+    const { state, step, limit, reason, note } = this.loop;
     const fullAuto = mode === 'full-auto' || state !== 'idle';
     if (this.invalid || !mode || (this.session !== 'active' && state === 'idle')) {
       this.chip.render(null);
@@ -431,7 +469,8 @@ export class ChatController {
             state,
             step,
             limit: Math.max(limit, this.config?.stepLimit ?? 1),
-            ...(reason && { reason })
+            ...(reason && { reason }),
+            ...(note && { note })
           }
         : null
     });
@@ -495,9 +534,10 @@ export class ChatController {
     const slept = now - this.lastPoll > WAKE_GAP_MS;
     this.lastPoll = now;
     if (slept) {
-      // Timers stopped: the computer slept. A half-done step waits, and reconnect now.
+      // Timers stopped: the computer slept. Reconnect now, let the loop catch up (or pause,
+      // with catching up off) and look at the conversation again.
       this.loop.onWake();
-      void this.sync(true);
+      void this.sync(true).then(() => this.schedule());
     }
 
     // A deleted conversation, or a 404: its session ends.
@@ -587,13 +627,15 @@ export class ChatController {
     for (const [index, element] of messages.entries()) {
       // A session that isn't active parses nothing new. Cards already shown stay put.
       if (this.session !== 'active' && !this.views.has(messageIdOf(element, index))) continue;
-      if (!isMessageComplete(element)) continue;
+      const status = replyStatus(element, document, index === messages.length - 1);
+      if (status === 'streaming') continue;
       const id = messageIdOf(element, index);
+      const interrupted = status === 'interrupted' || this.stopped.has(id);
       const { text, codeBlocks } = messageToText(element);
       const existing = this.views.get(id);
       // Same text: the same cards, even in a new element. Long conversations unmount old
       // messages and mount them again as they scroll back in; the cards move with them.
-      if (existing && existing.text === text) {
+      if (existing && existing.text === text && (existing.interruption !== null) === interrupted) {
         this.mount(existing, element, codeBlocks);
         continue;
       }
@@ -601,13 +643,14 @@ export class ChatController {
       // New, or its text changed (regenerated or edited): rebuild its cards. Cards come
       // back from their stored state, so a rebuilt view shows what was applied.
       if (existing) this.remove(existing);
-      const view = await this.build(conversationId, id, element, text);
+      const view = await this.build(conversationId, id, element, text, interrupted);
       if (this.conversationId !== conversationId || this.invalid) return;
       this.views.set(id, view);
       this.mount(view, element, codeBlocks);
       // Only a reply that wasn't on the page when it loaded is acted on, and only once.
-      if (!this.history.has(id) && !this.acted.has(`${id}:${text.length}`)) {
-        this.acted.add(`${id}:${text.length}`);
+      const actedKey = `${id}:${text.length}${interrupted ? ':cut' : ''}`;
+      if (!this.history.has(id) && !this.acted.has(actedKey)) {
+        this.acted.add(actedKey);
         void this.act(view);
       }
     }
@@ -632,17 +675,19 @@ export class ChatController {
 
   private actionsOf(view: MessageView): ReplyActions {
     const { parse } = view;
+    // A file the cut fell in isn't part of the step: the continuation asks for it again.
+    const cards = view.cards.filter((card) => card !== view.cutOff);
     return {
-      hasActions:
-        view.cards.length + parse.reads.length + view.runs.length + view.changes.length > 0,
+      hasActions: cards.length + parse.reads.length + view.runs.length + view.changes.length > 0,
       done: parse.done,
-      formatIssues: parse.issues.length > 0,
+      // A cut-off reply's broken tail isn't the chat ignoring the format.
+      formatIssues: parse.issues.length > 0 && view.interruption === null,
       markReminded: () => view.format?.markAutoSent(),
       applyEdits: async (loopId) => {
-        await autoApply(view.cards, loopId);
+        await autoApply(cards, loopId);
         await Promise.allSettled(view.changes.map((card) => card.ready()));
       },
-      edits: () => editSummary(view.cards),
+      edits: () => editSummary(cards),
       changes: () => changeSummary(view.changes),
       reads: parse.reads,
       readFiles: async () => {
@@ -650,12 +695,20 @@ export class ChatController {
         await view.read.ready();
         return view.read.contents();
       },
-      markReadsSent: () => view.read?.markSent(),
+      markReadsSent: () => {
+        view.read?.markSent();
+        view.interrupt?.markAutoSent();
+      },
       runs: view.runs.map((card) => ({
         command: card.command,
         refusal: () => card.refusal(),
-        run: (loopId) => card.run({ trigger: 'auto', loopId })
-      }))
+        run: (loopId) => card.run({ trigger: 'auto', loopId }),
+        busy: () => card.running
+      })),
+      interruption: view.interruption && {
+        ...view.interruption,
+        pageContinue: view.element === newestReply() && findContinueButton() !== null
+      }
     };
   }
 
@@ -663,10 +716,19 @@ export class ChatController {
     conversationId: string,
     messageId: string,
     element: Element,
-    text: string
+    text: string,
+    interrupted = false
   ): Promise<MessageView> {
     const parse = parseChat(text);
-    const { edits, reads, runs, deletes, renames, fixed, issues } = parse;
+    const { reads, runs, deletes, renames, fixed, issues } = parse;
+    // A reply that was cut off: where. A DONE got through, so nothing that matters was lost.
+    const interruption = interrupted && !parse.done ? interruptionOf(parse) : null;
+    // The page draws a cut-off code block as a whole one, so its file is marked partial:
+    // never applied on its own, a second click by hand.
+    const cutIndex = interruption?.cutOff && parse.unclosed === null ? parse.edits.length - 1 : -1;
+    const edits = parse.edits.map((edit, i) =>
+      i === cutIndex ? { ...edit, suspectedPartial: true } : edit
+    );
     const view: MessageView = {
       id: messageId,
       element,
@@ -678,14 +740,29 @@ export class ChatController {
       runs: [],
       changes: [],
       bar: null,
-      format: issues.length > 0 ? new FormatCard(issues) : null,
+      format: issues.length > 0 && interruption === null ? new FormatCard(issues) : null,
+      interruption,
+      interrupt: null,
+      cutOff: null,
       ready: Promise.resolve()
     };
+    if (interruption) {
+      view.interrupt = new InterruptCard(interruption, {
+        canContinue: () => view.element === newestReply() && findContinueButton() !== null,
+        continueReply: () => livePage.continueReply(),
+        insert: (text) => livePage.insert(text)
+      });
+    }
     const changes: FileChange[] = [
       ...deletes.map((path) => ({ kind: 'delete' as const, path })),
       ...renames.map((rename) => ({ kind: 'rename' as const, ...rename }))
     ];
-    if (edits.length + reads.length + runs.length + changes.length + issues.length > 0) loadFonts();
+    if (
+      edits.length + reads.length + runs.length + changes.length + issues.length > 0 ||
+      interruption
+    ) {
+      loadFonts();
+    }
 
     const keys = await Promise.all(
       edits.map(async (edit, i) =>
@@ -718,6 +795,7 @@ export class ChatController {
       this.reportRequests();
     };
     view.cards = edits.map((edit, i) => new DiffCard(keys[i] ?? '', edit, this.ask, changed));
+    view.cutOff = view.cards[cutIndex] ?? null;
     markDuplicates(view.cards);
     if (view.cards.length >= 2) view.bar = new MessageBar(view.cards);
     const loading: Promise<unknown>[] = [];
@@ -797,7 +875,8 @@ export class ChatController {
       ...view.changes.map((c) => c.host),
       view.read?.host,
       ...view.runs.map((r) => r.host),
-      view.format?.host
+      view.format?.host,
+      view.interrupt?.host
     ].filter((host): host is HTMLElement => host !== undefined);
     const inPlace = tail.every((host, i) => {
       const fromEnd = body.children[body.children.length - tail.length + i];
@@ -812,6 +891,7 @@ export class ChatController {
     view.read?.setDisabled(disabled);
     for (const run of view.runs) run.setDisabled(disabled);
     view.format?.setDisabled(disabled);
+    view.interrupt?.setDisabled(disabled);
     view.bar?.render();
   }
 
@@ -821,6 +901,7 @@ export class ChatController {
     view.read?.host.remove();
     for (const run of view.runs) run.host.remove();
     view.format?.host.remove();
+    view.interrupt?.host.remove();
     view.bar?.host.remove();
   }
 

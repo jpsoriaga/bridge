@@ -1,0 +1,2 @@
+# Check out text with LF on every OS, so Prettier and the tests see the same bytes.
+* text=auto eol=lf

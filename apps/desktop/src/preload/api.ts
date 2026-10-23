@@ -61,6 +61,11 @@ export interface DesktopState {
   allowlistSuggestions: string[];
   /** Saved entries were moved to exact matching (`*` added); Settings says so once. */
   allowlistNote: boolean;
+  /**
+   * The project's install command (`npm install`, …) to offer once in Settings, when its
+   * confirmed list doesn't have it yet. Never added without a click.
+   */
+  installNote: string | null;
   defaultGatedPatterns: readonly string[];
   gatedPatterns: string[];
   defaultEnvPatterns: readonly string[];
@@ -164,8 +169,12 @@ export interface CommandPath {
 /** Command and Full auto settings, edited only in the app. */
 export interface RunSettings {
   timeoutMs: number;
+  /** For `<manager> install` only (`isInstallCommand`); other commands use `timeoutMs`. */
+  installTimeoutMs: number;
   stepLimit: number;
   pauseOnFailure: boolean;
+  /** Full auto waits for the chat after sleep instead of pausing. */
+  catchUpAfterSleep: boolean;
 }
 
 export type OpenFolderResult =
@@ -229,6 +238,8 @@ export interface BridgeApi {
   setOnboardingDismissed(dismissed: boolean): Promise<void>;
   /** The one-time note about exact-match allowlist entries was read. */
   dismissAllowlistNote(): Promise<void>;
+  /** Answers the one-time install note: add the command to the allowlist, or not. */
+  answerInstallNote(add: boolean): Promise<void>;
   /** Asks GitHub Releases for a newer version. Never downloads or installs. */
   checkForUpdates(): Promise<UpdateCheck>;
   /** Check once at every launch (off by default). */
@@ -269,6 +280,7 @@ export const IPC = {
   clearBackups: 'bridge:clear-backups',
   setOnboardingDismissed: 'bridge:set-onboarding-dismissed',
   dismissAllowlistNote: 'bridge:dismiss-allowlist-note',
+  answerInstallNote: 'bridge:answer-install-note',
   checkForUpdates: 'bridge:check-for-updates',
   setCheckUpdatesOnStart: 'bridge:set-check-updates-on-start',
   menu: 'bridge:menu'

@@ -34,6 +34,7 @@ const config: BridgeConfig = {
   allowlist: ['pnpm test'],
   stepLimit: 10,
   pauseOnFailure: false,
+  catchUpAfterSleep: true,
   running: null,
   instance: 'launch-1'
 };

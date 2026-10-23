@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { CardStore } from './background/cards';
 import { Sessions } from './background/sessions';
@@ -11,7 +12,9 @@ import { CardRecord, type ChangeCardRecord, type DiffCardRecord } from './messag
 // contents, diffs, command output or the pairing key. And every runtime message listener
 // checks its sender and the message's shape.
 
-const SRC = new URL('.', import.meta.url).pathname;
+const SRC = fileURLToPath(new URL('.', import.meta.url));
+/** A source path relative to src/, with forward slashes on every OS. */
+const rel = (path: string) => relative(SRC, path).replace(/\\/g, '/');
 
 function sources(dir = SRC): string[] {
   return readdirSync(dir).flatMap((name) => {
@@ -60,7 +63,7 @@ describe('chrome.storage.local', () => {
   it('is written only by the card store, sessions, the port and the chip corner', () => {
     const writers = sources()
       .filter((path) => /storage\.local\.set|local\.set\(/.test(readFileSync(path, 'utf8')))
-      .map((path) => relative(SRC, path))
+      .map(rel)
       .sort();
     expect(writers).toEqual(['background/index.ts', 'background/sessions.ts']);
     const index = readFileSync(join(SRC, 'background/index.ts'), 'utf8');
@@ -73,7 +76,7 @@ describe('chrome.storage.local', () => {
 
 describe('runtime message listeners', () => {
   const all = sources().map((path) => ({
-    path: relative(SRC, path),
+    path: rel(path),
     text: readFileSync(join(path), 'utf8')
   }));
 

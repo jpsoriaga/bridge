@@ -26,7 +26,15 @@ const CALLS: Record<IpcChannel, { good: unknown[]; bad: unknown[][] }> = {
   setGatedPatterns: { good: [[]], bad: [[null]] },
   setEnvPatterns: { good: [['MY_*']], bad: [['MY_*']] },
   setRunSettings: {
-    good: [{ timeoutMs: 60_000, stepLimit: 5, pauseOnFailure: true }],
+    good: [
+      {
+        timeoutMs: 60_000,
+        installTimeoutMs: 300_000,
+        stepLimit: 5,
+        pauseOnFailure: true,
+        catchUpAfterSleep: true
+      }
+    ],
     bad: [
       [{ timeoutMs: 1 }],
       [{ timeoutMs: 1, stepLimit: 1, pauseOnFailure: false, extra: 1 }],
@@ -44,6 +52,7 @@ const CALLS: Record<IpcChannel, { good: unknown[]; bad: unknown[][] }> = {
   clearBackups: { good: [], bad: [[true]] },
   setOnboardingDismissed: { good: [true], bad: [['true'], []] },
   dismissAllowlistNote: { good: [], bad: [[1]] },
+  answerInstallNote: { good: [true], bad: [[], ['yes']] },
   checkForUpdates: { good: [], bad: [['https://example.com']] },
   setCheckUpdatesOnStart: { good: [false], bad: [['yes'], []] }
 };

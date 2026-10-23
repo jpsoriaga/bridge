@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import {
   COMMAND_REJECTION_TEXT,
   DEFAULT_STEP_LIMIT,
+  isInstallCommand,
   MAX_RUN_TIMEOUT_MS,
   MAX_STEP_LIMIT,
   MIN_RUN_TIMEOUT_MS,
@@ -88,6 +89,7 @@ function Suggestions({ suggestions }: { suggestions: string[] }) {
           </li>
         ))}
       </ul>
+      {suggestions.some((entry) => isInstallCommand(entry.split(' '))) && <InstallHint />}
       <div className="actions">
         <button
           type="button"
@@ -102,8 +104,59 @@ function Suggestions({ suggestions }: { suggestions: string[] }) {
   );
 }
 
+/** What allowing the install command means, under the suggestion and the one-time note. */
+function InstallHint() {
+  return (
+    <p className="hint">
+      The install command installs only what package.json lists, and runs those packages’ install
+      scripts. The chat can’t add a package with it, and changes to package.json always need your
+      click.
+    </p>
+  );
+}
+
+/** Once, for a list confirmed before Bridge suggested the install command. */
+function InstallNote({ command }: { command: string }) {
+  const [busy, setBusy] = useState(false);
+  const answer = (add: boolean) => {
+    setBusy(true);
+    void window.bridge.answerInstallNote(add).finally(() => setBusy(false));
+  };
+  return (
+    <div className="notice" role="status">
+      <p>
+        Add <span className="mono">{command}</span> to the allowlist? The chat can then install
+        dependencies after you approve a package.json change.
+      </p>
+      <InstallHint />
+      <div className="actions">
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={busy}
+          aria-label={`Add ${command}`}
+          onClick={() => answer(true)}
+        >
+          Add
+        </button>
+        <button type="button" className="btn" disabled={busy} onClick={() => answer(false)}>
+          Dismiss
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** The project's allowlist. Only the app edits it; the chat and the extension can't. */
-function Allowlist({ entries, note }: { entries: string[]; note: boolean }) {
+function Allowlist({
+  entries,
+  note,
+  installNote
+}: {
+  entries: string[];
+  note: boolean;
+  installNote: string | null;
+}) {
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
 
@@ -154,6 +207,7 @@ function Allowlist({ entries, note }: { entries: string[]; note: boolean }) {
           </button>
         </div>
       )}
+      {installNote !== null && <InstallNote command={installNote} />}
       {entries.length === 0 ? (
         <p className="empty">No commands allowed in this project. Add one below.</p>
       ) : (
@@ -206,16 +260,17 @@ function useRunSettings(settings: RunSettings) {
       setError(
         ok
           ? null
-          : `Use a timeout of ${MIN_RUN_TIMEOUT_MS / 1000}–${MAX_RUN_TIMEOUT_MS / 1000} seconds and a step limit of 1–${MAX_STEP_LIMIT}.`
+          : `Use timeouts of ${MIN_RUN_TIMEOUT_MS / 1000}–${MAX_RUN_TIMEOUT_MS / 1000} seconds and a step limit of 1–${MAX_STEP_LIMIT}.`
       );
     });
   };
   return { save, error };
 }
 
-/** How long one command may run before Bridge stops it. */
+/** How long one command may run before Bridge stops it, and an install command. */
 export function TimeoutField({ settings }: { settings: RunSettings }) {
   const [timeout, setTimeoutValue] = useState(String(settings.timeoutMs / 1000));
+  const [install, setInstall] = useState(String(settings.installTimeoutMs / 1000));
   const { save, error } = useRunSettings(settings);
   return (
     <div className="run-settings">
@@ -236,6 +291,27 @@ export function TimeoutField({ settings }: { settings: RunSettings }) {
         </span>
       </label>
       <p className="hint">Bridge stops a command, and anything it started, after this long.</p>
+      <label className="field">
+        <span>Install timeout</span>
+        <span className="field-input">
+          <input
+            className="input mono"
+            type="number"
+            min={MIN_RUN_TIMEOUT_MS / 1000}
+            max={MAX_RUN_TIMEOUT_MS / 1000}
+            aria-invalid={error !== null}
+            value={install}
+            onChange={(e) => setInstall(e.target.value)}
+            onBlur={() => save({ installTimeoutMs: Math.round(Number(install) * 1000) })}
+          />
+          <span className="unit">seconds</span>
+        </span>
+      </label>
+      <p className="hint">
+        For <span className="mono">npm install</span>, <span className="mono">pnpm install</span>,{' '}
+        <span className="mono">yarn install</span> and <span className="mono">bun install</span>,
+        which download packages.
+      </p>
       {error && (
         <p className="error-text" role="alert">
           {error}
@@ -282,6 +358,18 @@ export function FullAutoFields({ settings }: { settings: RunSettings }) {
       <p className="hint">
         Off by default, so failing tests go back to the chat to fix. On, Full auto stops at the
         first non-zero exit and waits for you.
+      </p>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={settings.catchUpAfterSleep}
+          onChange={(e) => save({ catchUpAfterSleep: e.target.checked })}
+        />
+        <span>Catch up automatically after sleep</span>
+      </label>
+      <p className="hint">
+        On, Full auto waits for the chat’s reply after your computer wakes and carries on. A reply
+        that was cut off gets one request to continue. Off, Full auto pauses until you click Resume.
       </p>
       {error && (
         <p className="error-text" role="alert">
@@ -399,6 +487,10 @@ export function AllowlistEditor({ state }: { state: DesktopState }) {
       suggestions={state.allowlistSuggestions}
     />
   ) : (
-    <Allowlist entries={state.allowlist} note={state.allowlistNote} />
+    <Allowlist
+      entries={state.allowlist}
+      note={state.allowlistNote}
+      installNote={state.installNote}
+    />
   );
 }

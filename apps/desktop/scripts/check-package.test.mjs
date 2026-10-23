@@ -66,7 +66,7 @@ describe('productionPackages', () => {
 
 describe('asarOf', () => {
   it('finds app.asar on each platform', () => {
-    expect(asarOf('dist/mac-arm64/Bridge.app')).toBe(
+    expect(asarOf('dist/mac-arm64/Bridge.app').replace(/\\/g, '/')).toBe(
       'dist/mac-arm64/Bridge.app/Contents/Resources/app.asar'
     );
     expect(asarOf('dist/win-unpacked/Bridge.exe').replace(/\\/g, '/')).toBe(

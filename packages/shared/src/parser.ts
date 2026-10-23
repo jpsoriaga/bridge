@@ -67,6 +67,15 @@ export interface ChatParse {
   fixed: FixedMarkers;
   /** Lines that look meant for Bridge but that it couldn't read. See `FormatIssue`. */
   issues: FormatIssue[];
+  /**
+   * Every marker Bridge read, in the reply's order and in its strict form
+   * (`@@FILE src/app.ts@@`, `@@RUN npm test@@`). A FILE marker counts once its block closed.
+   */
+  markers: string[];
+  /** A `@@FILE` marker whose code block never closed (a reply cut off mid-file), or null. */
+  unclosed: string | null;
+  /** Nothing but blank lines follows the last `@@FILE` block. */
+  endsInBlock: boolean;
 }
 
 export interface FixedMarkers {
@@ -261,6 +270,9 @@ export function parseChat(text: string): ChatParse {
   const renames: FileRename[] = [];
   const fixed: FixedMarkers = { reads: [], runs: [], deletes: [], renames: [], done: false };
   const issues: FormatIssue[] = [];
+  const markers: string[] = [];
+  let unclosed: string | null = null;
+  let lastBlockEnd = -1;
   let done = false;
   let fences = 0;
 
@@ -273,6 +285,7 @@ export function parseChat(text: string): ChatParse {
       marker?.kind === 'READ' ? [marker.path] : readsOn(line.trim().replace(BULLET, ''));
     if (requested.length > 0) {
       for (const path of requested) {
+        markers.push(`@@READ ${path}@@`);
         if (reads.includes(path)) continue;
         reads.push(path);
         if (marker?.fixed) fixed.reads.push(path);
@@ -282,6 +295,7 @@ export function parseChat(text: string): ChatParse {
     }
 
     if (marker?.kind === 'RUN') {
+      markers.push(`@@RUN ${marker.path}@@`);
       if (!runs.includes(marker.path)) {
         runs.push(marker.path);
         if (marker.fixed) fixed.runs.push(marker.path);
@@ -295,6 +309,7 @@ export function parseChat(text: string): ChatParse {
       // A strict DONE anywhere in the reply means the format was fine for it.
       fixed.done = done ? fixed.done && doneMarker.fixed : doneMarker.fixed;
       done = true;
+      markers.push('@@DONE@@');
       i += 1;
       continue;
     }
@@ -302,6 +317,7 @@ export function parseChat(text: string): ChatParse {
     const deleteMarker = matchMarker(line, DELETE, LOOSE_DELETE);
     const deleted = deleteMarker?.match[1];
     if (deleteMarker && deleted) {
+      markers.push(`@@DELETE ${deleted}@@`);
       if (!deletes.includes(deleted)) {
         deletes.push(deleted);
         if (deleteMarker.fixed) fixed.deletes.push(deleted);
@@ -313,6 +329,7 @@ export function parseChat(text: string): ChatParse {
     const renameMarker = matchMarker(line, RENAME, LOOSE_RENAME);
     const [, from, to] = renameMarker?.match ?? [];
     if (renameMarker && from && to) {
+      markers.push(`@@RENAME ${from} -> ${to}@@`);
       if (from !== to && !renames.some((r) => r.from === from && r.to === to)) {
         renames.push({ from, to });
         if (renameMarker.fixed) fixed.renames.push({ from, to });
@@ -331,8 +348,13 @@ export function parseChat(text: string): ChatParse {
         continue;
       }
       const block = readFence(lines, open);
-      if (!block) break;
+      if (!block) {
+        if (marker.kind === 'FILE') unclosed = marker.path;
+        break;
+      }
       if (marker.kind === 'FILE') {
+        markers.push(`@@FILE ${marker.path}@@`);
+        lastBlockEnd = block.close;
         const content = block.body.length > 0 ? `${block.body.join('\n')}\n` : '';
         const suspectedPartial = looksPartial(content);
         edits.push({
@@ -369,7 +391,46 @@ export function parseChat(text: string): ChatParse {
     i += 1;
   }
 
-  return { edits, reads, runs, done, deletes, renames, fixed, issues };
+  const endsInBlock =
+    lastBlockEnd >= 0 && lines.slice(lastBlockEnd + 1).every((line) => !line.trim());
+  return {
+    edits,
+    reads,
+    runs,
+    done,
+    deletes,
+    renames,
+    fixed,
+    issues,
+    markers,
+    unclosed,
+    endsInBlock
+  };
+}
+
+/** Where a reply that was cut off stopped, for the continuation prompt. */
+export interface Interruption {
+  /** The last marker that came through whole, or null if none did. */
+  marker: string | null;
+  /** The file being written when it stopped, which Bridge doesn't apply, or null. */
+  cutOff: string | null;
+}
+
+/**
+ * Where an interrupted reply stopped. A block that never closed was cut off. So was the
+ * last `@@FILE` block when nothing follows it: the page draws an unfinished code block as a
+ * whole one, so Bridge can't tell it finished. Anything after a block means it did.
+ */
+export function interruptionOf(parse: ChatParse): Interruption {
+  if (parse.unclosed !== null) {
+    return { marker: parse.markers.at(-1) ?? null, cutOff: parse.unclosed };
+  }
+  const last = parse.edits.at(-1);
+  if (parse.endsInBlock && last) {
+    const index = parse.markers.lastIndexOf(`@@FILE ${last.path}@@`);
+    return { marker: parse.markers[index - 1] ?? null, cutOff: last.path };
+  }
+  return { marker: parse.markers.at(-1) ?? null, cutOff: null };
 }
 
 /**

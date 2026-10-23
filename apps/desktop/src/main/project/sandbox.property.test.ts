@@ -1,9 +1,13 @@
 import { mkdirSync, realpathSync, symlinkSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
 import fc from 'fast-check';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Denylist, Sandbox } from './sandbox';
 import { canSymlink, tempProject } from './test-utils';
+
+// Thousands of runs per property take about a second here, but can pass 5s on a busy CI
+// runner under coverage.
+vi.setConfig({ testTimeout: 30_000 });
 
 // Any path the chat could send either resolves inside the project, off the denylist, or is
 // refused. Random paths, thousands of times, over a project with links pointing out.

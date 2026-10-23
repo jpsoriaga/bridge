@@ -30,6 +30,7 @@ const CONFIG: BridgeConfig = {
   allowlist: ['pnpm test'],
   stepLimit: 10,
   pauseOnFailure: false,
+  catchUpAfterSleep: true,
   running: null,
   instance: 'launch-1'
 };
@@ -229,8 +230,35 @@ const fakeFetch = vi.fn(async (input: string | URL | Request, init?: RequestInit
 });
 
 /** Lets microtasks and Web Crypto (which resolves off-thread) settle. */
+/**
+ * Web Crypto calls still running. They finish on another thread, so a busy machine can take
+ * any number of event-loop turns; `settle` waits for them instead of counting turns.
+ */
+let cryptoPending = 0;
+const subtle = crypto.subtle as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
+for (const name of [
+  'digest',
+  'importKey',
+  'sign',
+  'verify',
+  'generateKey',
+  'exportKey',
+  'deriveBits'
+]) {
+  const original = subtle[name]!.bind(crypto.subtle);
+  subtle[name] = (...args) => {
+    cryptoPending += 1;
+    return original(...args).finally(() => (cryptoPending -= 1));
+  };
+}
+
+/** Lets the event loop turn until no Web Crypto call is left and things have been quiet. */
 async function settle(): Promise<void> {
-  for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve));
+  let quiet = 0;
+  for (let i = 0; i < 10_000 && quiet < 20; i++) {
+    await new Promise((resolve) => setImmediate(resolve));
+    quiet = cryptoPending === 0 ? quiet + 1 : 0;
+  }
 }
 
 /** Advances fake time, then lets any attempt that started finish its handshake. */
@@ -298,6 +326,7 @@ describe('protocol version handshake', () => {
     // The app is updated: the next attempt connects.
     servers.get(DEFAULT_PORT)!.protocol = PROTOCOL_VERSION;
     await advance(1_000);
+    await settle();
     expect(connection.current).toBe('connected');
   });
 

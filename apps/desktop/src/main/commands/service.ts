@@ -1,5 +1,6 @@
 import {
   checkArgv,
+  isInstallCommand,
   commandRefusal,
   deniedArgument,
   FILE_ERROR_MESSAGES,
@@ -22,6 +23,8 @@ export interface CommandServiceOptions {
   allowlist: () => readonly string[];
   envPatterns: () => readonly string[];
   timeoutMs: () => number;
+  /** For `<manager> install`; `timeoutMs` when not given. */
+  installTimeoutMs?: () => number;
   /** The environment commands start from (with the login shell's PATH, once it's read). */
   env?: () =>
     | Readonly<Record<string, string | undefined>>
@@ -78,7 +81,10 @@ export class CommandService {
       file: resolved.file,
       cwd: root,
       env,
-      timeoutMs: this.options.timeoutMs()
+      timeoutMs:
+        isInstallCommand(params.argv) && this.options.installTimeoutMs
+          ? this.options.installTimeoutMs()
+          : this.options.timeoutMs()
     });
     return started ? { ok: true, result: started } : fail('busy');
   }

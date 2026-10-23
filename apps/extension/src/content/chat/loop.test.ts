@@ -2,17 +2,22 @@ import { describe, expect, it } from 'vitest';
 import {
   FORMAT_REMINDER,
   LOOP_MIN_SEND_GAP_MS,
+  STALL_MS,
   type BridgeConfig,
   type LoopReport,
   type RunResult
 } from '@bridge/shared';
 import {
   FullAutoLoop,
+  INTERRUPT_GRACE_MS,
   MAX_FORMAT_REMINDERS,
   SEND_CONFIRM_MS,
+  WAKE_WINDOW_MS,
   type EditHold,
   type LoopPage,
   type ReplyActions,
+  type ReplyInterruption,
+  type ReplyStatus,
   type RunOutcome
 } from './loop';
 
@@ -21,6 +26,7 @@ const CONFIG: BridgeConfig = {
   allowlist: ['pnpm test'],
   stepLimit: 10,
   pauseOnFailure: false,
+  catchUpAfterSleep: true,
   running: null,
   instance: 'launch-1'
 };
@@ -50,7 +56,16 @@ function fakePage() {
     /** The page keeps nearby turns only: sending doesn't change the count Bridge sees. */
     virtualized: false,
     banner: null as string | null,
-    insertWorks: true
+    insertWorks: true,
+    /** The newest reply: its state and how much text it has so far. */
+    status: 'complete' as ReplyStatus,
+    length: 100,
+    /** Presses of the page's stop button and its Continue generating. */
+    stops: 0,
+    continues: 0,
+    canStop: true,
+    canContinue: false,
+    online: true
   };
   const api: LoopPage = {
     conversationId: () => page.conversation,
@@ -74,7 +89,22 @@ function fakePage() {
       }
       return true;
     },
-    error: () => page.banner
+    error: () => page.banner,
+    replyStatus: () => page.status,
+    replyLength: () => page.length,
+    stopReply: () => {
+      if (!page.canStop) return false;
+      page.stops += 1;
+      page.status = 'complete';
+      return true;
+    },
+    continueReply: () => {
+      if (!page.canContinue) return false;
+      page.continues += 1;
+      page.status = 'streaming';
+      return true;
+    },
+    online: () => page.online
   };
   return { page, api };
 }
@@ -92,6 +122,8 @@ interface FakeReply {
   changes?: { applied: string[]; pending: string[] };
   /** The reply missed Bridge's format somewhere. */
   formatIssues?: boolean;
+  /** The reply was cut off. */
+  interruption?: Partial<ReplyInterruption>;
 }
 
 function reply(spec: FakeReply = {}) {
@@ -139,7 +171,10 @@ function reply(spec: FakeReply = {}) {
         const outcome = r.outcome ?? { ok: true, result: result(0) };
         return typeof outcome === 'function' ? outcome() : outcome;
       }
-    }))
+    })),
+    interruption: spec.interruption
+      ? { marker: null, cutOff: null, pageContinue: false, ...spec.interruption }
+      : null
   };
   return { actions, log, held };
 }
@@ -661,8 +696,8 @@ describe('FullAutoLoop', () => {
     expect(t.loop.state).toBe('waiting-reply');
   });
 
-  it('pauses after sleep only when it was in the middle of a step', async () => {
-    const t = setup();
+  it('with catching up off, pauses after sleep only when it was in the middle of a step', async () => {
+    const t = setup({ catchUpAfterSleep: false });
     t.loop.onReply(reply({ runs: [{ command: 'pnpm test' }] }).actions);
     await settle();
     t.loop.onWake();
@@ -834,5 +869,311 @@ describe('FullAutoLoop', () => {
       expect(t.loop.reason).toBe('step-limit');
       expect(t.page.sent).toHaveLength(1);
     });
+  });
+});
+
+describe('FullAutoLoop after sleep', () => {
+  /** A run that has sent its first follow-up and waits for the reply. */
+  async function waiting(config: Partial<BridgeConfig> = {}) {
+    const t = setup(config);
+    t.loop.onReply(reply({ runs: [{ command: 'pnpm test' }] }).actions);
+    await settle();
+    expect(t.loop.state).toBe('waiting-reply');
+    expect(t.page.sent).toHaveLength(1);
+    return t;
+  }
+
+  it('waits for a reply still streaming on wake, without pausing, then acts on it', async () => {
+    const t = await waiting();
+    t.page.status = 'streaming';
+    t.loop.onWake();
+    expect(t.loop.state).toBe('waiting-reply');
+    expect(t.loop.note).toBe('after-sleep');
+    expect(t.reports.at(-1)).toMatchObject({ state: 'waiting-reply', note: 'after-sleep' });
+    // The reply keeps growing: no stall, no pause.
+    for (let i = 0; i < 5; i += 1) {
+      t.advance(30_000);
+      t.page.length += 50;
+      t.loop.tick();
+    }
+    expect(t.loop.state).toBe('waiting-reply');
+
+    t.page.status = 'complete';
+    t.loop.onReply(reply({ edits: { applied: ['src/a.ts'] } }).actions);
+    await settle();
+    expect(t.events()).toContain('resumed: Caught up after sleep.');
+    expect(t.page.sent).toHaveLength(2);
+    expect(t.loop.state).toBe('waiting-reply');
+    expect(t.loop.note).toBeUndefined();
+  });
+
+  it('acts on a reply that finished while asleep, and the loop goes on', async () => {
+    const t = await waiting();
+    t.loop.onWake();
+    t.loop.onReply(reply({ reads: ['src/b.ts'] }).actions);
+    await settle();
+    expect(t.events()).toContain('resumed: Caught up after sleep.');
+    expect(t.page.sent).toHaveLength(2);
+    expect(t.page.sent[1]).toContain('@@CONTEXT src/b.ts@@');
+    expect(t.loop.state).toBe('waiting-reply');
+  });
+
+  it('keeps a reply that finished while the app was out of reach, and acts once it’s back', async () => {
+    const t = await waiting();
+    t.loop.onWake();
+    // The socket died in the sleep: no pause while the reply may still be coming.
+    t.setConfig(null);
+    expect(t.loop.state).toBe('waiting-reply');
+    t.loop.onReply(reply({ edits: { applied: ['src/a.ts'] } }).actions);
+    expect(t.loop.reason).toBe('disconnected');
+    expect(t.page.sent).toHaveLength(1);
+    t.setConfig(CONFIG);
+    await settle();
+    expect(t.page.sent).toHaveLength(2);
+    expect(t.loop.state).toBe('waiting-reply');
+  });
+
+  it('picks a half-done step up again when the connection comes back after waking', async () => {
+    const t = setup();
+    t.loop.onReply(
+      reply({
+        runs: [
+          { command: 'pnpm test', outcome: { ok: false, disconnected: true, message: 'gone' } }
+        ]
+      }).actions
+    );
+    t.loop.onWake();
+    await settle();
+    expect(t.loop.reason).toBe('disconnected');
+    t.setConfig(CONFIG);
+    await settle();
+    // Back without a Resume: it carried on with the step.
+    expect(t.events()).toContain('resumed: Resumed.');
+
+    // Long after waking, a lost connection pauses for Resume as before.
+    const u = await waiting();
+    u.loop.onWake();
+    u.advance(WAKE_WINDOW_MS + 1);
+    u.setConfig(null);
+    expect(u.loop.reason).toBe('disconnected');
+    u.setConfig(CONFIG);
+    expect(u.loop.state).toBe('paused');
+  });
+
+  it(`stops a reply stuck for ${STALL_MS / 1000}s once on its own, then pauses if it sticks again`, async () => {
+    const t = await waiting();
+    t.page.status = 'streaming';
+    t.loop.onWake();
+    t.advance(STALL_MS - 1_000);
+    t.loop.tick();
+    expect(t.page.stops).toBe(0);
+    t.advance(1_000);
+    t.loop.tick();
+    expect(t.page.stops).toBe(1);
+    expect(t.loop.state).toBe('waiting-reply');
+    expect(t.events()).toContain('paused: The chat seems stuck after sleep.');
+
+    // What came through is acted on, and the chat is asked to continue.
+    t.loop.onReply(
+      reply({
+        edits: { applied: ['src/one.ts'] },
+        interruption: { marker: '@@FILE src/one.ts@@', cutOff: 'src/two.ts' }
+      }).actions
+    );
+    await settle();
+    expect(t.page.sent).toHaveLength(2);
+    expect(t.page.sent[1]).toContain('Applied: src/one.ts.');
+    expect(t.page.sent[1]).toContain(
+      'Your last reply was cut off after @@FILE src/one.ts@@. Continue from there'
+    );
+
+    // The continuation sticks too: this time Full auto pauses and offers Stop & continue.
+    t.page.status = 'streaming';
+    t.page.length = 10;
+    t.loop.tick();
+    t.advance(STALL_MS);
+    t.loop.tick();
+    expect(t.loop.reason).toBe('stalled');
+    expect(t.page.stops).toBe(1);
+    t.loop.stopAndContinue();
+    expect(t.page.stops).toBe(2);
+    expect(t.loop.state).toBe('waiting-reply');
+  });
+
+  it('pauses on a stuck reply the page won’t let it stop', async () => {
+    const t = await waiting();
+    t.page.status = 'streaming';
+    t.page.canStop = false;
+    t.loop.onWake();
+    t.advance(STALL_MS);
+    t.loop.tick();
+    expect(t.loop.reason).toBe('stalled');
+  });
+
+  it('acts on only the whole blocks of a cut-off reply and asks for the rest', async () => {
+    const t = await waiting();
+    const cut = reply({
+      edits: { applied: ['src/one.ts'] },
+      interruption: { marker: '@@FILE src/one.ts@@', cutOff: 'src/two.ts' }
+    });
+    t.loop.onReply(cut.actions);
+    await settle();
+    expect(cut.log).toContain('apply:loop-1');
+    const sent = t.page.sent[1]!;
+    expect(sent).toContain('Applied: src/one.ts.');
+    expect(sent).not.toContain('src/two.ts (');
+    expect(sent).toContain('Resend src/two.ts in full if it was cut off.');
+    expect(sent).toContain("Don't repeat files that were already complete.");
+    expect(t.events()).toContain(
+      'resumed: The reply was cut off after @@FILE src/one.ts@@. Asking the chat to continue.'
+    );
+  });
+
+  it('sends the continuation with the cut-off reply’s error banner still on the page', async () => {
+    const t = await waiting();
+    t.page.status = 'interrupted';
+    t.page.banner = 'Network error';
+    t.loop.onReply(reply({ interruption: { marker: '@@RUN pnpm test@@' } }).actions);
+    await settle();
+    expect(t.page.sent).toHaveLength(2);
+    expect(t.loop.state).toBe('waiting-reply');
+  });
+
+  it('prefers the page’s own Continue generating, which keeps the same reply', async () => {
+    const t = await waiting();
+    t.page.canContinue = true;
+    t.loop.onReply(
+      reply({ interruption: { marker: '@@RUN pnpm test@@', pageContinue: true } }).actions
+    );
+    await settle();
+    expect(t.page.continues).toBe(1);
+    expect(t.page.sent).toHaveLength(1);
+    expect(t.loop.state).toBe('waiting-reply');
+  });
+
+  it('sends the continuation at most once per interruption, then pauses', async () => {
+    const t = await waiting();
+    const cut = () =>
+      reply({ interruption: { marker: '@@READ src/a.ts@@', cutOff: null } }).actions;
+    t.loop.onReply(cut());
+    await settle();
+    expect(t.page.sent).toHaveLength(2);
+    // The continuation is cut off as well: no second automatic one.
+    t.loop.onReply(cut());
+    await settle();
+    expect(t.page.sent).toHaveLength(2);
+    expect(t.loop.reason).toBe('interrupted');
+    expect(t.reports.at(-1)).toMatchObject({
+      reason: 'interrupted',
+      detail: '@@READ src/a.ts@@',
+      pageContinue: false,
+      event: { text: 'The chat’s reply was interrupted after @@READ src/a.ts@@.' }
+    });
+    // Resume sends it.
+    t.loop.resume();
+    await settle();
+    expect(t.page.sent).toHaveLength(3);
+    expect(t.page.sent[2]).toContain('Your last reply was cut off after @@READ src/a.ts@@.');
+    // A whole reply resets the count.
+    t.loop.onReply(reply({ reads: ['src/c.ts'] }).actions);
+    await settle();
+    t.loop.onReply(cut());
+    await settle();
+    expect(t.page.sent).toHaveLength(5);
+  });
+
+  it('offers Continue generating from the pause when the page has it', async () => {
+    const t = await waiting();
+    t.page.online = false;
+    t.page.canContinue = true;
+    t.loop.onReply(reply({ interruption: { marker: null, pageContinue: true } }).actions);
+    await settle();
+    // Offline: nothing is sent on its own.
+    expect(t.loop.reason).toBe('interrupted');
+    expect(t.reports.at(-1)).toMatchObject({ pageContinue: true });
+    t.page.online = true;
+    t.loop.continueReply();
+    expect(t.page.continues).toBe(1);
+    expect(t.loop.state).toBe('waiting-reply');
+  });
+
+  it('waits for a cut-off reply to arrive before pausing on its error banner', async () => {
+    const t = await waiting();
+    t.page.status = 'interrupted';
+    t.page.banner = 'Network error';
+    t.loop.tick();
+    expect(t.loop.state).toBe('waiting-reply');
+    t.advance(INTERRUPT_GRACE_MS);
+    t.loop.tick();
+    expect(t.loop.reason).toBe('page-error');
+  });
+
+  it('asks about a command sleep interrupted: Re-run runs it again', async () => {
+    const t = setup();
+    let finish: (outcome: RunOutcome) => void = () => {};
+    const slow = reply({
+      runs: [{ command: 'pnpm test', outcome: () => new Promise((r) => (finish = r)) }]
+    });
+    t.loop.onReply(slow.actions);
+    await settle();
+    t.loop.onWake();
+    expect(t.loop.reason).toBe('command-interrupted');
+    expect(t.reports.at(-1)).toMatchObject({ detail: 'pnpm test' });
+    expect(t.cancels).toBe(1);
+    // The cancelled run's result is dropped.
+    finish({ ok: true, result: result(0) });
+    await settle();
+    expect(t.page.sent).toHaveLength(0);
+    t.loop.resume();
+    await settle();
+    expect(slow.log.filter((l) => l === 'run:pnpm test')).toHaveLength(2);
+    finish({ ok: true, result: result(0, 'second') });
+    await settle();
+    expect(t.page.sent).toHaveLength(1);
+    expect(t.page.sent[0]).toContain('second');
+  });
+
+  it('asks about a command sleep interrupted: Skip tells the chat and carries on', async () => {
+    const t = setup();
+    const slow = reply({
+      runs: [
+        { command: 'pnpm test', outcome: () => new Promise<RunOutcome>(() => {}) },
+        { command: 'pnpm lint' }
+      ]
+    });
+    t.loop.onReply(slow.actions);
+    await settle();
+    t.loop.onWake();
+    t.loop.skipRun();
+    await settle();
+    expect(slow.log).toContain('run:pnpm lint');
+    expect(t.page.sent).toHaveLength(1);
+    expect(t.page.sent[0]).toContain('The command `pnpm test` was interrupted and skipped.');
+  });
+
+  it('stays paused when the conversation changed during sleep', async () => {
+    const t = await waiting();
+    t.loop.onWake();
+    t.page.conversation = 'conv-2';
+    t.loop.onNavigate('conv-2');
+    expect(t.loop.reason).toBe('navigated');
+    t.loop.resume();
+    expect(t.loop.state).toBe('paused');
+    t.loop.tick();
+    expect(t.loop.reason).toBe('navigated');
+  });
+
+  it('with catching up off, keeps the old pause-and-Resume, and never stops a reply', async () => {
+    const t = await waiting({ catchUpAfterSleep: false });
+    t.page.status = 'streaming';
+    t.loop.onWake();
+    expect(t.loop.note).toBeUndefined();
+    t.advance(STALL_MS * 2);
+    t.loop.tick();
+    expect(t.page.stops).toBe(0);
+    t.setConfig(null);
+    expect(t.loop.reason).toBe('disconnected');
+    t.setConfig({ ...CONFIG, catchUpAfterSleep: false });
+    expect(t.loop.state).toBe('paused');
   });
 });

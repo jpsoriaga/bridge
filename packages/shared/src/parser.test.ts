@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { findFormatIssues, looksPartial, parseChat, parseFileBlocks } from './parser';
+import {
+  findFormatIssues,
+  interruptionOf,
+  looksPartial,
+  parseChat,
+  parseFileBlocks
+} from './parser';
 import { buildContextMessage, buildFollowUp, buildRunMessage, FORMAT_FOOTER } from './prompts';
 
 const NONE_FIXED = { reads: [], runs: [], deletes: [], renames: [], done: false };
@@ -127,7 +133,15 @@ describe('@@READ', () => {
       deletes: [],
       renames: [],
       fixed: NONE_FIXED,
-      issues: []
+      issues: [],
+      markers: [
+        '@@READ src/app.ts@@',
+        '@@READ package.json@@',
+        '@@READ src/app.ts@@',
+        '@@READ pkg/__init__.py@@'
+      ],
+      unclosed: null,
+      endsInBlock: false
     });
   });
 
@@ -150,7 +164,10 @@ describe('@@READ', () => {
       deletes: [],
       renames: [],
       fixed: NONE_FIXED,
-      issues: []
+      issues: [],
+      markers: ['@@FILE a.ts@@', '@@READ b.ts@@'],
+      unclosed: null,
+      endsInBlock: false
     });
   });
 });
@@ -199,7 +216,10 @@ describe('@@RUN', () => {
       deletes: [],
       renames: [],
       fixed: NONE_FIXED,
-      issues: []
+      issues: [],
+      markers: ['@@FILE a.ts@@', '@@READ b.ts@@', '@@RUN pnpm test@@'],
+      unclosed: null,
+      endsInBlock: false
     });
   });
 });
@@ -215,6 +235,59 @@ describe('@@DONE', () => {
       expect(parseChat(text).done).toBe(false);
     }
   );
+});
+
+describe('cut-off replies', () => {
+  const two = `${block('src/one.ts', 'one')}\n\nAnd the second:\n\n${block('src/two.ts', 'tw')}`;
+
+  it('lists every marker in order, in its strict form', () => {
+    const text = [
+      '`@@READ a.ts@@` `@@READ b.ts@@`',
+      block('c.ts', 'c'),
+      '`@@RUN pnpm test`',
+      '`@@DELETE d.ts@@`',
+      '`@@RENAME e.ts → f.ts@@`',
+      '`@@DONE@@`'
+    ].join('\n\n');
+    expect(parseChat(text).markers).toEqual([
+      '@@READ a.ts@@',
+      '@@READ b.ts@@',
+      '@@FILE c.ts@@',
+      '@@RUN pnpm test@@',
+      '@@DELETE d.ts@@',
+      '@@RENAME e.ts -> f.ts@@',
+      '@@DONE@@'
+    ]);
+  });
+
+  it('takes the last block as cut off when nothing follows it', () => {
+    const parse = parseChat(`${two}\n\n`);
+    expect(parse.endsInBlock).toBe(true);
+    expect(interruptionOf(parse)).toEqual({ marker: '@@FILE src/one.ts@@', cutOff: 'src/two.ts' });
+  });
+
+  it('takes a block that never closed as cut off, and the one before as whole', () => {
+    const parse = parseChat(
+      `${block('src/one.ts', 'one')}\n\n\`@@FILE src/two.ts@@\`\n\`\`\`ts\nexport const`
+    );
+    expect(parse.edits.map((e) => e.path)).toEqual(['src/one.ts']);
+    expect(parse.unclosed).toBe('src/two.ts');
+    expect(interruptionOf(parse)).toEqual({ marker: '@@FILE src/one.ts@@', cutOff: 'src/two.ts' });
+  });
+
+  it('counts a block followed by anything as whole', () => {
+    const parse = parseChat(`${two}\n\nNow run \`@@RUN pnpm`);
+    expect(parse.endsInBlock).toBe(false);
+    expect(interruptionOf(parse)).toEqual({ marker: '@@FILE src/two.ts@@', cutOff: null });
+  });
+
+  it('has no marker for a reply cut off before its first one', () => {
+    expect(interruptionOf(parseChat('Sure, here is the plan:'))).toEqual({
+      marker: null,
+      cutOff: null
+    });
+    expect(interruptionOf(parseChat(block('a.ts', 'a')))).toEqual({ marker: null, cutOff: 'a.ts' });
+  });
 });
 
 describe('@@CONTEXT', () => {
@@ -234,7 +307,10 @@ describe('@@CONTEXT', () => {
       deletes: [],
       renames: [],
       fixed: NONE_FIXED,
-      issues: []
+      issues: [],
+      markers: [],
+      unclosed: null,
+      endsInBlock: false
     });
   });
 });

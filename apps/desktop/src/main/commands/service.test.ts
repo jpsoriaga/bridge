@@ -189,11 +189,52 @@ describe('CommandService', () => {
     expect(outcome).toMatchObject({ ok: false, error: { code: 'no-project' } });
   });
 
+  it('gives the install command its own timeout, and allows only the bare install', async () => {
+    // A stand-in npm on the PATH, and a runner that only records what it was asked.
+    const bin = join(t.base, 'bin');
+    mkdirSync(bin);
+    const npm = join(bin, posix ? 'npm' : 'npm.cmd');
+    writeFileSync(npm, posix ? '#!/bin/sh\n' : '@echo off\r\n');
+    chmodSync(npm, 0o755);
+    const timeouts: number[] = [];
+    const recording = {
+      current: null,
+      start: (spec: { timeoutMs: number }) => {
+        timeouts.push(spec.timeoutMs);
+        return { runId: `run-${timeouts.length}` };
+      }
+    } as unknown as CommandRunner;
+    const install = new CommandService({
+      runner: recording,
+      root: () => t.root,
+      mode: () => 'full-auto',
+      allowlist: () => ['npm install', 'npm test'],
+      envPatterns: () => [],
+      timeoutMs: () => 120_000,
+      installTimeoutMs: () => 300_000,
+      env: () => ({ PATH: bin, PATHEXT: '.EXE;.CMD' })
+    });
+    const run = async (argv: string[]) => {
+      const outcome = await install.run({ argv, trigger: 'auto' });
+      return outcome.ok ? 'ok' : outcome.error.code;
+    };
+    expect(await run(['npm', 'install'])).toBe('ok');
+    expect(await run(['npm', 'test'])).toBe('ok');
+    expect(timeouts).toEqual([300_000, 120_000]);
+    // Exact: no package can be added through the entry, nor through npm i or npx.
+    expect(await run(['npm', 'install', 'lodash'])).toBe('not-allowlisted');
+    expect(await run(['npm', 'i', 'lodash'])).toBe('not-allowlisted');
+    expect(await run(['npm', 'install', '--global'])).toBe('not-allowlisted');
+    expect(await run(['npx', 'create-thing'])).toBe('not-allowlisted');
+    expect(timeouts).toHaveLength(2);
+  });
+
   it.runIf(!posix)('refuses cmd metacharacters in arguments to a batch file', async () => {
     const bin = join(t.base, 'bin');
     mkdirSync(bin);
     writeFileSync(join(bin, 'tool.cmd'), '@echo hi\r\n');
-    allowlist = ['tool'];
+    // `*`: allowlist entries match exactly since Phase 7, and this checks arguments.
+    allowlist = ['tool *'];
     pathEnv = bin;
     for (const arg of ['a&calc', '"x"', '%PATH%', 'a|b']) {
       expect(await code(['tool', arg])).toBe('invalid-command');

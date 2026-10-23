@@ -48,9 +48,10 @@ const CONV = 'e2e00000-0000-4000-8000-000000000001';
   await win.locator('.switcher-name').filter({ hasText: 'chat-app' }).waitFor();
   const nav = (name) => win.getByRole('navigation', { name: 'Main' }).getByRole('button', { name });
 
-  // First open: the app suggests commands from package.json; nothing runs until confirmed.
+  // First open: the app suggests commands from package.json (and npm install, since 1.1.0);
+  // nothing runs until confirmed.
   await nav('Settings').click();
-  await win.getByRole('button', { name: 'Allow 3 commands' }).click();
+  await win.getByRole('button', { name: 'Allow 4 commands' }).click();
   await win.getByLabel('Add an allowed command').fill('node check.js');
   await win.getByLabel('Add an allowed command').press('Enter');
   await win.locator('.patterns .mono').filter({ hasText: 'node check.js' }).waitFor();

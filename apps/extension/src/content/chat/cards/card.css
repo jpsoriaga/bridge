@@ -536,11 +536,14 @@
   }
 }
 
-/* Format card: a reply that missed Bridge's format. Warning edge, like the page notice. */
-.card[data-kind='format'] {
+/* Format and interrupted cards: a reply that missed Bridge's format, or was cut off.
+   Warning edge, like the page notice. */
+.card[data-kind='format'],
+.card[data-kind='interrupt'] {
   border-color: color-mix(in srgb, var(--warning) 35%, transparent);
 }
-.card[data-kind='format'] .header > .icon {
+.card[data-kind='format'] .header > .icon,
+.card[data-kind='interrupt'] .header > .icon {
   color: var(--warning);
 }
 .issue {

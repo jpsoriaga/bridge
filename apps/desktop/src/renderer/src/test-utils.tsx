@@ -27,11 +27,18 @@ export function makeState(overrides: Partial<DesktopState> = {}): DesktopState {
     allowlistSuggestions: [],
     sessionResets: 0,
     allowlistNote: false,
+    installNote: null,
     defaultGatedPatterns: ['package.json'],
     gatedPatterns: [],
     defaultEnvPatterns: ['*TOKEN*'],
     envPatterns: [],
-    runSettings: { timeoutMs: 120_000, stepLimit: 10, pauseOnFailure: false },
+    runSettings: {
+      timeoutMs: 120_000,
+      installTimeoutMs: 300_000,
+      stepLimit: 10,
+      pauseOnFailure: false,
+      catchUpAfterSleep: true
+    },
     commandPath: { source: 'login-shell', path: '/usr/bin:/bin', override: '' },
     running: null,
     loop: null,
@@ -105,6 +112,7 @@ export function installBridge(initial: DesktopState = makeState(), activity: Act
     confirmPairing: vi.fn(async () => true),
     cancelPairing: vi.fn(async () => undefined),
     dismissAllowlistNote: vi.fn(async () => undefined),
+    answerInstallNote: vi.fn(async () => undefined),
     checkForUpdates: vi.fn(async () => ({
       state: 'current' as const,
       version: '1.0.0',

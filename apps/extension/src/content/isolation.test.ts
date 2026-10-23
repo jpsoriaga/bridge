@@ -50,7 +50,8 @@ const code = (source: string) =>
 
 describe('content script isolation', () => {
   const modules = contentScriptModules();
-  const names = [...modules.keys()].map((file) => relative(EXTENSION, file));
+  // Forward slashes on every OS, so the names below read the same on Windows.
+  const names = [...modules.keys()].map((file) => relative(EXTENSION, file).replace(/\\/g, '/'));
 
   it('walks the real import graph', () => {
     expect(names).toContain('src/content/chat/controller.ts');

@@ -2,11 +2,14 @@ import {
   buildFollowUp,
   FORMAT_REMINDER,
   LOOP_MIN_SEND_GAP_MS,
-  PAUSE_REASON_TEXT,
+  pauseReasonText,
+  STALL_MS,
   type BridgeConfig,
   type ContextFile,
   type FollowUpRun,
+  type Interruption,
   type LoopEvent,
+  type LoopNote,
   type LoopReport,
   type LoopState,
   type PauseReason,
@@ -22,6 +25,21 @@ export const SEND_BUTTON_WAIT_MS = 5_000;
 const SEND_POLL_MS = 250;
 /** Format reminders Full auto sends in one run before it pauses with `format-issues`. */
 export const MAX_FORMAT_REMINDERS = 2;
+/**
+ * After waking, a lost connection is the sleep's doing for this long: Full auto picks up
+ * where it was once the app is back, instead of waiting for Resume.
+ */
+export const WAKE_WINDOW_MS = 120_000;
+/** A reply cut off by an error reaches the loop through a scan; the banner waits this long. */
+export const INTERRUPT_GRACE_MS = 10_000;
+/** How long a re-run waits for the interrupted run to finish cancelling. */
+const RERUN_WAIT_MS = 5_000;
+
+/**
+ * The newest assistant reply: none yet, still streaming, finished, or cut off (an error in
+ * its turn or the page's own "Continue generating").
+ */
+export type ReplyStatus = 'none' | 'streaming' | 'complete' | 'interrupted';
 
 /** The chat page, as the loop sees it. `page.ts` has the real one; tests use a fake. */
 export interface LoopPage {
@@ -34,6 +52,15 @@ export interface LoopPage {
   submit(): boolean;
   /** A visible error or limit banner's text, or null. */
   error(): string | null;
+  replyStatus(): ReplyStatus;
+  /** Characters in the newest reply so far, to tell a stalled reply from a slow one. */
+  replyLength(): number;
+  /** Clicks the page's stop button. False if there isn't one. */
+  stopReply(): boolean;
+  /** Clicks the page's own "Continue generating". False if there isn't one. */
+  continueReply(): boolean;
+  /** The browser thinks it's online. */
+  online(): boolean;
 }
 
 /** Why an edit was left on its card for a click. */
@@ -61,7 +88,12 @@ export interface RunAction {
   /** Null if allowed; else why not, in a few words. */
   refusal(): string | null;
   run(loopId: string): Promise<RunOutcome>;
+  /** Still running (or cancelling) from before. */
+  busy?(): boolean;
 }
+
+/** Where a cut-off reply stopped, and whether the page offers its own Continue generating. */
+export type ReplyInterruption = Interruption & { pageContinue: boolean };
 
 /** What a finished reply asks for, through its cards. */
 export interface ReplyActions {
@@ -87,6 +119,11 @@ export interface ReplyActions {
   /** The READ card's files went out with the follow-up. */
   markReadsSent(): void;
   runs: readonly RunAction[];
+  /**
+   * The reply was cut off (an error, the network, or Bridge stopping a stuck reply): where.
+   * Its unfinished block is already left out of the edits above. Null for a whole reply.
+   */
+  interruption: ReplyInterruption | null;
 }
 
 export interface LoopDeps {
@@ -124,6 +161,16 @@ interface Step {
   sentFrom: number | null;
   /** The step only sends `FORMAT_REMINDER`: the reply missed the format. */
   reminder: boolean;
+  /** The reply was cut off: the follow-up asks the chat to continue. */
+  continuation?: Interruption;
+}
+
+/** After waking, the reply Full auto waits for: how long it went without new text. */
+interface StallWatch {
+  length: number;
+  changedAt: number;
+  /** Stuck replies Bridge already stopped on its own. */
+  stops: number;
 }
 
 const HOLD_REASON: Record<EditHold, PauseReason> = {
@@ -165,6 +212,27 @@ export class FullAutoLoop {
   private working: number | null = null;
   /** The app launch the config came from. A new one means the app restarted. */
   private instance: string | null = null;
+  /** `catchUpAfterSleep` from the last config seen (the connection may be gone on waking). */
+  private catchUp = true;
+  /** When the computer last woke, while catching up. */
+  private wokeAt: number | null = null;
+  /** After waking: the reply being waited for, to notice it stuck. Ends with a whole reply. */
+  private watch: StallWatch | null = null;
+  /** After sleep: waiting for the reply that was streaming (`after-sleep`), or acting on it. */
+  note: LoopNote | undefined;
+  /** What the pause is about: the last complete marker, or the interrupted command. */
+  private detail: string | undefined;
+  private pageContinue = false;
+  /** Bridge already asked the chat to continue the last cut-off reply on its own. */
+  private continued = false;
+  /** A lost connection paused the run while catching up: pick it up when the app is back. */
+  private resumeOnConnect = false;
+  /** A reply that finished while the app was unreachable after waking. */
+  private deferred: ReplyActions | null = null;
+  /** The command this step is running now. */
+  private running: string | null = null;
+  /** Since when an error banner has shown over a cut-off reply. */
+  private errorSince: number | null = null;
 
   constructor(private readonly deps: LoopDeps) {}
 
@@ -175,6 +243,12 @@ export class FullAutoLoop {
 
   /** A new assistant reply finished (one that wasn't on the page when it loaded). */
   onReply(actions: ReplyActions): void {
+    if (this.deps.config() === null && this.inWakeWindow() && this.state === 'waiting-reply') {
+      // Finished while the app was out of reach after sleep: act on it once it's back.
+      this.deferred = actions;
+      this.pause('disconnected');
+      return;
+    }
     if (this.deps.config()?.mode !== 'full-auto') return;
     // A reply after Bridge pressed send is proof the message went out, whatever the page's
     // turn count says (it may only keep nearby turns mounted).
@@ -186,12 +260,21 @@ export class FullAutoLoop {
       this.confirmSent(this.current!);
     }
     if (this.state === 'stopped' || this.state === 'acting' || this.state === 'sending') return;
+    if (this.state === 'paused' && (this.reason === 'stalled' || this.reason === 'interrupted')) {
+      // The stuck or cut-off reply came to an end after all (or the page continued it):
+      // the run goes on with it.
+      this.current = null;
+      this.reason = undefined;
+      this.state = 'waiting-reply';
+    }
     if (this.state === 'paused') {
       // The user carried on by hand. That run is over; this reply may start the next.
       this.finish('A new reply arrived while paused, so that run ended.');
     }
     if (this.state === 'idle') {
-      if ((!actions.hasActions && !actions.formatIssues) || actions.done) {
+      const cut = actions.interruption;
+      const resumable = cut !== null && (actions.hasActions || cut.marker !== null);
+      if ((!actions.hasActions && !actions.formatIssues && !resumable) || actions.done) {
         // Nothing to loop on. Still apply what a DONE reply edits.
         if (actions.done && actions.hasActions) void actions.applyEdits();
         return;
@@ -206,9 +289,20 @@ export class FullAutoLoop {
       this.reason = undefined;
       this.lastSendAt = Number.NEGATIVE_INFINITY;
       this.reminders = 0;
+      this.continued = false;
       this.emit({ kind: 'started', text: 'Full auto run started.' });
     }
     // waiting-reply (or a run that just started).
+    if (actions.interruption && !actions.done) {
+      this.onInterrupted(actions, actions.interruption);
+      return;
+    }
+    this.continued = false;
+    if (this.watch) {
+      this.watch = null;
+      this.note = 'caught-up';
+      this.emit({ kind: 'resumed', text: 'Caught up after sleep.' });
+    }
     if (actions.formatIssues && !actions.done) {
       this.onFormatIssues(actions);
       return;
@@ -240,6 +334,38 @@ export class FullAutoLoop {
     void this.advance();
   }
 
+  /**
+   * The reply was cut off. Its whole blocks are acted on as usual, and the follow-up asks the
+   * chat to continue, or the page's own Continue generating carries on the same reply. Bridge
+   * does that on its own once per interruption, and only online; past that it pauses.
+   */
+  private onInterrupted(actions: ReplyActions, cut: ReplyInterruption): void {
+    this.detail = cut.marker ?? undefined;
+    this.pageContinue = cut.pageContinue;
+    const step = { ...this.newStep(actions), continuation: cut };
+    if (this.continued || !this.deps.page.online()) {
+      this.current = step;
+      this.pause('interrupted');
+      return;
+    }
+    this.continued = true;
+    if (cut.pageContinue && this.deps.page.continueReply()) {
+      this.current = null;
+      this.set('waiting-reply', {
+        kind: 'resumed',
+        text: 'The reply was cut off. Bridge pressed the page’s Continue generating.'
+      });
+      return;
+    }
+    this.emit({
+      kind: 'resumed',
+      text: `The reply was cut off${cut.marker ? ` after ${cut.marker}` : ''}. Asking the chat to continue.`
+    });
+    this.current = step;
+    this.set('acting');
+    void this.advance();
+  }
+
   private newStep(actions: ReplyActions): Step {
     return {
       actions,
@@ -264,6 +390,7 @@ export class FullAutoLoop {
     this.generation += 1;
     this.current = null;
     this.reason = undefined;
+    this.clearCatchUp();
     this.deps.cancelRun();
     this.set('stopped', { kind: 'stopped', text: 'Stopped.' });
   }
@@ -288,13 +415,79 @@ export class FullAutoLoop {
       this.finish('The follow-up was too big to send. It’s over to you.');
       return;
     }
+    if (this.reason === 'stalled') {
+      this.stopAndContinue();
+      return;
+    }
+    // Resume after an interruption is the user asking for the continuation.
+    if (this.reason === 'interrupted') this.continued = true;
+    const rerun = this.reason === 'command-interrupted';
     this.reason = undefined;
+    if (this.deferred) {
+      const reply = this.deferred;
+      this.deferred = null;
+      this.state = 'waiting-reply';
+      this.onReply(reply);
+      return;
+    }
     if (!this.current) {
       // Paused while waiting for a reply (page error, lost connection): keep waiting.
+      if (this.watch) this.note = 'after-sleep';
       this.set('waiting-reply', { kind: 'resumed', text: 'Resumed.' });
       return;
     }
-    this.set('acting', { kind: 'resumed', text: 'Resumed.' });
+    this.set('acting', { kind: 'resumed', text: rerun ? 'Running it again.' : 'Resumed.' });
+    void this.advance();
+  }
+
+  /**
+   * After the computer slept, the reply stopped growing: press the page's stop button, then
+   * act on what came through and ask the chat to continue (`onInterrupted`). From a pause
+   * that's the user's click, so Bridge may send the continuation on its own again.
+   */
+  stopAndContinue(): void {
+    const paused = this.state === 'paused' && this.reason === 'stalled';
+    if (!paused && this.state !== 'waiting-reply') return;
+    if (paused) {
+      const config = this.deps.config();
+      if (!config || config.mode !== 'full-auto') return;
+      this.continued = false;
+    }
+    if (!this.deps.page.stopReply()) {
+      if (!paused) this.pause('stalled');
+      return;
+    }
+    if (this.watch) this.watch.changedAt = this.deps.now();
+    this.reason = undefined;
+    this.note = undefined;
+    this.set('waiting-reply', {
+      kind: 'resumed',
+      text: 'Stopped the stuck reply. Bridge acts on what came through and asks the chat to continue.'
+    });
+  }
+
+  /** The page's own Continue generating, for a cut-off reply: it keeps the same reply. */
+  continueReply(): void {
+    if (this.state !== 'paused' || this.reason !== 'interrupted') return;
+    if (this.deps.config()?.mode !== 'full-auto' || !this.deps.page.continueReply()) return;
+    this.continued = true;
+    this.current = null;
+    this.reason = undefined;
+    this.set('waiting-reply', { kind: 'resumed', text: 'Continuing the same reply.' });
+  }
+
+  /** Skip for a command sleep interrupted: the follow-up says it was skipped, and on we go. */
+  skipRun(): void {
+    const step = this.current;
+    if (this.state !== 'paused' || this.reason !== 'command-interrupted' || !step) return;
+    if (this.deps.config()?.mode !== 'full-auto') return;
+    const run = step.actions.runs[step.runIndex];
+    if (run) {
+      step.runs.push({ command: run.command, skipped: true });
+      step.runIndex += 1;
+    }
+    this.reason = undefined;
+    this.set('acting', { kind: 'resumed', text: `Skipped ${run?.command ?? 'the command'}.` });
     void this.advance();
   }
 
@@ -316,9 +509,13 @@ export class FullAutoLoop {
   /** The app's config changed, or the connection went (null). */
   onConfig(config: BridgeConfig | null): void {
     if (config === null) {
+      // Waking, the reply may still be streaming: keep waiting, and pick up any reply once
+      // the app is back (see `onReply`).
+      if (this.state === 'waiting-reply' && this.watch && this.inWakeWindow()) return;
       if (this.active && this.state !== 'paused') this.pause('disconnected');
       return;
     }
+    this.catchUp = config.catchUpAfterSleep;
     const restarted = this.instance !== null && config.instance !== this.instance;
     this.instance = config.instance;
     if (restarted && this.active) {
@@ -333,13 +530,57 @@ export class FullAutoLoop {
       this.current = null;
       this.reason = undefined;
       if (this.active) this.deps.cancelRun();
+      this.clearCatchUp();
       this.set('idle', { kind: 'stopped', text: 'Full auto was turned off.' });
+      return;
+    }
+    if (
+      this.state === 'paused' &&
+      this.reason === 'disconnected' &&
+      this.resumeOnConnect &&
+      config.mode === 'full-auto'
+    ) {
+      // Back after sleep, same launch, still Full auto: carry on without a Resume.
+      this.resumeOnConnect = false;
+      this.resume();
     }
   }
 
-  /** The computer woke from sleep. A step that was half done waits for the user. */
+  /**
+   * The computer woke from sleep. Catching up (the default), Full auto syncs with the chat:
+   * it keeps waiting for a reply that's still streaming (and notices one that's stuck), acts
+   * on one that finished, picks a half-done step up again once the app is back, and asks
+   * about a command that was running. Otherwise a step that was half done waits for Resume.
+   */
   onWake(): void {
-    if (this.state === 'acting' || this.state === 'sending') this.interrupt('slept');
+    const config = this.deps.config();
+    if (config) this.catchUp = config.catchUpAfterSleep;
+    if (!this.catchUp) {
+      if (this.state === 'acting' || this.state === 'sending') this.interrupt('slept');
+      return;
+    }
+    const now = this.deps.now();
+    this.wokeAt = now;
+    if (this.state === 'acting' && this.running !== null) {
+      this.detail = this.running;
+      this.interrupt('command-interrupted');
+      return;
+    }
+    const waiting =
+      this.state === 'waiting-reply' ||
+      (this.state === 'paused' && this.reason === 'disconnected' && !this.current);
+    if (waiting) this.watch = { length: this.deps.page.replyLength(), changedAt: now, stops: 0 };
+    if (this.state === 'paused' && this.reason === 'disconnected') {
+      this.resumeOnConnect = true;
+      if (config?.mode === 'full-auto') this.onConfig(config);
+      return;
+    }
+    if (this.state === 'waiting-reply') {
+      this.note = 'after-sleep';
+      this.report({ kind: 'resumed', text: 'Woke from sleep. Waiting for the chat to finish.' });
+    }
+    // Acting or sending: the step carries on by itself. If the connection went, its pause
+    // for that resumes once the app is back (see `pause`).
   }
 
   /** Pauses from outside the step, dropping whatever it was waiting on. */
@@ -349,9 +590,63 @@ export class FullAutoLoop {
     this.pause(reason);
   }
 
-  /** Called about once a second: an error banner while waiting for a reply pauses the loop. */
+  private inWakeWindow(): boolean {
+    return this.wokeAt !== null && this.deps.now() - this.wokeAt < WAKE_WINDOW_MS;
+  }
+
+  private clearCatchUp(): void {
+    this.watch = null;
+    this.note = undefined;
+    this.deferred = null;
+    this.resumeOnConnect = false;
+  }
+
+  /**
+   * Called about once a second while waiting for a reply. After waking, a reply that shows
+   * as streaming with no new text for `STALL_MS` is stuck. An error banner pauses the loop,
+   * unless it's over a reply that was cut off: that reply comes to `onReply` as interrupted.
+   */
   tick(): void {
-    if (this.state === 'waiting-reply' && this.deps.page.error()) this.pause('page-error');
+    if (this.state !== 'waiting-reply') {
+      this.errorSince = null;
+      return;
+    }
+    const { page } = this.deps;
+    const now = this.deps.now();
+    const status = page.replyStatus();
+    if (this.watch && status === 'streaming') {
+      const length = page.replyLength();
+      if (length !== this.watch.length) {
+        this.watch.length = length;
+        this.watch.changedAt = now;
+      } else if (now - this.watch.changedAt >= STALL_MS) {
+        this.onStall();
+      }
+      return;
+    }
+    if (!page.error()) {
+      this.errorSince = null;
+      return;
+    }
+    if (status === 'interrupted') {
+      this.errorSince ??= now;
+      if (now - this.errorSince < INTERRUPT_GRACE_MS) return;
+    }
+    this.errorSince = null;
+    this.pause('page-error');
+  }
+
+  /** The reply stopped growing after sleep: Stop & continue on its own once, then pause. */
+  private onStall(): void {
+    const watch = this.watch;
+    if (!watch) return;
+    if (watch.stops > 0) {
+      this.pause('stalled');
+      return;
+    }
+    watch.stops += 1;
+    this.emit({ kind: 'paused', text: 'The chat seems stuck after sleep.' });
+    this.stopAndContinue();
   }
 
   private async advance(): Promise<void> {
@@ -434,7 +729,19 @@ export class FullAutoLoop {
           step.runIndex += 1;
           continue;
         }
-        const outcome = await run.run(this.loopId);
+        // Running it again after sleep: wait for the interrupted run to finish cancelling.
+        const until = this.deps.now() + RERUN_WAIT_MS;
+        while (run.busy?.() && this.deps.now() < until) {
+          await this.deps.sleep(SEND_POLL_MS);
+          if (stale()) return;
+        }
+        this.running = run.command;
+        let outcome: RunOutcome;
+        try {
+          outcome = await run.run(this.loopId);
+        } finally {
+          if (this.running === run.command) this.running = null;
+        }
         if (stale()) return;
         if (!outcome.ok) {
           if (outcome.disconnected) {
@@ -472,7 +779,8 @@ export class FullAutoLoop {
         ],
         files: step.files,
         refused: step.refused,
-        runs: step.runs
+        runs: step.runs,
+        ...(step.continuation && { continuation: step.continuation })
       });
       if (!built) {
         this.pause('too-big');
@@ -493,7 +801,8 @@ export class FullAutoLoop {
         this.pause('step-limit');
         return;
       }
-      if (page.error()) {
+      // A cut-off reply's own error banner is why this step asks the chat to continue.
+      if (page.error() && !step.continuation) {
         this.pause('page-error');
         return;
       }
@@ -565,6 +874,7 @@ export class FullAutoLoop {
     else step.actions.markReadsSent();
     this.current = null;
     this.reason = undefined;
+    this.note = undefined;
     this.set('waiting-reply', {
       kind: 'sent',
       // Redactions don't stop the send; the log says how many.
@@ -591,13 +901,21 @@ export class FullAutoLoop {
 
   private pause(reason: PauseReason): void {
     this.reason = reason;
-    this.set('paused', { kind: 'paused', text: PAUSE_REASON_TEXT[reason] });
+    this.note = undefined;
+    // Lost while catching up after sleep: the sleep's doing, so it resumes on reconnect.
+    if (reason === 'disconnected' && this.catchUp && this.inWakeWindow()) {
+      this.resumeOnConnect = true;
+    }
+    if (reason !== 'interrupted' && reason !== 'command-interrupted') this.detail = undefined;
+    if (reason !== 'interrupted') this.pageContinue = false;
+    this.set('paused', { kind: 'paused', text: pauseReasonText(reason, this.detail) });
   }
 
   private finish(text: string): void {
     this.generation += 1;
     this.current = null;
     this.reason = undefined;
+    this.clearCatchUp();
     this.set('idle', { kind: 'done', text });
   }
 
@@ -619,7 +937,11 @@ export class FullAutoLoop {
       step: this.step,
       limit: Math.max(1, this.limit),
       ...(this.state === 'paused' && this.reason && { reason: this.reason }),
-      ...(event && { event })
+      ...(this.state === 'paused' && this.detail && { detail: this.detail.slice(0, 300) }),
+      ...(this.state === 'paused' &&
+        this.reason === 'interrupted' && { pageContinue: this.pageContinue }),
+      ...(this.note && { note: this.note }),
+      ...(event && { event: { ...event, text: event.text.slice(0, 300) } })
     });
   }
 }

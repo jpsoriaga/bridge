@@ -49,7 +49,7 @@ import { DEFAULT_ENV_DENYLIST, isValidEnvPattern, MAX_ENV_PATTERNS } from './com
 import { isUsablePath, loginEnvOnce, withPath, type LoginEnv } from './commands/login-env';
 import { CommandRunner } from './commands/runner';
 import { CommandService } from './commands/service';
-import { suggestAllowlist } from './commands/suggest';
+import { installNote, suggestAllowlist, suggestInstall } from './commands/suggest';
 import { guardIpc, type IpcChannel } from './ipc';
 import { lockDownContents, lockDownSession } from './lockdown';
 import { securePrivateData } from './perms';
@@ -92,6 +92,8 @@ let expiryTimer: NodeJS.Timeout | undefined;
 let lastRoot: string | null = null;
 /** Allowlist suggestions for the open project, until it has a confirmed list. */
 let suggestions: string[] = [];
+/** The open project's install command (`npm install`, …), or null without a package.json. */
+let installCommand: string | null = null;
 let running: RunningCommand | null = null;
 /** Which loop run each command belongs to, for grouping its activity row. */
 const runLoops = new Map<string, string>();
@@ -119,17 +121,38 @@ function allowlist(): string[] | null {
 }
 
 function runSettings(): RunSettings {
-  const { runTimeoutMs, stepLimit, pauseOnFailure } = settings.read();
-  return { timeoutMs: runTimeoutMs, stepLimit, pauseOnFailure };
+  const { runTimeoutMs, installTimeoutMs, stepLimit, pauseOnFailure, catchUpAfterSleep } =
+    settings.read();
+  return {
+    timeoutMs: runTimeoutMs,
+    installTimeoutMs,
+    stepLimit,
+    pauseOnFailure,
+    catchUpAfterSleep
+  };
+}
+
+/** The one-time "Add `<manager> install`?" note for the open project, or null. */
+function pendingInstallNote(): string | null {
+  const key = projects.projectKey;
+  if (key === null) return null;
+  return installNote(installCommand, allowlist(), settings.read().installNoteSeen.includes(key));
+}
+
+/** The project answered the install note, or confirmed a list that already considered it. */
+function markInstallNoteSeen(key: string): void {
+  const seen = settings.read().installNoteSeen;
+  if (!seen.includes(key)) settings.update({ installNoteSeen: [...seen, key] });
 }
 
 function bridgeConfig(): BridgeConfig {
-  const { stepLimit, pauseOnFailure } = runSettings();
+  const { stepLimit, pauseOnFailure, catchUpAfterSleep } = runSettings();
   return {
     mode: modes.mode,
     allowlist: allowlist() ?? [],
     stepLimit,
     pauseOnFailure,
+    catchUpAfterSleep,
     running: runner.current,
     instance
   };
@@ -157,6 +180,7 @@ function desktopState(): DesktopState {
     allowlist: confirmed,
     allowlistSuggestions: confirmed === null ? suggestions : [],
     allowlistNote: saved.allowlistNote,
+    installNote: pendingInstallNote(),
     defaultGatedPatterns: DEFAULT_GATED_FILES,
     gatedPatterns: saved.gatedPatterns,
     defaultEnvPatterns: DEFAULT_ENV_DENYLIST,
@@ -322,10 +346,13 @@ function projectChanged(): void {
     runner.cancelAll();
     loop = null;
     suggestions = [];
+    installCommand = null;
     if (root !== null) {
       void projects.readText('package.json').then((text) => {
         if (projects.root !== root) return;
-        suggestions = suggestAllowlist(text, (file) => existsSync(join(root, file)));
+        const has = (file: string) => existsSync(join(root, file));
+        suggestions = suggestAllowlist(text, has);
+        installCommand = suggestInstall(text, has);
         broadcast();
       });
     }
@@ -474,7 +501,10 @@ function registerIpc(): void {
       const bad = Array.isArray(entries) ? entries.find((e) => !isValidAllowlist([e])) : undefined;
       return { ok: false, invalid: typeof bad === 'string' ? bad : null };
     }
-    const allowlists = { ...settings.read().allowlists, [key]: [...new Set(entries)] };
+    const saved = settings.read();
+    // A list confirmed from the suggestions already had the install command to pick.
+    if (saved.allowlists[key] === undefined) markInstallNoteSeen(key);
+    const allowlists = { ...saved.allowlists, [key]: [...new Set(entries)] };
     settings.update({ allowlists });
     configChanged();
     return { ok: true };
@@ -500,17 +530,23 @@ function registerIpc(): void {
       !Number.isInteger(next.timeoutMs) ||
       next.timeoutMs! < MIN_RUN_TIMEOUT_MS ||
       next.timeoutMs! > MAX_RUN_TIMEOUT_MS ||
+      !Number.isInteger(next.installTimeoutMs) ||
+      next.installTimeoutMs! < MIN_RUN_TIMEOUT_MS ||
+      next.installTimeoutMs! > MAX_RUN_TIMEOUT_MS ||
       !Number.isInteger(next.stepLimit) ||
       next.stepLimit! < 1 ||
       next.stepLimit! > MAX_STEP_LIMIT ||
-      typeof next.pauseOnFailure !== 'boolean'
+      typeof next.pauseOnFailure !== 'boolean' ||
+      typeof next.catchUpAfterSleep !== 'boolean'
     ) {
       return false;
     }
     settings.update({
       runTimeoutMs: next.timeoutMs!,
+      installTimeoutMs: next.installTimeoutMs!,
       stepLimit: next.stepLimit!,
-      pauseOnFailure: next.pauseOnFailure
+      pauseOnFailure: next.pauseOnFailure,
+      catchUpAfterSleep: next.catchUpAfterSleep
     });
     configChanged();
     return true;
@@ -579,6 +615,19 @@ function registerIpc(): void {
   });
   handle(IPC.dismissAllowlistNote, () => {
     settings.update({ allowlistNote: false });
+    broadcast();
+  });
+  handle(IPC.answerInstallNote, (add) => {
+    const key = projects.projectKey;
+    const entry = pendingInstallNote();
+    if (key === null || entry === null) return;
+    markInstallNoteSeen(key);
+    if (add === true) {
+      const list = allowlist() ?? [];
+      settings.update({ allowlists: { ...settings.read().allowlists, [key]: [...list, entry] } });
+      configChanged();
+      return;
+    }
     broadcast();
   });
   handle(IPC.checkForUpdates, () => updates.check());
@@ -673,6 +722,7 @@ async function startServer(): Promise<void> {
     allowlist: () => allowlist() ?? [],
     envPatterns: () => settings.read().envPatterns,
     timeoutMs: () => settings.read().runTimeoutMs,
+    installTimeoutMs: () => settings.read().installTimeoutMs,
     // Wait for the login shell's PATH on the first run, if it's still being read.
     env: async () => {
       await loginEnv();

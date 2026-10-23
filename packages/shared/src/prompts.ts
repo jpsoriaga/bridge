@@ -1,5 +1,6 @@
-import { CHAT_OUTPUT_CHARS, formatArgv, truncateMiddle } from './commands';
+import { CHAT_OUTPUT_CHARS, formatArgv, isInstallCommand, truncateMiddle } from './commands';
 import type { TreeEntry } from './files';
+import type { Interruption } from './parser';
 import type { RunResult } from './protocol';
 import { redactSecrets } from './redact';
 
@@ -106,6 +107,26 @@ function contextMessage(
   return { text: parts.join('\n\n'), redacted };
 }
 
+/**
+ * Asks the chat to carry on after its reply was cut off: from the last marker that came
+ * through, resending the file it was writing, without repeating finished ones.
+ */
+function continuationText({ marker, cutOff }: Interruption): string {
+  return [
+    marker
+      ? `Your last reply was cut off after ${marker}.`
+      : 'Your last reply was cut off before its first Bridge marker.',
+    "Continue from there using Bridge's format.",
+    ...(cutOff ? [`Resend ${cutOff} in full if it was cut off.`] : []),
+    "Don't repeat files that were already complete."
+  ].join(' ');
+}
+
+/** The continuation on its own (Resume outside Full auto), then `FORMAT_FOOTER`. */
+export function buildContinuation(interruption: Interruption): string {
+  return withFooter(continuationText(interruption));
+}
+
 export interface TreeSummary {
   /** One line per entry, indented two spaces per level. Folders end in `/`. */
   lines: string[];
@@ -190,7 +211,11 @@ function commandRule(allowlist: readonly string[]): string {
   const star = allowlist.some((entry) => entry.endsWith('*'))
     ? ' (`*`: you may add arguments there)'
     : '';
-  return `3. Run a command: \`@@RUN npm test@@\`. Only these are allowed: ${listed}${star}`;
+  const install = allowlist.find((entry) => isInstallCommand(entry.split(' ')));
+  const after = install
+    ? `\n   After changing package.json, run the install command: \`@@RUN ${install}@@\``
+    : '';
+  return `3. Run a command: \`@@RUN npm test@@\`. Only these are allowed: ${listed}${star}${after}`;
 }
 
 /** The instructions "Start session" puts in the composer: the rules first, then the tree. */
@@ -273,7 +298,9 @@ export type FollowUpRun =
       command: string;
       result: Pick<RunResult, 'argv' | 'status' | 'exitCode' | 'signal' | 'durationMs' | 'output'>;
     }
-  | { command: string; refused: string };
+  | { command: string; refused: string }
+  /** Running when the computer slept, and the user chose Skip. */
+  | { command: string; skipped: true };
 
 export interface FollowUpInput {
   applied: readonly string[];
@@ -282,6 +309,8 @@ export interface FollowUpInput {
   files: readonly ContextFile[];
   refused: readonly RefusedFile[];
   runs: readonly FollowUpRun[];
+  /** The reply was cut off: ask the chat to carry on (`continuationText`). */
+  continuation?: Interruption;
 }
 
 /** Below this, command output in a trimmed follow-up is cut harder. */
@@ -315,10 +344,15 @@ function followUpText(
       parts.push(`Bridge didn't run \`${run.command}\`: ${run.refused}`);
       continue;
     }
+    if ('skipped' in run) {
+      parts.push(`The command \`${run.command}\` was interrupted and skipped.`);
+      continue;
+    }
     const output = formatRunResult(run.result, outputChars);
     parts.push(output.text);
     redacted += output.redacted;
   }
+  if (input.continuation) parts.push(continuationText(input.continuation));
   return { text: parts.join('\n\n'), redacted };
 }
 

@@ -1,6 +1,8 @@
 import {
+  LOOP_NOTE_TEXT,
   LOOP_STATE_LABELS,
   MODE_LABELS,
+  type LoopNote,
   type LoopState,
   type Mode,
   type PauseReason
@@ -25,7 +27,10 @@ const PAUSE_SHORT: Record<PauseReason, string> = {
   'needs-click': 'needs your click',
   'app-restarted': 'app restarted',
   slept: 'after sleep',
-  'format-issues': 'format issues'
+  'format-issues': 'format issues',
+  stalled: 'chat stuck',
+  interrupted: 'reply cut off',
+  'command-interrupted': 'command interrupted'
 };
 
 export const CHIP_CORNERS: readonly ChipCorner[] = [
@@ -38,7 +43,14 @@ export const CHIP_CORNERS: readonly ChipCorner[] = [
 export interface ChipState {
   mode: Mode;
   /** The Full auto loop, while it isn't idle (or Full auto is on). */
-  loop: { state: LoopState; step: number; limit: number; reason?: PauseReason } | null;
+  loop: {
+    state: LoopState;
+    step: number;
+    limit: number;
+    reason?: PauseReason;
+    /** After sleep: waiting for the reply it was streaming, or acting on it. */
+    note?: LoopNote;
+  } | null;
 }
 
 /** A box on the page, as `getBoundingClientRect` gives it. */
@@ -197,6 +209,7 @@ export class LoopChip {
 
   private label(loop: NonNullable<ChipState['loop']>): string {
     if (loop.state === 'paused' && loop.reason) return `Paused · ${PAUSE_SHORT[loop.reason]}`;
+    if (loop.note) return LOOP_NOTE_TEXT[loop.note];
     return loop.state === 'idle' ? 'On' : LOOP_STATE_LABELS[loop.state];
   }
 

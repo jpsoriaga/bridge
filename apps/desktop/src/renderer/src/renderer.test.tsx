@@ -219,6 +219,38 @@ describe('Settings forms', () => {
     expect(bridge.setAllowlist).toHaveBeenLastCalledWith([]);
   });
 
+  it('pre-checks the install command among the first suggestions, and explains it', () => {
+    const { bridge } = installBridge();
+    render(
+      <SettingsView
+        state={makeState({ allowlist: null, allowlistSuggestions: ['npm install', 'npm test'] })}
+      />
+    );
+    const install = screen.getByRole('checkbox', { name: 'npm install' });
+    expect((install as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByText(/installs only what package.json lists/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Allow 2 commands' }));
+    expect(bridge.setAllowlist).toHaveBeenCalledWith(['npm install', 'npm test']);
+  });
+
+  it('offers the install command once for an existing list, with Add and Dismiss', () => {
+    const { bridge } = installBridge();
+    const { rerender } = render(
+      <SettingsView state={makeState({ installNote: 'pnpm install' })} />
+    );
+    expect(screen.getByText(/to the allowlist\?/).textContent).toContain('pnpm install');
+    fireEvent.click(screen.getByRole('button', { name: 'Add pnpm install' }));
+    expect(bridge.answerInstallNote).toHaveBeenLastCalledWith(true);
+    // Answered: the app stops sending it, and the note is gone.
+    rerender(<SettingsView state={makeState({ installNote: null })} />);
+    expect(screen.queryByText(/to the allowlist\?/)).toBeNull();
+    rerender(<SettingsView state={makeState({ installNote: 'pnpm install', project: null })} />);
+    rerender(<SettingsView state={makeState({ installNote: 'pnpm install' })} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(bridge.answerInstallNote).toHaveBeenLastCalledWith(false);
+    expect(bridge.answerInstallNote).toHaveBeenCalledTimes(2);
+  });
+
   it('adds a protected pattern and says when one is invalid', async () => {
     const { bridge } = installBridge();
     bridge.setDenyPatterns.mockResolvedValueOnce(false);
@@ -230,23 +262,31 @@ describe('Settings forms', () => {
     expect(input.getAttribute('aria-invalid')).toBe('true');
   });
 
-  it('saves the timeout, step limit and pause on failure', async () => {
+  it('saves the timeouts, step limit, pause on failure and catching up after sleep', async () => {
     const { bridge } = installBridge();
     render(<SettingsView state={makeState()} />);
+    const base = {
+      timeoutMs: 120_000,
+      installTimeoutMs: 300_000,
+      stepLimit: 10,
+      pauseOnFailure: false,
+      catchUpAfterSleep: true
+    };
     const timeout = screen.getByRole('spinbutton', { name: /Command timeout/ });
     fireEvent.change(timeout, { target: { value: '30' } });
     fireEvent.blur(timeout);
-    expect(bridge.setRunSettings).toHaveBeenLastCalledWith({
-      timeoutMs: 30_000,
-      stepLimit: 10,
-      pauseOnFailure: false
-    });
+    expect(bridge.setRunSettings).toHaveBeenLastCalledWith({ ...base, timeoutMs: 30_000 });
+    const install = screen.getByRole('spinbutton', { name: /Install timeout/ });
+    expect((install as HTMLInputElement).value).toBe('300');
+    fireEvent.change(install, { target: { value: '600' } });
+    fireEvent.blur(install);
+    expect(bridge.setRunSettings).toHaveBeenLastCalledWith({ ...base, installTimeoutMs: 600_000 });
     fireEvent.click(screen.getByRole('checkbox', { name: 'Pause Full auto when a command fails' }));
-    expect(bridge.setRunSettings).toHaveBeenLastCalledWith({
-      timeoutMs: 120_000,
-      stepLimit: 10,
-      pauseOnFailure: true
-    });
+    expect(bridge.setRunSettings).toHaveBeenLastCalledWith({ ...base, pauseOnFailure: true });
+    const catchUp = screen.getByRole('checkbox', { name: 'Catch up automatically after sleep' });
+    expect((catchUp as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(catchUp);
+    expect(bridge.setRunSettings).toHaveBeenLastCalledWith({ ...base, catchUpAfterSleep: false });
     bridge.setRunSettings.mockResolvedValueOnce(false);
     const steps = screen.getByRole('spinbutton', { name: /Step limit/ });
     fireEvent.change(steps, { target: { value: '99' } });

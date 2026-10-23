@@ -2,13 +2,17 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { parseChat } from '@bridge/shared';
+import { interruptionOf, parseChat } from '@bridge/shared';
 import { messageToText } from './adapter';
 import {
   assistantMessages,
   checkLayout,
+  findContinueButton,
+  findStopButton,
   isMessageComplete,
   messageIdOf,
+  replyError,
+  replyStatus,
   userMessageCount
 } from './selectors';
 
@@ -181,5 +185,73 @@ describe('the newer layout (DIL renderer)', () => {
     load('dil-renderer.html');
     expect(userMessageCount()).toBe(1);
     expect(checkLayout()).toBe('ok');
+  });
+});
+
+describe('replies cut off, and the buttons to catch up after sleep', () => {
+  it('sees a reply with a network error in its turn as cut off, and its last block as unfinished', () => {
+    load('interrupted.html');
+    const [message] = assistantMessages(document);
+    if (!message) throw new Error('no message');
+    expect(replyError(message)).toMatch(/^Network error/);
+    expect(replyStatus(message, document, true)).toBe('interrupted');
+    const parse = parseOnly();
+    expect(parse.edits.map((e) => e.path)).toEqual(['src/one.ts', 'src/two.ts']);
+    expect(interruptionOf(parse)).toEqual({ marker: '@@FILE src/one.ts@@', cutOff: 'src/two.ts' });
+  });
+
+  it('ignores error words inside the reply’s own text', () => {
+    load('single-edit.html');
+    const [message] = assistantMessages(document);
+    if (!message) throw new Error('no message');
+    message.querySelector('p')!.textContent = 'Something went wrong in your code: a network error.';
+    expect(replyError(message)).toBeNull();
+    expect(replyStatus(message, document, true)).toBe('complete');
+  });
+
+  it('tells streaming from finished, and finds the stop button', () => {
+    load('streaming.html');
+    const [message] = assistantMessages(document);
+    if (!message) throw new Error('no message');
+    expect(replyStatus(message, document, true)).toBe('streaming');
+    expect(findStopButton()?.getAttribute('data-testid')).toBe('stop-button');
+    // The newer layout turns the composer's submit button into Stop.
+    document.querySelector('[data-testid="stop-button"]')!.remove();
+    const submit = document.createElement('button');
+    submit.id = 'composer-submit-button';
+    submit.setAttribute('aria-label', 'Stop streaming');
+    document.querySelector('form')!.append(submit);
+    expect(findStopButton()).toBe(submit);
+  });
+
+  it('finds the page’s Continue generating by test id or by its text, and calls the reply cut off', () => {
+    load('single-edit.html');
+    const [message] = assistantMessages(document);
+    if (!message) throw new Error('no message');
+    expect(findContinueButton()).toBeNull();
+    const button = document.createElement('button');
+    button.textContent = ' Continue generating ';
+    document.querySelector('form')!.append(button);
+    expect(findContinueButton()).toBe(button);
+    expect(replyStatus(message, document, true)).toBe('interrupted');
+    // Only the newest reply is cut off by it.
+    expect(replyStatus(message, document, false)).toBe('complete');
+    button.textContent = 'Continue';
+    expect(findContinueButton()).toBeNull();
+    button.setAttribute('data-testid', 'continue-generating-button');
+    expect(findContinueButton()).toBe(button);
+  });
+
+  it('calls a page-level network banner a cut, but not a usage limit', () => {
+    load('single-edit.html');
+    const [message] = assistantMessages(document);
+    if (!message) throw new Error('no message');
+    const banner = document.createElement('div');
+    banner.setAttribute('role', 'alert');
+    banner.textContent = 'Network error';
+    document.body.append(banner);
+    expect(replyStatus(message, document, true)).toBe('interrupted');
+    banner.textContent = 'You’ve reached your usage limit.';
+    expect(replyStatus(message, document, true)).toBe('complete');
   });
 });

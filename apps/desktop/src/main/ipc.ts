@@ -30,8 +30,10 @@ export const IPC_ARGS: Readonly<Record<IpcChannel, z.ZodType<unknown[]>>> = {
   setRunSettings: z.tuple([
     z.strictObject({
       timeoutMs: z.number(),
+      installTimeoutMs: z.number(),
       stepLimit: z.number(),
-      pauseOnFailure: z.boolean()
+      pauseOnFailure: z.boolean(),
+      catchUpAfterSleep: z.boolean()
     })
   ]),
   setPathOverride: z.tuple([text(32_768)]),
@@ -45,6 +47,7 @@ export const IPC_ARGS: Readonly<Record<IpcChannel, z.ZodType<unknown[]>>> = {
   clearBackups: none,
   setOnboardingDismissed: z.tuple([z.boolean()]),
   dismissAllowlistNote: none,
+  answerInstallNote: z.tuple([z.boolean()]),
   checkForUpdates: none,
   setCheckUpdatesOnStart: z.tuple([z.boolean()])
 };
