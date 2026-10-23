@@ -340,7 +340,7 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [x] `.DS_Store`, `Thumbs.db`, `desktop.ini` hidden from `tree` and `list` through the default ignore list (tests)
 - [x] `e2e/format.cjs` (in CI); `chat.cjs` and `phase6.cjs` follow the new prompt
 - [x] Version 1.0.1 (`pnpm version:set 1.0.1`), CHANGELOG, PLAN.md "1.0.1 decisions", DESIGN.md "Format card"
-- [ ] Manual run on the real chatgpt.com (e2e README "1.0.1 on the real chatgpt.com")
+- [x] Manual run on the real chatgpt.com (e2e README "1.0.1 on the real chatgpt.com")
 - [x] Follow-up: blank marker values (`@@RUN   @@`, `` `@@RUN @` ``) read nothing (tests; the `parseChat` property test had caught it)
 
 ## 1.1.0: Install and catch up after sleep
