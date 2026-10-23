@@ -7,7 +7,8 @@ name: Release
 #
 # Run by hand (Actions → Release → Run workflow), it's a dry run for the version in the
 # packages: the same checks, builds, verification and smoke tests, with every file uploaded
-# as an artifact, but it never creates a release. RELEASE.md runs it before tagging.
+# as an artifact, but it never creates a release. Its summary shows the would-be notes and
+# INSTALL.md (scripts/install-notes.mjs). RELEASE.md runs it before tagging.
 on:
   push:
     tags: ['v*']
@@ -193,12 +194,20 @@ jobs:
         with:
           path: assets
           merge-multiple: true
+      # Bridge-X.Y.Z-INSTALL.md, from scripts/release/install-notes.md. Fails if the
+      # instructions name a file the builds didn't make.
+      - name: Install instructions
+        run: |
+          node scripts/install-notes.mjs check "$GITHUB_REF_NAME" assets
+          node scripts/install-notes.mjs write "$GITHUB_REF_NAME" assets
       - name: Checksums
         working-directory: assets
         run: sha256sum -- * > SHA256SUMS.txt && cat SHA256SUMS.txt
-      - name: Release notes from CHANGELOG.md
+      # "How to install" first, then the version's CHANGELOG.md section.
+      - name: Release notes
         run: |
-          node scripts/release-flags.mjs --intro "$GITHUB_REF_NAME" > notes.md
+          node scripts/install-notes.mjs notes "$GITHUB_REF_NAME" > notes.md
+          printf '\n## What’s new\n\n' >> notes.md
           node scripts/changelog.mjs "$GITHUB_REF_NAME" >> notes.md
       - name: Create the draft release
         env:
@@ -236,8 +245,11 @@ jobs:
           merge-multiple: true
       - name: What the release would hold
         run: |
+          node scripts/install-notes.mjs check "$TAG" assets
+          install=$(node scripts/install-notes.mjs write "$TAG" assets)
           (cd assets && sha256sum -- * > SHA256SUMS.txt)
-          node scripts/release-flags.mjs --intro "$TAG" > notes.md
+          node scripts/install-notes.mjs notes "$TAG" > notes.md
+          printf '\n## What’s new\n\n' >> notes.md
           node scripts/changelog.mjs "$TAG" >> notes.md
           flags=$(node scripts/release-flags.mjs "$TAG" | paste -sd ' ' -)
           {
@@ -249,7 +261,17 @@ jobs:
             cat assets/SHA256SUMS.txt
             echo '```'
             echo
+            echo '---'
+            echo
             cat notes.md
+            echo
+            echo '---'
+            echo
+            echo "<details><summary>$(basename "$install")</summary>"
+            echo
+            cat "$install"
+            echo
+            echo '</details>'
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -257,4 +279,5 @@ jobs:
           if-no-files-found: error
           path: |
             notes.md
+            assets/*-INSTALL.md
             assets/SHA256SUMS.txt

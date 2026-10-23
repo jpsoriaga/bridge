@@ -12,13 +12,6 @@ Everything runs on your computer. The Bridge desktop app does the reading and wr
 
 > Bridge is not affiliated with or endorsed by OpenAI.
 
-| Light                                                                                                   | Dark                                                                          |
-| ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| ![The Bridge app's Session page, light](docs/screenshots/app-session-light.png)                         | ![The Bridge app's Session page, dark](docs/screenshots/app-session-dark.png) |
-| ![Cards in the chat: a diff, a delete, a rename and a command, light](docs/screenshots/cards-light.png) | ![The same cards, dark](docs/screenshots/cards-dark.png)                      |
-
-More in [`docs/screenshots/`](docs/screenshots): the Activity and Settings pages and the side panel, in both themes.
-
 **Contents:** [Why Bridge exists](#why-bridge-exists) · [How it works](#how-it-works) · [Install the app](#install-the-app) · [Install the extension](#install-the-extension) · [Pair](#pair-the-extension) · [Open a project](#open-a-project) · [Use it in the chat](#use-it-in-the-chat) · [Modes](#modes) · [Commands and the allowlist](#commands-and-the-allowlist) · [Full auto](#full-auto) · [Updates](#updates) · [Troubleshooting](#troubleshooting) · [Where data lives](#where-data-lives) · [Uninstall](#uninstall) · [Development](#development) · [FAQ](docs/FAQ.md) · [Security](SECURITY.md) · [Privacy](PRIVACY.md)
 
 ## Why Bridge exists

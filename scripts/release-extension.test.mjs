@@ -1,9 +1,14 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { crc32, inflateRawSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
-import { manifestFields, releaseBuilds, releaseProblems } from './release-extension.mjs';
+import {
+  extensionReadme,
+  manifestFields,
+  releaseBuilds,
+  releaseProblems
+} from './release-extension.mjs';
 import { listFiles, zip, zipDir } from './zip.mjs';
 
 /** Reads a zip back through its central directory: name → contents. */
@@ -29,7 +34,9 @@ function unzip(buffer) {
   return out;
 }
 
+/** A build folder holding `files`, plus the README.txt every release zip carries. */
 function tree(files) {
+  files = { 'README.txt': 'Bridge', ...files };
   const dir = mkdtempSync(join(tmpdir(), 'bridge-zip-'));
   for (const [name, text] of Object.entries(files)) {
     mkdirSync(dirname(join(dir, name)), { recursive: true });
@@ -41,10 +48,11 @@ function tree(files) {
 describe('zip', () => {
   it('round-trips files at the root, sorted, with the same bytes every time', () => {
     const dir = tree({ 'manifest.json': '{}', 'assets/a.js': 'x'.repeat(5000), 'b é.txt': 'é' });
-    expect(listFiles(dir)).toEqual(['assets/a.js', 'b é.txt', 'manifest.json']);
+    expect(listFiles(dir)).toEqual(['README.txt', 'assets/a.js', 'b é.txt', 'manifest.json']);
     const first = zipDir(dir);
     expect(zipDir(dir).equals(first)).toBe(true);
     expect(unzip(first)).toEqual({
+      'README.txt': 'Bridge',
       'assets/a.js': 'x'.repeat(5000),
       'b é.txt': 'é',
       'manifest.json': '{}'
@@ -82,6 +90,32 @@ describe('releaseProblems', () => {
       'assets/panel.js: dev-only code ((dev only))',
       'assets/worker.js: built for the e2e port range'
     ]);
+  });
+});
+
+describe('README.txt', () => {
+  it('says what the extension is, how to load it and where the release is', () => {
+    for (const version of ['1.2.0', '1.2.0-beta.3']) {
+      const text = extensionReadme(version);
+      expect(text).not.toMatch(/[{}]/);
+      expect(text).toContain(`Version ${version}.`);
+      expect(text).toContain('Load unpacked');
+      expect(text).toContain('Bridge desktop app');
+      expect(text).toContain(`https://github.com/jpsoriaga/bridge/releases/tag/v${version}`);
+    }
+  });
+
+  it('sits at the zip root next to manifest.json, and a build without it is refused', () => {
+    const manifest = JSON.stringify({ manifest_version: 3, name: 'Bridge', version: '1.2.0' });
+    const dir = tree({ 'manifest.json': manifest });
+    const files = unzip(zipDir(dir));
+    expect(Object.keys(files)).toEqual(['README.txt', 'manifest.json']);
+    expect(releaseProblems(dir, '1.2.0')).toEqual([]);
+
+    rmSync(join(dir, 'README.txt'));
+    expect(releaseProblems(dir, '1.2.0')).toEqual(['no README.txt at the root']);
+    const nested = tree({ 'extension/manifest.json': manifest });
+    expect(releaseProblems(nested, '1.2.0')).toEqual(['no manifest.json at the root']);
   });
 });
 

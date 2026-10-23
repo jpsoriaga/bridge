@@ -4,6 +4,14 @@ All notable changes to Bridge are listed here. The format follows [Keep a Change
 
 ## [Unreleased]
 
+### Added
+
+- **Install steps on every release page.** Release notes now open with **How to install**: which file to download for each computer, how to open the unsigned app, how to add the extension and pair, and which files to ignore. Each release also has a `Bridge-<version>-INSTALL.md` with troubleshooting and uninstall steps, and the extension zip has a `README.txt` with the Load unpacked steps.
+
+### Removed
+
+- **Screenshots in the README.** They're still in `docs/screenshots/`.
+
 ## [1.2.0-beta.3] - 2026-10-23
 
 The release build for 1.2.0-beta.2 failed on the Intel Mac smoke test, so this beta replaces it. The app and extension are the same as in 1.2.0-beta.2.

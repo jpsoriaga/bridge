@@ -9,7 +9,8 @@
 // Both are production builds (minified, no source maps, no dev-only code). The store zip
 // has no manifest `key` (BRIDGE_RELEASE=1; the store assigns the ID and refuses a key). The
 // unpacked one keeps it, so it gets the fixed ID the app accepts. Each zip holds only the
-// build's contents, at its root. Refuses to finish if any of that isn't true.
+// build's contents and a README.txt (scripts/release/extension-readme.txt), at its root.
+// Refuses to finish if any of that isn't true.
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -19,6 +20,7 @@ import { listFiles, zipDir } from './zip.mjs';
 
 export const OUT_DIR = join(ROOT, 'release', 'extension');
 export const UNPACKED_DIR = join(ROOT, 'release', 'extension-unpacked');
+export const README_TEMPLATE = join(ROOT, 'scripts', 'release', 'extension-readme.txt');
 
 /** Text only the dev build's side panel shows (the file tester and page diagnostics). */
 export const DEV_ONLY = ['(dev only)'];
@@ -41,10 +43,22 @@ export function manifestFields(version) {
   return isBeta(version) ? { version: numbers, version_name: version } : { version: numbers };
 }
 
+/**
+ * The README.txt for the zips' root: what the extension is and how to load it. Chrome skips
+ * files the manifest doesn't use, so it changes nothing for Load unpacked or the store.
+ */
+export function extensionReadme(version, template = readFileSync(README_TEMPLATE, 'utf8')) {
+  return template.replace(/\{(version|tag)\}/g, (_, name) =>
+    name === 'tag' ? `v${version}` : version
+  );
+}
+
 /** What's wrong with a release build in `dir` (an empty list when it's fit to upload). */
 export function releaseProblems(dir, version, { key = false } = {}) {
   const problems = [];
   const files = listFiles(dir);
+  if (!files.includes('manifest.json')) return ['no manifest.json at the root'];
+  if (!files.includes('README.txt')) problems.push('no README.txt at the root');
   const manifest = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8'));
   if (!key && 'key' in manifest) problems.push('manifest.json still has a key');
   if (key && !('key' in manifest)) problems.push('manifest.json has no key');
@@ -104,6 +118,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     );
     if (build.status !== 0) process.exit(build.status ?? 1);
 
+    writeFileSync(join(dir, 'README.txt'), extensionReadme(version));
     const problems = releaseProblems(dir, version, { key });
     if (problems.length > 0) {
       for (const problem of problems) console.error(`✗ ${zip}: ${problem}`);

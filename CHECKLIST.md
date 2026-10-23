@@ -417,6 +417,16 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [x] Dry run on GitHub green without the x64 smoke step (run 39947867132; `release` skipped, `dry-run` passed)
 - [ ] Release workflow run for `v1.2.0-beta.3` on GitHub: pre-release, not Latest, unpacked zip only
 
+## Install instructions in every release
+
+- [x] `scripts/release/install-notes.md`: one template for the notes' **How to install** (file table, which Mac, unsigned-app steps, Load unpacked, pairing, files to ignore, links) and `Bridge-<version>-INSTALL.md` (plus troubleshooting and uninstall); `beta` / `stable` / `full` blocks
+- [x] `scripts/install-notes.mjs`: file names from electron-builder.yml's `artifactName` and `releaseBuilds()`; `notes`, `write`, `check` (tests: beta and stable filled, nothing left over, names match the workflow's globs and BETA.md)
+- [x] `release.yml`: notes start with How to install, then the CHANGELOG under What's new; INSTALL.md attached and in `SHA256SUMS.txt`; the release fails if the notes name a missing file; dry run shows notes and INSTALL.md in the summary and uploads both (fake `gh` tests)
+- [x] `README.txt` at the root of both extension zips; `releaseProblems` requires it and `manifest.json` at the root (tests); the beta.3 zip loads unpacked in Chrome for Testing with no warnings or errors
+- [x] RELEASE.md "Release notes", CHANGELOG; README screenshots removed
+- [ ] Dry run on GitHub shows the notes and INSTALL.md in its summary
+- [ ] How to install pasted into the `v1.2.0-beta.3` release notes by hand
+
 ## Landing page (`apps/site`)
 
 - [x] `@bridge/site`: Vite 7, React 18, TypeScript, Tailwind v4 (`@tailwindcss/vite`) with the tokens mapped into its theme; self-hosted Geist; private, outside `version:set`, the release workflow and the root build

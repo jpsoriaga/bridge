@@ -8,19 +8,41 @@ A release is one version number for the desktop app, the extension and `@bridge/
 2. Checks every package has the tag's version (`pnpm version:check vX.Y.Z`) and that `CHANGELOG.md` has a section for it.
 3. Builds on `macos-latest` (dmg and zip, arm64 and x64), `windows-latest` (NSIS installer, x64) and `ubuntu-latest` (AppImage, x64). Signing secrets reach only the packaging step for their platform.
 4. For each app: `verify:fuses`, `check:package` (fuses again, and app.asar holds only the built app and its production dependencies), and a smoke test (launch with a fresh temp userData, window loads, `/health` answers on `127.0.0.1`, quit, wait until every process is gone and the port is free). The window gets 90s to load; each app's run stops after 3 minutes at most. The **x64 mac build is not smoke-tested** in CI: the runner is arm64, and under Rosetta its window never loaded there (not even in 120s, on its own). It still gets `verify:fuses` and `check:package`. Smoke-test it yourself on an Intel Mac, or under Rosetta on Apple silicon (`smoke.mjs` gives it 120s there), before publishing.
-5. Builds the extension zips (`pnpm build:extension:release`): `bridge-extension-X.Y.Z.zip` for the store and `bridge-extension-X.Y.Z-unpacked.zip` for Load unpacked.
-6. Creates a draft release named "Bridge X.Y.Z" with every installer, `latest*.yml` (for the app's update check), both extension zips, `SHA256SUMS.txt`, and that version's `CHANGELOG.md` section as the notes.
+5. Builds the extension zips (`pnpm build:extension:release`): `bridge-extension-X.Y.Z.zip` for the store and `bridge-extension-X.Y.Z-unpacked.zip` for Load unpacked. Each has a short `README.txt` at its root, next to `manifest.json`.
+6. Creates a draft release named "Bridge X.Y.Z" with every installer, `latest*.yml` (for the app's update check), both extension zips, `Bridge-X.Y.Z-INSTALL.md`, `SHA256SUMS.txt` (which lists every other file, INSTALL.md included), and the notes: **How to install**, then that version's `CHANGELOG.md` section under **What's new** (see [Release notes](#release-notes)).
 
 ## Dry run
 
-Run by hand, the workflow is a dry run for the version in the packages: steps 1 to 5 exactly as above (the version and changelog checks use `v` + that version), every installer and zip uploaded as a run artifact, and instead of step 6 a summary of what the draft would hold (files and checksums, `gh` flags, notes). It never creates a release, and its last job has no write permission. Run it after pushing the version bump and before tagging:
+Run by hand, the workflow is a dry run for the version in the packages: steps 1 to 5 exactly as above (the version and changelog checks use `v` + that version), every installer and zip uploaded as a run artifact, and instead of step 6 a summary of what the draft would hold (files and checksums, `gh` flags, the notes, and INSTALL.md folded underneath). The notes, INSTALL.md and `SHA256SUMS.txt` are also uploaded as the `dry-run-notes` artifact. It never creates a release, and its last job has no write permission. Run it after pushing the version bump and before tagging:
 
 ```bash
 gh workflow run release.yml --ref main
 gh run watch "$(gh run list --workflow release.yml --limit 1 --json databaseId -q '.[0].databaseId')"
 ```
 
-(Or Actions → Release → **Run workflow** on `main`.) Green means the tag push will build the same thing; red costs nothing to fix, since no tag exists yet. The run's summary page shows the would-be notes, and its artifacts hold the installers if you want to try one first.
+(Or Actions → Release → **Run workflow** on `main`.) Green means the tag push will build the same thing; red costs nothing to fix, since no tag exists yet. Read the would-be notes and INSTALL.md on the run's summary page before tagging; its artifacts hold the installers if you want to try one first.
+
+## Release notes
+
+Every release's notes, betas and stable alike, start with a **How to install** section for people who land on the release page: which file to download for their computer, how to open an unsigned app, how to load the extension and pair, and which files to ignore. The same instructions, plus troubleshooting and uninstall steps, are attached as `Bridge-X.Y.Z-INSTALL.md`. Below the install section comes the version's `CHANGELOG.md` section, under **What's new**.
+
+Both come from one template, [`scripts/release/install-notes.md`](scripts/release/install-notes.md), filled in at release time by [`scripts/install-notes.mjs`](scripts/install-notes.mjs):
+
+```bash
+node scripts/install-notes.mjs notes v1.2.0-beta.3          # the notes' "How to install"
+node scripts/install-notes.mjs write v1.2.0-beta.3 out/     # out/Bridge-1.2.0-beta.3-INSTALL.md
+node scripts/install-notes.mjs check v1.2.0-beta.3 assets/  # every file it names is there
+```
+
+To change the instructions, edit the template and check the output with the first two commands:
+
+- **Placeholders** in curly braces (`{version}`, `{tag}`, `{macArm64}`, `{win}`, `{extension}`…) become this version's values. The file names come from where the builds get them: the installers from the `artifactName` templates in `apps/desktop/electron-builder.yml`, the extension zips from `releaseBuilds()` in `scripts/release-extension.mjs`. Rename a file there and the notes follow. Don't use curly braces for anything else: the tests fail on one left over.
+- **Blocks** between `<!-- beta -->` and `<!-- /beta -->` appear only in betas, `<!-- stable -->` only in stable releases, and `<!-- full -->` only in INSTALL.md.
+- The release job runs `check` before it creates anything, so a release fails rather than naming a file it doesn't have.
+
+The extension zips' `README.txt` comes from [`scripts/release/extension-readme.txt`](scripts/release/extension-readme.txt) (placeholders `{version}` and `{tag}`). Chrome ignores files the manifest doesn't use, so it changes nothing for Load unpacked or the store upload.
+
+To fix the install section of a release that's already out, print it with `node scripts/install-notes.mjs notes vX.Y.Z` and paste it over the top of the release's notes on GitHub.
 
 ## Cutting a release
 
@@ -54,7 +76,7 @@ git push origin v1.1.0
 Then:
 
 7. **Watch the run** under Actions → Release. A red check means no release was created; fix, delete the tag (`git push --delete origin v1.1.0 && git tag -d v1.1.0`), and tag again.
-8. **Check the draft** under Releases: every file is there (two dmgs, two mac zips, the Windows setup exe, the AppImage, `latest.yml`, `latest-mac.yml`, `latest-linux.yml`, both extension zips, `SHA256SUMS.txt`), the notes read right, and the logs say whether each build was signed. Download one installer and try it, and check the x64 mac build launches (CI doesn't smoke-test it).
+8. **Check the draft** under Releases: every file is there (two dmgs, two mac zips, the Windows setup exe, the AppImage, `latest.yml`, `latest-mac.yml`, `latest-linux.yml`, both extension zips, `Bridge-X.Y.Z-INSTALL.md`, `SHA256SUMS.txt`), the notes start with **How to install** and read right, and the logs say whether each build was signed. Download one installer and try it, and check the x64 mac build launches (CI doesn't smoke-test it).
 9. **Publish** the draft. From then on, apps with "Check for updates" see the new version and link to it.
 10. **Upload the extension** to the Chrome Web Store (below).
 
@@ -64,7 +86,7 @@ A beta is a version like `1.2.0-beta.1`, for testers. The same tag-driven workfl
 
 - The draft is a **pre-release** and is **never marked Latest** (`--prerelease --latest=false`), so the README's "latest release" links and the Stable update channel never land on it.
 - Only the **Load unpacked** extension zip (`bridge-extension-X.Y.Z-beta.N-unpacked.zip`), which keeps the fixed ID the app accepts. No store zip, and nothing goes to the Chrome Web Store.
-- The notes start with a line pointing testers at [BETA.md](BETA.md).
+- The notes' **How to install** opens with a line saying it's a beta, and links testers to [BETA.md](BETA.md) instead of the README.
 
 Apps report the full version (`1.2.0-beta.1` in Settings → About). The extension's manifest gets `version` `1.2.0` (Chrome takes numbers only) and `version_name` `1.2.0-beta.1`, which Chrome and the side panel show. Beta builds start on the **Beta** update channel, so on Windows and Linux **Check for updates** finds newer betas and the final release; unsigned macOS builds don't check at all.
 
@@ -101,7 +123,7 @@ git push origin v1.2.0-beta.1
 Then:
 
 7. **Watch the run** under Actions → Release (as for a release; to redo it, delete the tag and tag again).
-8. **Check the draft** under Releases: it says **Pre-release**, the notes start with "Beta for testers", and the files are the two dmgs, two mac zips, the Windows setup exe, the AppImage, `latest.yml`, `latest-mac.yml`, `latest-linux.yml`, `bridge-extension-1.2.0-beta.1-unpacked.zip` (and no store zip) and `SHA256SUMS.txt`. Download an installer and the extension zip and go through BETA.md's install steps once yourself.
+8. **Check the draft** under Releases: it says **Pre-release**, the notes start with **How to install** and its "This is a beta" line, and the files are the two dmgs, two mac zips, the Windows setup exe, the AppImage, `latest.yml`, `latest-mac.yml`, `latest-linux.yml`, `bridge-extension-1.2.0-beta.1-unpacked.zip` (and no store zip), `Bridge-1.2.0-beta.1-INSTALL.md` and `SHA256SUMS.txt`. Download an installer and the extension zip and go through BETA.md's install steps once yourself.
 9. **Publish** the draft, keeping **Set as a pre-release** ticked and **Set as the latest release** unticked.
 10. **Share** with testers: the release page link (`https://github.com/jpsoriaga/bridge/releases/tag/v1.2.0-beta.1`) and BETA.md (`https://github.com/jpsoriaga/bridge/blob/v1.2.0-beta.1/BETA.md`). Say which file to download for their computer, that the warnings on first open are expected, and that diagnostics can come back to you directly if they have no GitHub account. Reports arrive as issues labelled `beta`.
 
@@ -109,7 +131,7 @@ Never upload a beta to the Chrome Web Store.
 
 ## Chrome Web Store
 
-The store build is `release/bridge-extension-X.Y.Z.zip` (also on the release). It's minified, has no source maps and no manifest `key` (the store assigns the ID and refuses a `key`), and holds only the build's files. Its sibling `bridge-extension-X.Y.Z-unpacked.zip` is the same build with the `key`, for people who load it unpacked; never upload that one.
+The store build is `release/bridge-extension-X.Y.Z.zip` (also on the release). It's minified, has no source maps and no manifest `key` (the store assigns the ID and refuses a `key`), and holds only the build's files and a `README.txt`. Its sibling `bridge-extension-X.Y.Z-unpacked.zip` is the same build with the `key`, for people who load it unpacked; never upload that one.
 
 Listing text, permission justifications, data-use answers and images are in [`store/`](store/README.md).
 

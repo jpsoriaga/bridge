@@ -7,7 +7,7 @@ dist/
 dist-ssr/
 out/
 build/
-release/
+/release/
 .crx/
 
 # Logs

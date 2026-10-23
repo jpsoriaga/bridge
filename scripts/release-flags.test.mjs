@@ -2,11 +2,12 @@
 // steps are cut out of .github/workflows/release.yml and run under bash with a stand-in `gh`
 // that records its arguments.
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { releaseFlags, releaseIntro } from './release-flags.mjs';
+import { installFileName, releaseFiles } from './install-notes.mjs';
+import { releaseFlags } from './release-flags.mjs';
 import { ROOT } from './version.mjs';
 
 const WORKFLOW = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8');
@@ -36,42 +37,52 @@ function stepScript(workflow, name) {
   return script.map((line) => line.slice(indent)).join('\n');
 }
 
-/** Runs the notes and create steps for `tag` with a fake `gh`: its argv and the notes. */
+/** An `assets` folder in `dir` with every file the builds make for `tag`. */
+function fakeAssets(dir, tag) {
+  mkdirSync(join(dir, 'assets'));
+  const names = Object.values(releaseFiles(tag.replace(/^v/, ''))).filter(Boolean);
+  for (const name of [...names, 'latest.yml']) writeFileSync(join(dir, 'assets', name), 'x');
+}
+
+/**
+ * Runs the release job's install, checksum, notes and create steps for `tag` with a fake
+ * `gh`: its argv, the notes and SHA256SUMS.txt.
+ */
 function runRelease(tag) {
   const dir = mkdtempSync(join(tmpdir(), 'bridge-release-'));
   const bin = join(dir, 'bin');
   mkdirSync(bin);
-  mkdirSync(join(dir, 'assets'));
-  writeFileSync(join(dir, 'assets', 'Bridge.dmg'), 'x');
+  if (tag.startsWith('v1')) fakeAssets(dir, tag);
+  else mkdirSync(join(dir, 'assets'));
   const gh = join(bin, 'gh');
   writeFileSync(gh, '#!/bin/sh\nfor a in "$@"; do printf "%s\\n" "$a"; done > "$GH_ARGS"\n');
   chmodSync(gh, 0o755);
-  const script = [
-    stepScript(WORKFLOW, 'Release notes from CHANGELOG.md'),
-    stepScript(WORKFLOW, 'Create the draft release')
-  ]
-    .join('\n')
-    .replaceAll('scripts/', `${join(ROOT, 'scripts')}/`)
-    .replaceAll('assets/*', `${join(dir, 'assets')}/*`)
-    .replaceAll('> notes.md', `> ${join(dir, 'notes.md')}`)
-    .replaceAll('>> notes.md', `>> ${join(dir, 'notes.md')}`)
-    .replaceAll('--notes-file notes.md', `--notes-file ${join(dir, 'notes.md')}`);
-  const result = spawnSync('bash', ['-e', '-c', script], {
-    env: {
-      ...process.env,
-      PATH: `${bin}${delimiter}${process.env.PATH}`,
-      GITHUB_REF_NAME: tag,
-      GITHUB_REPOSITORY: 'jpsoriaga/bridge',
-      GH_ARGS: join(dir, 'gh-args.txt'),
-      GH_TOKEN: 'unused'
-    },
-    encoding: 'utf8'
-  });
+  const env = {
+    ...process.env,
+    PATH: `${bin}${delimiter}${process.env.PATH}`,
+    GITHUB_REF_NAME: tag,
+    GITHUB_REPOSITORY: 'jpsoriaga/bridge',
+    GH_ARGS: join(dir, 'gh-args.txt'),
+    GH_TOKEN: 'unused'
+  };
+  // Each step as the workflow runs it: from the checkout, or (Checksums) from assets/.
+  const steps = [
+    ['Install instructions', dir],
+    ['Checksums', join(dir, 'assets')],
+    ['Release notes', dir],
+    ['Create the draft release', dir]
+  ];
+  for (const [name, cwd] of steps) {
+    const script = stepScript(WORKFLOW, name).replaceAll('scripts/', `${join(ROOT, 'scripts')}/`);
+    const result = spawnSync('bash', ['-e', '-c', script], { cwd, env, encoding: 'utf8' });
+    if (result.status !== 0) return { status: result.status, stderr: result.stderr };
+  }
   return {
-    status: result.status,
-    stderr: result.stderr,
-    args: result.status === 0 ? readFileSync(join(dir, 'gh-args.txt'), 'utf8').split('\n') : [],
-    notes: result.status === 0 ? readFileSync(join(dir, 'notes.md'), 'utf8') : ''
+    status: 0,
+    stderr: '',
+    args: readFileSync(join(dir, 'gh-args.txt'), 'utf8').split('\n'),
+    notes: readFileSync(join(dir, 'notes.md'), 'utf8'),
+    sums: readFileSync(join(dir, 'assets', 'SHA256SUMS.txt'), 'utf8')
   };
 }
 
@@ -79,8 +90,6 @@ describe('releaseFlags', () => {
   it('marks betas as pre-releases that are never Latest, and leaves releases alone', () => {
     expect(releaseFlags('v1.2.0')).toEqual([]);
     expect(releaseFlags('v1.2.0-beta.1')).toEqual(['--prerelease', '--latest=false']);
-    expect(releaseIntro('v1.2.0')).toBe('');
-    expect(releaseIntro('v1.2.0-beta.1')).toContain('/blob/v1.2.0-beta.1/BETA.md');
   });
 
   it('refuses tags that aren’t versions', () => {
@@ -124,8 +133,7 @@ describe('release.yml', () => {
     () => {
       const tag = changelogBeta();
       const dir = mkdtempSync(join(tmpdir(), 'bridge-dry-run-'));
-      mkdirSync(join(dir, 'assets'));
-      writeFileSync(join(dir, 'assets', 'Bridge.dmg'), 'x');
+      fakeAssets(dir, tag);
       const summary = join(dir, 'summary.md');
       const script = stepScript(WORKFLOW, 'What the release would hold').replaceAll(
         'scripts/',
@@ -142,9 +150,15 @@ describe('release.yml', () => {
       expect(text).toContain(`## Dry run: Bridge ${tag.slice(1)}`);
       expect(text).toContain('No release was created.');
       expect(text).toContain('(`--draft --prerelease --latest=false`)');
-      expect(text).toMatch(/[0-9a-f]{64} {2}Bridge\.dmg/);
-      expect(text).toContain('**Beta for testers.**');
-      expect(readFileSync(join(dir, 'notes.md'), 'utf8')).toContain('**Beta for testers.**');
+      const install = installFileName(tag.slice(1));
+      expect(text).toMatch(new RegExp(`[0-9a-f]{64} {2}${install}`));
+      expect(text).toContain('## How to install');
+      expect(text).toContain('**This is a beta**');
+      expect(text).toContain(`<details><summary>${install}</summary>`);
+      expect(text).toContain('## Troubleshooting');
+      const notes = readFileSync(join(dir, 'notes.md'), 'utf8');
+      expect(notes.startsWith('## How to install')).toBe(true);
+      expect(notes).toContain('## What’s new');
     }
   );
 
@@ -158,7 +172,10 @@ describe('release.yml', () => {
     expect(run.args).not.toContain('--prerelease');
     expect(run.args).not.toContain('--latest=false');
     expect(run.args[run.args.indexOf('--title') + 1]).toBe('Bridge 1.1.0');
-    expect(run.notes).not.toContain('Beta for testers');
+    expect(run.notes.startsWith('## How to install\n')).toBe(true);
+    expect(run.notes).not.toContain('This is a beta');
+    expect(run.notes).toContain('## What’s new');
+    expectInstallAttached(run, 'v1.1.0');
   });
 
   it.skipIf(process.platform === 'win32')(
@@ -172,14 +189,44 @@ describe('release.yml', () => {
       expect(run.args).toContain('--prerelease');
       expect(run.args).toContain('--latest=false');
       expect(run.args[run.args.indexOf('--title') + 1]).toBe(`Bridge ${tag.slice(1)}`);
-      expect(run.notes.startsWith('**Beta for testers.**')).toBe(true);
+      expect(run.notes.startsWith('## How to install\n')).toBe(true);
+      expect(run.notes).toContain('**This is a beta**');
+      expectInstallAttached(run, tag);
     }
   );
 
   it.skipIf(process.platform === 'win32')('fails on a tag that isn’t a version', () => {
     expect(runRelease('vnext').status).not.toBe(0);
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'fails when the notes name a file the builds didn’t make',
+    () => {
+      const dir = mkdtempSync(join(tmpdir(), 'bridge-missing-'));
+      fakeAssets(dir, 'v1.1.0');
+      rmSync(join(dir, 'assets', releaseFiles('1.1.0').win));
+      const script = stepScript(WORKFLOW, 'Install instructions').replaceAll(
+        'scripts/',
+        `${join(ROOT, 'scripts')}/`
+      );
+      const result = spawnSync('bash', ['-e', '-c', script], {
+        cwd: dir,
+        env: { ...process.env, GITHUB_REF_NAME: 'v1.1.0' },
+        encoding: 'utf8'
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain('Bridge-1.1.0-win-x64-setup.exe');
+    }
+  );
 });
+
+/** INSTALL.md went up with the release, and SHA256SUMS.txt lists it. */
+function expectInstallAttached(run, tag) {
+  const install = installFileName(tag.slice(1));
+  expect(run.args).toContain(`assets/${install}`);
+  expect(run.args).toContain('assets/SHA256SUMS.txt');
+  expect(run.sums).toMatch(new RegExp(`^[0-9a-f]{64} {2}${install.replace(/\./g, '\\.')}$`, 'm'));
+}
 
 /** Runs the version job's Tag step for an event; its GITHUB_OUTPUT and GITHUB_ENV lines. */
 function runTagStep(event, refName) {
