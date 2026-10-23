@@ -237,6 +237,26 @@ describe('@@DONE', () => {
   );
 });
 
+describe('blank marker values', () => {
+  it.each([
+    '@@RUN   @@',
+    '@@READ   @@',
+    '@@DELETE   @@',
+    '@@RENAME   -> a.ts@@',
+    '@@FILE   @@\n```\nx\n```',
+    '`@@RUN   @`',
+    '`@@RENAME a.ts -> @`',
+    '`@@FILE \u00a0 @`\n```\nx\n```'
+  ])('reads no path or command from %j', (text) => {
+    const parsed = parseChat(text);
+    expect(parsed.edits).toEqual([]);
+    expect(parsed.reads).toEqual([]);
+    expect(parsed.runs).toEqual([]);
+    expect(parsed.deletes).toEqual([]);
+    expect(parsed.renames).toEqual([]);
+  });
+});
+
 describe('cut-off replies', () => {
   const two = `${block('src/one.ts', 'one')}\n\nAnd the second:\n\n${block('src/two.ts', 'tw')}`;
 

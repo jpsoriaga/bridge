@@ -5,23 +5,24 @@ import type { FileEdit } from './types';
  * Checked after removing inline-code backticks and a list bullet, so `` `@@FILE a.ts@@` ``
  * and `- @@READ a.ts@@` both count.
  */
-const MARKER = /^@@(FILE|READ|CONTEXT|RUN)\s+((?:(?!@@)[^`])+?)\s*@@$/;
+const MARKER = /^@@(FILE|READ|CONTEXT|RUN)\s+((?!@@)[^\s`](?:(?!@@)[^`])*?)\s*@@$/;
 /** `@@DONE@@`: the chat says the task is finished. Ends a Full auto run. */
 const DONE = /^@@DONE\s*@@$/;
 /** `@@DELETE path@@`: remove a file. No fence follows. */
-const DELETE = /^@@DELETE\s+((?:(?!@@)[^`])+?)\s*@@$/;
+const DELETE = /^@@DELETE\s+((?!@@)[^\s`](?:(?!@@)[^`])*?)\s*@@$/;
 /** `@@RENAME old/path -> new/path@@` (or `→`): move a file. No fence follows. */
-const RENAME = /^@@RENAME\s+((?:(?!@@|->|→)[^`])+?)\s*(?:->|→)\s*([^\s`](?:(?!@@)[^`])*?)\s*@@$/;
+const RENAME =
+  /^@@RENAME\s+((?!@@)[^\s`](?:(?!@@|->|→)[^`])*?)\s*(?:->|→)\s*([^\s`](?:(?!@@)[^`])*?)\s*@@$/;
 /**
  * The same markers with the closing `@@` missing (or half there), as the chat sometimes
  * writes them: `` `@@RUN npm test` ``. Only tried inside an inline-code span that holds
  * nothing else, so prose that happens to start with `@@` never counts.
  */
-const LOOSE_MARKER = /^@@(FILE|READ|RUN)\s+((?:(?!@@)[^`])+?)\s*@?$/;
+const LOOSE_MARKER = /^@@(FILE|READ|RUN)\s+((?!@@|@$)[^\s`](?:(?!@@)[^`])*?)\s*@?$/;
 const LOOSE_DONE = /^@@DONE\s*@?$/;
-const LOOSE_DELETE = /^@@DELETE\s+((?:(?!@@)[^`])+?)\s*@?$/;
+const LOOSE_DELETE = /^@@DELETE\s+((?!@@|@$)[^\s`](?:(?!@@)[^`])*?)\s*@?$/;
 const LOOSE_RENAME =
-  /^@@RENAME\s+((?:(?!@@|->|→)[^`])+?)\s*(?:->|→)\s*([^\s`](?:(?!@@)[^`])*?)\s*@?$/;
+  /^@@RENAME\s+((?!@@|@$)[^\s`](?:(?!@@|->|→)[^`])*?)\s*(?:->|→)\s*((?!@$)[^\s`](?:(?!@@)[^`])*?)\s*@?$/;
 const FENCE_OPEN = /^(`{3,}|~{3,})[^`]*$/;
 const BULLET = /^(?:[-*+]|\d{1,3}[.)])\s+/;
 /** A line made only of `@@READ path@@` markers, for when line breaks were lost. */

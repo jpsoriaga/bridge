@@ -4,6 +4,10 @@ All notable changes to Bridge are listed here. The format follows [Keep a Change
 
 ## [Unreleased]
 
+### Fixed
+
+- **Blank markers are ignored.** A marker with only spaces where its path or command goes (`@@RUN   @@`, `@@FILE   @@`, or `` `@@RUN @` `` with a half-written closer) no longer becomes a card for a blank path or command, or for `@`.
+
 ## [1.1.0] - 2026-10-23
 
 The chat can now install dependencies after you approve a `package.json` change, and Full auto keeps going when your computer sleeps mid-reply instead of waiting for Resume.
