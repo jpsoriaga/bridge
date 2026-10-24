@@ -8,8 +8,10 @@ import { MIME_TYPES, sniffType, typeOfPath, type BinaryType } from '@bridge/shar
 /** Types the browser can re-encode an image into, when the path asks for another type. */
 const ENCODABLE: readonly BinaryType[] = ['png', 'jpg', 'webp'];
 
+/** `unreadable`: the page wouldn't hand the image over (cross-origin without CORS). */
 export type ImageBytes =
-  { ok: true; bytes: Uint8Array<ArrayBuffer>; type: BinaryType } | { ok: false; error: string };
+  | { ok: true; bytes: Uint8Array<ArrayBuffer>; type: BinaryType }
+  | { ok: false; error: string; unreadable?: true };
 
 async function fetched(src: string): Promise<Uint8Array<ArrayBuffer> | null> {
   try {
@@ -77,6 +79,7 @@ export async function imageFor(img: HTMLImageElement, path: string): Promise<Ima
   if (!bytes || !type) {
     return {
       ok: false,
+      unreadable: true,
       error:
         'Bridge can’t read this image from the page. Download it from the chat and add it to the project yourself.'
     };

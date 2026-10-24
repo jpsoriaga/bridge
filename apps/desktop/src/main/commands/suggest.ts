@@ -1,4 +1,4 @@
-import { matchAllowlist, type InstallManager } from '@bridge/shared';
+import { looksLikeBackground, matchAllowlist, type InstallManager } from '@bridge/shared';
 import { isValidAllowlistEntry } from '../settings';
 
 /** Scripts worth offering, in the order they're listed. */
@@ -91,4 +91,22 @@ export function installNote(
 ): string | null {
   if (install === null || allowlist === null || seen) return null;
   return matchAllowlist(install.split(' '), allowlist) === null ? install : null;
+}
+
+/**
+ * The dev server to offer once as a background command, for a project whose list was
+ * confirmed before Bridge had them (1.3.0): the first suggestion that looks like one
+ * (`npm run dev`) and isn't a background entry yet, whether or not it's allowed. Null once
+ * the project answered, or before its list is confirmed (the suggestions mark it then).
+ */
+export function backgroundNote(
+  suggestions: readonly string[],
+  allowlist: readonly string[] | null,
+  background: readonly string[],
+  seen: boolean
+): string | null {
+  if (allowlist === null || seen) return null;
+  return (
+    suggestions.find((entry) => looksLikeBackground(entry) && !background.includes(entry)) ?? null
+  );
 }

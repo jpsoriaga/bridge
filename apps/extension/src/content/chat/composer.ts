@@ -2,14 +2,32 @@ import type { AttachResult, InsertResult } from '../../messages';
 import { findComposer, findFileInput } from './selectors';
 
 /**
+ * A note that goes with the next text Bridge inserts, whatever inserts it (a card, Full auto,
+ * the side panel): set by the controller when the allowed commands changed mid-session.
+ * `sent` says it went in.
+ */
+export const composerNote: { peek(): string | null; sent(): void } = {
+  peek: () => null,
+  sent: () => undefined
+};
+
+/**
  * Puts text into the chat's composer at the caret, the way a paste would. It never
- * presses send: the user reads what's there and sends it themselves.
+ * presses send: the user reads what's there and sends it themselves. A pending
+ * `composerNote` goes first.
  *
  * ProseMirror handles a synthetic `paste` carrying `text/plain` like a real one, so that's
  * tried first. If nothing changed, `execCommand('insertText')` is the fallback. A plain
  * <textarea> (older layouts) gets its value set and an `input` event.
  */
 export function insertIntoComposer(text: string, doc: Document = document): InsertResult {
+  const note = composerNote.peek();
+  const result = insertText(note ? `${note}\n\n${text}` : text, doc);
+  if (note && result.ok) composerNote.sent();
+  return result;
+}
+
+function insertText(text: string, doc: Document): InsertResult {
   const composer = findComposer(doc);
   if (!composer) return { ok: false, error: 'no-composer' };
 

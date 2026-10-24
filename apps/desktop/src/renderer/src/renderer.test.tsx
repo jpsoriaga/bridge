@@ -251,6 +251,23 @@ describe('Settings forms', () => {
     expect(bridge.answerInstallNote).toHaveBeenCalledTimes(2);
   });
 
+  it('offers a dev server once as a background command, with Add and Dismiss', () => {
+    const { bridge } = installBridge();
+    const { rerender } = render(
+      <SettingsView state={makeState({ backgroundNote: 'npm run dev' })} />
+    );
+    expect(screen.getByText(/as a background command\?/).textContent).toContain('npm run dev');
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Add npm run dev as a background command' })
+    );
+    expect(bridge.answerBackgroundNote).toHaveBeenLastCalledWith(true);
+    rerender(<SettingsView state={makeState({ backgroundNote: null })} />);
+    expect(screen.queryByText(/as a background command\?/)).toBeNull();
+    rerender(<SettingsView state={makeState({ backgroundNote: 'npm run dev' })} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(bridge.answerBackgroundNote).toHaveBeenLastCalledWith(false);
+  });
+
   it('adds a protected pattern and says when one is invalid', async () => {
     const { bridge } = installBridge();
     bridge.setDenyPatterns.mockResolvedValueOnce(false);

@@ -26,6 +26,28 @@ export const FORMAT_REMINDER =
 
 const withFooter = (text: string) => (text ? `${text}\n\n${FORMAT_FOOTER}` : '');
 
+/**
+ * Goes with the next message Bridge inserts after the user changed the allowed commands in
+ * the middle of a session: what the chat may run now, and which are background processes.
+ */
+export function buildAllowlistNote(
+  allowlist: readonly string[],
+  background: readonly string[]
+): string {
+  const list = (entries: readonly string[]) => entries.map((entry) => `\`${entry}\``).join(', ');
+  const tasks = allowlist.filter((entry) => !background.includes(entry));
+  const servers = allowlist.filter((entry) => background.includes(entry));
+  const parts = ['Note: I changed the commands Bridge may run.'];
+  if (allowlist.length === 0) parts.push("Bridge can't run any commands now.");
+  if (tasks.length > 0) parts.push(`With \`@@RUN cmd@@\`: ${list(tasks)}.`);
+  if (servers.length > 0) {
+    parts.push(
+      `In the background, with \`@@START cmd@@\`, \`@@STOP cmd@@\` and \`@@LOGS cmd@@\`: ${list(servers)}.`
+    );
+  }
+  return redactSecrets(parts.join(' ')).text;
+}
+
 /** A backtick fence longer than any run of backticks in `content`, and at least 3. */
 export function pickFence(content: string): string {
   let longest = 0;

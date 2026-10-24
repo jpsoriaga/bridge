@@ -34,6 +34,7 @@ export function makeState(overrides: Partial<DesktopState> = {}): DesktopState {
     sessionResets: 0,
     allowlistNote: false,
     installNote: null,
+    backgroundNote: null,
     defaultGatedPatterns: ['package.json'],
     gatedPatterns: [],
     defaultEnvPatterns: ['*TOKEN*'],
@@ -134,6 +135,7 @@ export function installBridge(initial: DesktopState = makeState(), activity: Act
     cancelPairing: vi.fn(async () => undefined),
     dismissAllowlistNote: vi.fn(async () => undefined),
     answerInstallNote: vi.fn(async () => undefined),
+    answerBackgroundNote: vi.fn(async () => undefined),
     checkForUpdates: vi.fn(async () => ({
       state: 'current' as const,
       version: '1.0.0',

@@ -89,6 +89,7 @@ const api: BridgeApi = {
     ipcRenderer.invoke(IPC.setOnboardingDismissed, dismissed) as Promise<void>,
   dismissAllowlistNote: () => ipcRenderer.invoke(IPC.dismissAllowlistNote) as Promise<void>,
   answerInstallNote: (add) => ipcRenderer.invoke(IPC.answerInstallNote, add) as Promise<void>,
+  answerBackgroundNote: (add) => ipcRenderer.invoke(IPC.answerBackgroundNote, add) as Promise<void>,
   checkForUpdates: () => ipcRenderer.invoke(IPC.checkForUpdates) as Promise<UpdateCheck>,
   setCheckUpdatesOnStart: (on) =>
     ipcRenderer.invoke(IPC.setCheckUpdatesOnStart, on) as Promise<void>,

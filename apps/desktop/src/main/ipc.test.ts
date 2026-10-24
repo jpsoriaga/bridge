@@ -57,6 +57,7 @@ const CALLS: Record<IpcChannel, { good: unknown[]; bad: unknown[][] }> = {
   getRunDetail: { good: ['run-1'], bad: [[1]] },
   setTheme: { good: ['dark'], bad: [['neon'], []] },
   setUiGuidance: { good: ['always'], bad: [['sometimes'], [true]] },
+  answerBackgroundNote: { good: [true], bad: [['yes']] },
   setBackupRetention: { good: [7], bad: [['7'], [7.5]] },
   openBackupsFolder: { good: [], bad: [['/']] },
   clearBackups: { good: [], bad: [[true]] },

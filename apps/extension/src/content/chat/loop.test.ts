@@ -1485,6 +1485,37 @@ describe('FullAutoLoop 1.3.0', () => {
       );
     });
 
+    it('starts the dev server a @@DONE@@ reply asks for, then ends without sending', async () => {
+      const t = setup();
+      t.loop.onReply(reply({ runs: [{ command: 'pnpm test' }] }).actions);
+      await settle();
+      const done = reply({
+        edits: { applied: ['src/a.ts'] },
+        processes: [
+          { kind: 'start', command: 'npm run dev' },
+          { kind: 'start', command: 'rm -rf /', refusal: 'not on the allowlist' }
+        ],
+        done: true
+      });
+      t.loop.onReply(done.actions);
+      await settle();
+      expect(done.log).toEqual(['apply:loop-1', 'start:npm run dev']);
+      expect(t.loop.state).toBe('idle');
+      expect(t.page.sent).toHaveLength(1);
+      expect(t.events()).toContain('ran: Started npm run dev at http://localhost:5173/.');
+      expect(t.events().at(-1)).toBe('done: The chat said it’s done.');
+    });
+
+    it('starts it too when the first reply in Full auto is already @@DONE@@', async () => {
+      const t = setup();
+      const done = reply({ processes: [{ kind: 'start', command: 'npm run dev' }], done: true });
+      t.loop.onReply(done.actions);
+      await settle();
+      expect(done.log).toEqual(['apply:-', 'start:npm run dev']);
+      expect(t.loop.state).toBe('idle');
+      expect(t.page.sent).toHaveLength(0);
+    });
+
     it('pauses when the app goes away mid-start', async () => {
       const t = setup();
       t.loop.onReply(

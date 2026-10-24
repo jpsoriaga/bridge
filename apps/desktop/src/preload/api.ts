@@ -81,6 +81,11 @@ export interface DesktopState {
    * confirmed list doesn't have it yet. Never added without a click.
    */
   installNote: string | null;
+  /**
+   * A dev server (`npm run dev`) to offer once as a background command, for a list
+   * confirmed before 1.3.0. Never added without a click.
+   */
+  backgroundNote: string | null;
   defaultGatedPatterns: readonly string[];
   gatedPatterns: string[];
   defaultEnvPatterns: readonly string[];
@@ -305,6 +310,8 @@ export interface BridgeApi {
   dismissAllowlistNote(): Promise<void>;
   /** Answers the one-time install note: add the command to the allowlist, or not. */
   answerInstallNote(add: boolean): Promise<void>;
+  /** Add (and mark background) the dev server the note offers, or dismiss it. */
+  answerBackgroundNote(add: boolean): Promise<void>;
   /** Asks GitHub Releases for a newer version. Never downloads or installs. */
   checkForUpdates(): Promise<UpdateCheck>;
   /** Check once at every launch (off by default). */
@@ -359,6 +366,7 @@ export const IPC = {
   setOnboardingDismissed: 'bridge:set-onboarding-dismissed',
   dismissAllowlistNote: 'bridge:dismiss-allowlist-note',
   answerInstallNote: 'bridge:answer-install-note',
+  answerBackgroundNote: 'bridge:answer-background-note',
   checkForUpdates: 'bridge:check-for-updates',
   setCheckUpdatesOnStart: 'bridge:set-check-updates-on-start',
   setUpdateChannel: 'bridge:set-update-channel',

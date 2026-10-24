@@ -9,6 +9,7 @@ import {
   buildLogsMessage,
   LOGS_LINES,
   buildRunMessage,
+  buildAllowlistNote,
   buildSessionPrompt,
   FORMAT_FOOTER,
   FORMAT_REMINDER,
@@ -474,5 +475,16 @@ describe('loop words', () => {
     expect(a).toBe(b);
     expect(a).not.toBe(c);
     expect(failureSignature('exit 2', 'x')).not.toBe(failureSignature('exit 1', 'x'));
+  });
+});
+
+describe('buildAllowlistNote', () => {
+  it('lists what the chat may run now, and which are background', () => {
+    expect(buildAllowlistNote(['pnpm test', 'pnpm dev'], ['pnpm dev'])).toBe(
+      'Note: I changed the commands Bridge may run. With `@@RUN cmd@@`: `pnpm test`. In the background, with `@@START cmd@@`, `@@STOP cmd@@` and `@@LOGS cmd@@`: `pnpm dev`.'
+    );
+    expect(buildAllowlistNote([], [])).toBe(
+      "Note: I changed the commands Bridge may run. Bridge can't run any commands now."
+    );
   });
 });

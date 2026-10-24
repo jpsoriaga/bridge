@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BridgeConfig } from '@bridge/shared';
 import type { WorkerRequest } from '../../messages';
 import type { Ask } from './cards/diff-card';
+import { insertIntoComposer } from './composer';
 import { ChatController } from './controller';
 
 // The controller against a saved chat page: long conversations that unmount and remount
@@ -217,5 +218,69 @@ describe('ChatController and the app’s config', () => {
     ctl.setConfig({ ...CONFIG, mode: 'manual' });
     await wait();
     expect(count('chat-write')).toBe(0);
+  });
+});
+
+describe('@@RUN of a background command', () => {
+  it('becomes a START card marked format fixed, and other runs stay RUN cards', async () => {
+    // Closed shadow roots, opened for the test to read the badge.
+    const attach = HTMLElement.prototype.attachShadow;
+    const open = vi.spyOn(HTMLElement.prototype, 'attachShadow').mockImplementation(function (
+      this: HTMLElement,
+      init: ShadowRootInit
+    ) {
+      return attach.call(this, { ...init, mode: 'open' });
+    });
+    syncConfig = {
+      ...CONFIG,
+      mode: 'manual',
+      allowlist: ['npm run dev', 'npm test'],
+      background: ['npm run dev']
+    };
+    await startWithNewReply(
+      '<main><article data-testid="conversation-turn-2"><div data-message-author-role="assistant" data-message-id="m-run-dev"><div class="markdown prose"><p><code>@@RUN npm run dev@@</code></p><p><code>@@RUN npm test@@</code></p></div></div><div><button data-testid="copy-turn-action-button" aria-label="Copy"></button></div></article></main>'
+    );
+    expect(hosts('run-card')).toHaveLength(1);
+    const starts = hosts('process-card');
+    expect(starts).toHaveLength(1);
+    const text = starts[0]!.shadowRoot?.textContent ?? '';
+    expect(text).toContain('npm run dev');
+    expect(text).toContain('format fixed');
+    expect(hosts('run-card')[0]!.shadowRoot?.textContent).toContain('npm test');
+    open.mockRestore();
+  });
+});
+
+describe('allowed commands changed mid-session', () => {
+  it('adds a note to the next message Bridge inserts, once', async () => {
+    syncConfig = { ...CONFIG, allowlist: ['npm test'] };
+    const ctl = await startWithNewReply();
+    document.body.insertAdjacentHTML(
+      'beforeend',
+      '<form><div id="prompt-textarea" contenteditable="true"></div></form>'
+    );
+    const composer = document.getElementById('prompt-textarea')!;
+    composer.addEventListener('paste', (event) => {
+      event.preventDefault();
+      composer.textContent += (event as ClipboardEvent).clipboardData?.getData('text/plain') ?? '';
+    });
+    // The same list again: nothing to say.
+    ctl.setConfig({ ...CONFIG, allowlist: ['npm test'], mode: 'manual' });
+    insertIntoComposer('first');
+    expect(composer.textContent).toBe('first');
+
+    ctl.setConfig({
+      ...CONFIG,
+      allowlist: ['npm test', 'npm run dev'],
+      background: ['npm run dev']
+    });
+    composer.textContent = '';
+    insertIntoComposer('second');
+    expect(composer.textContent).toBe(
+      'Note: I changed the commands Bridge may run. With `@@RUN cmd@@`: `npm test`. In the background, with `@@START cmd@@`, `@@STOP cmd@@` and `@@LOGS cmd@@`: `npm run dev`.\n\nsecond'
+    );
+    composer.textContent = '';
+    insertIntoComposer('third');
+    expect(composer.textContent).toBe('third');
   });
 });

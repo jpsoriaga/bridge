@@ -1,8 +1,11 @@
 import {
   errorLines,
   formatArgv,
+  buildAllowlistNote,
   interruptionOf,
+  matchAllowlist,
   parseChat,
+  parseCommand,
   type BackgroundLogs,
   type BridgeConfig,
   type ChatParse,
@@ -30,6 +33,7 @@ import { DiffCard, type Ask } from './cards/diff-card';
 import { DownloadCard } from './cards/download-card';
 import { FormatCard } from './cards/format-card';
 import { loadFonts } from './cards/host';
+import { composerNote } from './composer';
 import { InterruptCard } from './cards/interrupt-card';
 import { LoopChip } from './cards/loop-chip';
 import { MessageBar } from './cards/message-bar';
@@ -71,6 +75,10 @@ import {
 export const SCAN_DEBOUNCE_MS = 250;
 /** How often the URL and layout are checked (client-side navigation fires no event here). */
 const POLL_MS = 1_000;
+
+/** The allowed commands and which are background, to notice a change. */
+const commandsKey = (config: BridgeConfig | null): string | null =>
+  config ? JSON.stringify([config.allowlist, config.background]) : null;
 /** A layout must look wrong this many polls in a row before the side panel hears of it. */
 const LAYOUT_STRIKES = 5;
 /** Run events that arrive before their card knows its run id are kept this long. */
@@ -206,6 +214,10 @@ export function editSummary(
  */
 export class ChatController {
   private conversationId: string | null = null;
+  /** The allowed commands the chat was last told about this session (`commandsKey`). */
+  private toldCommands: string | null = null;
+  /** What goes with the next inserted message after the commands changed, or null. */
+  private allowlistNote: string | null = null;
   private session: SessionState | null = null;
   private config: BridgeConfig | null = null;
   private layout: LayoutHealth = 'ok';
@@ -265,6 +277,11 @@ export class ChatController {
   }
 
   start(): void {
+    composerNote.peek = () => this.allowlistNote;
+    composerNote.sent = () => {
+      this.toldCommands = commandsKey(this.config);
+      this.allowlistNote = null;
+    };
     this.conversationId = conversationIdFrom(location.href);
     void this.sync();
     this.pollTimer = setInterval(() => this.poll(), POLL_MS);
@@ -283,6 +300,11 @@ export class ChatController {
   /** The service worker says the session for this tab started, ended or moved. */
   setSession(session: SessionState | null): void {
     if (this.invalid) return;
+    // The session prompt listed the commands as they were when it started.
+    if (session !== this.session) {
+      this.toldCommands = session === 'active' ? commandsKey(this.config) : null;
+      this.allowlistNote = null;
+    }
     this.session = session;
     for (const view of this.views.values()) this.setViewDisabled(view, session !== 'active');
     if (session !== 'active' && this.loop.active) this.loop.stop();
@@ -312,6 +334,7 @@ export class ChatController {
   invalidate(): void {
     if (this.invalid) return;
     this.invalid = true;
+    composerNote.peek = () => null;
     clearInterval(this.pollTimer);
     clearTimeout(this.timer);
     this.observer?.disconnect();
@@ -354,6 +377,13 @@ export class ChatController {
   setConfig(config: BridgeConfig | null): void {
     if (this.invalid) return;
     this.config = config;
+    // The user changed the allowed commands mid-session: the next message says so.
+    if (config && this.session === 'active') {
+      const key = commandsKey(config);
+      if (this.toldCommands === null) this.toldCommands = key;
+      this.allowlistNote =
+        key === this.toldCommands ? null : buildAllowlistNote(config.allowlist, config.background);
+    }
     for (const view of this.views.values()) {
       for (const card of view.cards) card.setMode(config?.mode ?? null);
       for (const card of view.changes) card.setMode(config?.mode ?? null);
@@ -935,7 +965,19 @@ export class ChatController {
     images: HTMLImageElement[] = []
   ): Promise<MessageView> {
     const parse = parseChat(text);
-    const { reads, runs, deletes, renames, fixed, issues, starts, stops, logs, downloads } = parse;
+    const { reads, deletes, renames, fixed, issues, stops, logs, downloads } = parse;
+    // `@@RUN npm run dev@@` for a background entry would only be refused (or time out): it's
+    // a `@@START`, read leniently like a missing `@@`, so it gets `format fixed`.
+    const background = this.config?.background ?? [];
+    const isBackground = (command: string) => {
+      const parsed = parseCommand(command);
+      return parsed.ok && matchAllowlist(parsed.argv, background) !== null;
+    };
+    const runs = parse.runs.filter((command) => !isBackground(command));
+    const runStarts = parse.runs.filter(
+      (command) => isBackground(command) && !parse.starts.includes(command)
+    );
+    const starts = [...parse.starts, ...runStarts];
     // Each image takes the next `@@ASSET` path. Paths with no image wait for the next reply.
     let assetPaths = parse.assets;
     if (images.length === 0) {
@@ -993,7 +1035,7 @@ export class ChatController {
       ...starts.map((command) => ({
         kind: 'start' as const,
         command,
-        fixed: fixed.starts.includes(command)
+        fixed: fixed.starts.includes(command) || runStarts.includes(command)
       })),
       ...logs.map((command) => ({
         kind: 'logs' as const,

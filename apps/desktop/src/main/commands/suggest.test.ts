@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { installNote, suggestAllowlist, suggestInstall } from './suggest';
+import { backgroundNote, installNote, suggestAllowlist, suggestInstall } from './suggest';
 
 const pkg = (scripts: Record<string, string>, extra: Record<string, unknown> = {}) =>
   JSON.stringify({ name: 'x', scripts, ...extra });
@@ -90,5 +90,21 @@ describe('installNote', () => {
     expect(installNote('npm install', ['npm install *'], false)).toBeNull();
     expect(installNote('npm install', null, false)).toBeNull();
     expect(installNote(null, ['npm test'], false)).toBeNull();
+  });
+});
+
+describe('backgroundNote', () => {
+  const suggestions = ['npm install', 'npm test', 'npm run dev', 'git status'];
+
+  it('offers the dev server once for a confirmed list, allowed or not', () => {
+    expect(backgroundNote(suggestions, ['npm test'], [], false)).toBe('npm run dev');
+    expect(backgroundNote(suggestions, ['npm test', 'npm run dev'], [], false)).toBe('npm run dev');
+    expect(backgroundNote(suggestions, ['npm test'], [], true)).toBeNull();
+  });
+
+  it('stays quiet when it’s already background, unconfirmed or there’s no dev server', () => {
+    expect(backgroundNote(suggestions, ['npm run dev'], ['npm run dev'], false)).toBeNull();
+    expect(backgroundNote(suggestions, null, [], false)).toBeNull();
+    expect(backgroundNote(['npm test'], ['npm test'], [], false)).toBeNull();
   });
 });

@@ -1,4 +1,5 @@
 import {
+  type DownloadResult,
   type FileErrorCode,
   type Mode,
   type StatResult,
@@ -38,6 +39,16 @@ const BLOCKING: ReadonlySet<string> = new Set<FileErrorCode>([
   'unsupported-type'
 ]);
 
+/** The image's own address, if it's https and short enough to send: null otherwise. */
+function httpsUrl(img: HTMLImageElement): string | null {
+  const src = img.currentSrc || img.src;
+  try {
+    return new URL(src).protocol === 'https:' && src.length <= 2048 ? src : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * **Save to project** under an image the chat made. The path field starts with the
  * reply's `@@ASSET path@@` for this image, if it had one. Save reads the image from the
@@ -64,6 +75,12 @@ export class AssetCard {
   auto = false;
   /** Saving would replace a file: the first click says so, the second saves. */
   private confirming = false;
+  /**
+   * The page wouldn't hand the image over (CORS), but it has an https address: the app can
+   * fetch it from there instead, on a click only, like `@@DOWNLOAD`.
+   */
+  private remoteUrl: string | null = null;
+  private downloading = false;
 
   constructor(
     readonly key: string,
@@ -126,7 +143,10 @@ export class AssetCard {
     const image = await imageFor(this.image, path);
     if (!image.ok) {
       this.busy = null;
-      this.error = image.error;
+      this.remoteUrl = image.unreadable ? httpsUrl(this.image) : null;
+      this.error = this.remoteUrl
+        ? 'Bridge can’t read this image from the page: its server doesn’t allow it. Download from URL has the Bridge app fetch it from its address instead.'
+        : image.error;
       this.render();
       return trigger === 'auto' ? 'held' : 'failed';
     }
@@ -167,6 +187,45 @@ export class AssetCard {
     }
     this.fail(outcome?.error.code, failureText(outcome?.error));
     return trigger === 'auto' ? 'held' : 'failed';
+  }
+
+  /**
+   * **Download from URL**: the app fetches the image from its https address into the path,
+   * with every `@@DOWNLOAD` check (never a local address, 20 MB, type from the bytes). The
+   * worker always sends it as a click; nothing does it on its own.
+   */
+  async downloadFromUrl(): Promise<void> {
+    const path = this.path.trim();
+    const url = this.remoteUrl;
+    if (!url || !path || this.state !== 'pending' || this.disabled || this.busy) return;
+    this.busy = 'save';
+    this.downloading = true;
+    this.error = null;
+    this.render();
+    const existing = await this.ask<RequestOutcome<StatResult>>({ type: 'chat-stat', path });
+    const outcome = await this.ask<RequestOutcome<DownloadResult>>({
+      type: 'chat-download',
+      url,
+      path,
+      ...(existing?.ok && { baseHash: existing.result.hash })
+    });
+    this.busy = null;
+    this.downloading = false;
+    if (outcome?.ok) {
+      this.state = 'applied';
+      this.path = path;
+      this.opId = outcome.result.opId;
+      this.kind = outcome.result.kind;
+      this.size = outcome.result.size;
+      this.auto = false;
+      this.appliedAt = Date.now();
+      this.remoteUrl = null;
+      void this.persist();
+      this.render();
+      this.onChange();
+      return;
+    }
+    this.fail(outcome?.error.code, failureText(outcome?.error));
   }
 
   private fail(code: string | undefined, text: string): void {
@@ -309,6 +368,21 @@ export class AssetCard {
         this.busy === 'save' ? 'Saving…' : this.confirming ? 'Replace' : 'Save'
       );
       save.disabled = !this.path.trim() || this.disabled || this.busy !== null || this.blocked;
+      const download = this.remoteUrl
+        ? cardButton(
+            'primary',
+            {
+              attrs: { 'data-focus': 'download', title: this.remoteUrl },
+              onClick: () => void this.downloadFromUrl()
+            },
+            this.downloading ? 'Downloading…' : 'Download from URL'
+          )
+        : null;
+      if (download) {
+        download.disabled = !this.path.trim() || this.disabled || this.busy !== null;
+        // One primary action: with the download offered, Save is the secondary one.
+        save.dataset.variant = 'secondary';
+      }
       const hint = this.disabled
         ? 'Session ended.'
         : this.confirming
@@ -337,7 +411,8 @@ export class AssetCard {
             modeTag(this.mode),
             hint
           ),
-          save
+          save,
+          download
         )
       );
     }

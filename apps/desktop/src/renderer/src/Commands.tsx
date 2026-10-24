@@ -181,17 +181,51 @@ function InstallNote({ command }: { command: string }) {
   );
 }
 
+/** Once, for a list confirmed before Bridge had background commands (1.3.0). */
+function BackgroundNote({ command }: { command: string }) {
+  const [busy, setBusy] = useState(false);
+  const answer = (add: boolean) => {
+    setBusy(true);
+    void window.bridge.answerBackgroundNote(add).finally(() => setBusy(false));
+  };
+  return (
+    <div className="notice" role="status">
+      <p>
+        Add <span className="mono">{command}</span> as a background command? The chat can then start
+        your dev server with <span className="mono">@@START</span>, read its logs and stop it. It
+        keeps running until it’s stopped or the session ends.
+      </p>
+      <div className="actions">
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={busy}
+          aria-label={`Add ${command} as a background command`}
+          onClick={() => answer(true)}
+        >
+          Add
+        </button>
+        <button type="button" className="btn" disabled={busy} onClick={() => answer(false)}>
+          Dismiss
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** The project's allowlist. Only the app edits it; the chat and the extension can't. */
 function Allowlist({
   entries,
   background,
   note,
-  installNote
+  installNote,
+  backgroundNote
 }: {
   entries: string[];
   background: readonly string[];
   note: boolean;
   installNote: string | null;
+  backgroundNote: string | null;
 }) {
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -250,6 +284,7 @@ function Allowlist({
         </div>
       )}
       {installNote !== null && <InstallNote command={installNote} />}
+      {backgroundNote !== null && <BackgroundNote command={backgroundNote} />}
       {entries.length === 0 ? (
         <p className="empty">No commands allowed in this project. Add one below.</p>
       ) : (
@@ -648,6 +683,7 @@ export function AllowlistEditor({ state }: { state: DesktopState }) {
       background={state.background}
       note={state.allowlistNote}
       installNote={state.installNote}
+      backgroundNote={state.backgroundNote}
     />
   );
 }

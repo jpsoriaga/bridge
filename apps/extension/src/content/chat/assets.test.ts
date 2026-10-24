@@ -14,10 +14,13 @@ import { autoApply, autoSave, editSummary } from './controller';
 // the others (READ attaches images; Full auto's "Also approve automatically").
 
 vi.mock('./images', () => ({
-  imageFor: vi.fn(async (_img: HTMLImageElement, path: string) =>
-    path.endsWith('.png')
-      ? { ok: true, bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]), type: 'png' }
-      : { ok: false, error: 'Save an image as .png, .jpg, .webp or .gif.' }
+  imageFor: vi.fn(async (img: HTMLImageElement, path: string) =>
+    // An image on another server that doesn't allow the page to read it.
+    img.src.includes('cdn.example')
+      ? { ok: false, unreadable: true, error: 'Bridge can’t read this image from the page.' }
+      : path.endsWith('.png')
+        ? { ok: true, bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]), type: 'png' }
+        : { ok: false, error: 'Save an image as .png, .jpg, .webp or .gif.' }
   )
 }));
 
@@ -330,6 +333,57 @@ describe('AssetCard', () => {
     expect(editSummary([], [card]).held).toEqual([
       { path: 'public/hero.svg (image)', hold: 'blocked', reason: 'not saved' }
     ]);
+  });
+});
+
+describe('AssetCard: an image the page won’t hand over', () => {
+  const remote = (src: string) => {
+    const img = document.createElement('img');
+    img.src = src;
+    return img;
+  };
+
+  it('offers Download from URL for an https image, which downloads only on a click', async () => {
+    const w = worker({
+      'chat-stat': notFound,
+      'chat-download': {
+        ok: true,
+        result: { opId: 'op-3', kind: 'create', hash: HASH, size: 2048, mime: 'image/png' }
+      }
+    });
+    const card = new AssetCard(
+      'k',
+      remote('https://cdn.example/files/hero.png?sig=abc'),
+      'public/hero.png',
+      w.ask,
+      () => {}
+    );
+    card.init(undefined);
+    // Full auto tries to save it on its own: it can't, and nothing is downloaded.
+    expect(await card.save({ trigger: 'auto' })).toBe('held');
+    expect(w.calls.some((c) => c.type === 'chat-download')).toBe(false);
+    await card.downloadFromUrl();
+    expect(w.calls.find((c) => c.type === 'chat-download')).toEqual({
+      type: 'chat-download',
+      url: 'https://cdn.example/files/hero.png?sig=abc',
+      path: 'public/hero.png'
+    });
+    expect(card.state).toBe('applied');
+  });
+
+  it('offers nothing to download for an image without an https address', async () => {
+    const w = worker({ 'chat-stat': notFound });
+    const card = new AssetCard(
+      'k',
+      remote('http://cdn.example/hero.png'),
+      'public/hero.png',
+      w.ask,
+      () => {}
+    );
+    card.init(undefined);
+    expect(await card.save()).toBe('failed');
+    await card.downloadFromUrl();
+    expect(w.calls.some((c) => c.type === 'chat-download')).toBe(false);
   });
 });
 

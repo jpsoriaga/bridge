@@ -39,7 +39,7 @@ Bridge has two parts: the **app** you install on your computer, and the **extens
 | Linux (64-bit)                       | `{linux}`     |
 | **Everyone also needs**              | `{extension}` |
 
-**Which Mac do I have?** Apple menu  (top left) → **About This Mac**. **Chip: Apple M1** (or M2, M3…) means Apple silicon; **Processor: Intel** means Intel.
+**Which Mac do I have?** Apple menu (top-left corner of the screen) → **About This Mac**. **Chip: Apple M1** (or M2, M3…) means Apple silicon; **Processor: Intel** means Intel.
 
 ### 2. Install the app
 

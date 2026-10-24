@@ -61,7 +61,7 @@ import { DEFAULT_ENV_DENYLIST, isValidEnvPattern, MAX_ENV_PATTERNS } from './com
 import { isUsablePath, loginEnvOnce, withPath, type LoginEnv } from './commands/login-env';
 import { CommandRunner } from './commands/runner';
 import { CommandService } from './commands/service';
-import { installNote, suggestAllowlist, suggestInstall } from './commands/suggest';
+import { backgroundNote, installNote, suggestAllowlist, suggestInstall } from './commands/suggest';
 import { appDiagnostics } from './diagnostics';
 import { guardIpc, type IpcChannel } from './ipc';
 import { lockDownContents, lockDownSession } from './lockdown';
@@ -182,6 +182,19 @@ function pendingInstallNote(): string | null {
   return installNote(installCommand, allowlist(), settings.read().installNoteSeen.includes(key));
 }
 
+/** The one-time "Add `npm run dev` as a background command?" note, or null. */
+function pendingBackgroundNote(): string | null {
+  const key = projects.projectKey;
+  if (key === null) return null;
+  const seen = settings.read().backgroundNoteSeen.includes(key);
+  return backgroundNote(suggestions, allowlist(), backgroundEntries(), seen);
+}
+
+function markBackgroundNoteSeen(key: string): void {
+  const seen = settings.read().backgroundNoteSeen;
+  if (!seen.includes(key)) settings.update({ backgroundNoteSeen: [...seen, key] });
+}
+
 /** The project answered the install note, or confirmed a list that already considered it. */
 function markInstallNoteSeen(key: string): void {
   const seen = settings.read().installNoteSeen;
@@ -232,6 +245,7 @@ function desktopState(): DesktopState {
     unlimitedNoteSeen: saved.unlimitedNoteSeen,
     allowlistNote: saved.allowlistNote,
     installNote: pendingInstallNote(),
+    backgroundNote: pendingBackgroundNote(),
     defaultGatedPatterns: DEFAULT_GATED_FILES,
     gatedPatterns: saved.gatedPatterns,
     defaultEnvPatterns: DEFAULT_ENV_DENYLIST,
@@ -721,7 +735,10 @@ function registerIpc(): void {
     const saved = settings.read();
     const previous = saved.allowlists[key];
     // A list confirmed from the suggestions already had the install command to pick.
-    if (previous === undefined) markInstallNoteSeen(key);
+    if (previous === undefined) {
+      markInstallNoteSeen(key);
+      markBackgroundNoteSeen(key);
+    }
     const list = [...new Set(entries)];
     // Background entries stay as they were; a new one that looks like a dev server
     // (`npm run dev`) starts out as one. The user can change either in Settings.
@@ -897,6 +914,26 @@ function registerIpc(): void {
     if (add === true) {
       const list = allowlist() ?? [];
       settings.update({ allowlists: { ...settings.read().allowlists, [key]: [...list, entry] } });
+      configChanged();
+      return;
+    }
+    broadcast();
+  });
+  handle(IPC.answerBackgroundNote, (add) => {
+    const key = projects.projectKey;
+    const entry = pendingBackgroundNote();
+    if (key === null || entry === null) return;
+    markBackgroundNoteSeen(key);
+    if (add === true) {
+      const saved = settings.read();
+      const list = allowlist() ?? [];
+      settings.update({
+        allowlists: { ...saved.allowlists, [key]: [...new Set([...list, entry])] },
+        backgroundAllowlists: {
+          ...saved.backgroundAllowlists,
+          [key]: [...new Set([...backgroundEntries(), entry])]
+        }
+      });
       configChanged();
       return;
     }

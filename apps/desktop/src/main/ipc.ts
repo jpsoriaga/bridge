@@ -57,6 +57,7 @@ export const IPC_ARGS: Readonly<Record<IpcChannel, z.ZodType<unknown[]>>> = {
   setOnboardingDismissed: z.tuple([z.boolean()]),
   dismissAllowlistNote: none,
   answerInstallNote: z.tuple([z.boolean()]),
+  answerBackgroundNote: z.tuple([z.boolean()]),
   checkForUpdates: none,
   setCheckUpdatesOnStart: z.tuple([z.boolean()]),
   setUpdateChannel: z.tuple([z.enum(UPDATE_CHANNELS)]),

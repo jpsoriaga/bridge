@@ -78,6 +78,11 @@ export interface Settings {
    * `<manager> install`?" note: lists confirmed before 1.1.0 get it once.
    */
   installNoteSeen: string[];
+  /**
+   * Projects (by id) that answered the one-time "Add `npm run dev` as a background
+   * command?" note: lists confirmed before 1.3.0 get it once.
+   */
+  backgroundNoteSeen: string[];
   /** Full auto's step limit, or null for Unlimited. */
   stepLimit: number | null;
   /**
@@ -169,6 +174,15 @@ export function isValidDenyPattern(value: unknown): value is string {
 }
 
 /** A small JSON file under userData. Unknown or malformed content reads as defaults. */
+/** Saved project ids (16 hex digits), the newest 1,000. */
+function projectIds(raw: unknown): string[] {
+  return Array.isArray(raw)
+    ? raw
+        .filter((id): id is string => typeof id === 'string' && /^[0-9a-f]{16}$/.test(id))
+        .slice(-1000)
+    : [];
+}
+
 export function settingsFile(path: string) {
   function read(): Settings {
     let data: Record<string, unknown>;
@@ -226,11 +240,8 @@ export function settingsFile(path: string) {
         MAX_RUN_TIMEOUT_MS,
         DEFAULT_INSTALL_TIMEOUT_MS
       ),
-      installNoteSeen: Array.isArray(data.installNoteSeen)
-        ? data.installNoteSeen
-            .filter((id): id is string => typeof id === 'string' && /^[0-9a-f]{16}$/.test(id))
-            .slice(-1000)
-        : [],
+      installNoteSeen: projectIds(data.installNoteSeen),
+      backgroundNoteSeen: projectIds(data.backgroundNoteSeen),
       stepLimit:
         data.stepLimitFormat !== 2 && savedStepLimit === 10 ? DEFAULT_STEP_LIMIT : savedStepLimit,
       stepLimitFormat: 2,

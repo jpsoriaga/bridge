@@ -349,8 +349,10 @@ export class FullAutoLoop {
       const cut = actions.interruption;
       const resumable = cut !== null && (actions.hasActions || cut.marker !== null);
       if ((!actions.hasActions && !actions.formatIssues && !resumable) || actions.done) {
-        // Nothing to loop on. Still apply what a DONE reply edits.
-        if (actions.done && actions.hasActions) void actions.applyEdits();
+        // Nothing to loop on. Still apply what a DONE reply edits, and start what it starts.
+        if (actions.done && actions.hasActions) {
+          void actions.applyEdits().then(() => this.processesOnDone(actions, this.deps.newId()));
+        }
         return;
       }
       this.generation += 1;
@@ -790,6 +792,8 @@ export class FullAutoLoop {
         });
       }
       if (actions.done) {
+        await this.processesOnDone(actions, this.loopId);
+        if (stale()) return;
         this.finish('The chat said it’s done.');
         return;
       }
@@ -1185,6 +1189,24 @@ export class FullAutoLoop {
     }
     if (reason !== 'interrupted') this.pageContinue = false;
     this.set('paused', { kind: 'paused', text: pauseReasonText(reason, this.detail) });
+  }
+
+  /**
+   * A `@@DONE` reply's `@@START`s and `@@STOP`s, in order: starting the dev server at the end
+   * is a normal request. Refused ones are skipped; nothing more is sent, the run is over.
+   */
+  private async processesOnDone(actions: ReplyActions, loopId: string): Promise<void> {
+    for (const process of actions.processes ?? []) {
+      if (process.refusal() !== null) continue;
+      const outcome = await process.act(loopId);
+      if ('disconnected' in outcome) return;
+      if ('started' in outcome) {
+        this.emit({
+          kind: 'ran',
+          text: `${outcome.restarted ? 'Restarted' : 'Started'} ${process.command}${outcome.url ? ` at ${outcome.url}` : ''}.`
+        });
+      }
+    }
   }
 
   private finish(text: string): void {
