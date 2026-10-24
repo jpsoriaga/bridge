@@ -499,7 +499,7 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [x] Pairing: digits only before the 6-digit limit (`pairingDigits`), no `maxLength`, Pair at exactly 6, auto-submit on a full paste; short codes never sent and not counted by `redeem`; **Copy** in the app copies the digits only, "Copied" briefly (tests: panel helper, server, renderer, IPC; e2e `run.cjs` pastes "123 456", "123-456", " 123456\n")
 - [x] Name in LICENSE, README, PRIVACY.md and the desktop package metadata: John Patrick Soriaga
 - [x] Format, lint, typecheck, tests with coverage, build, every e2e script (new `e2e/send.cjs`, in CI); PLAN.md, DESIGN.md, SECURITY.md, CHANGELOG, e2e README
-- [ ] Release dry run on GitHub green
+- [x] Release dry run on GitHub green (run 40120123288; `release` skipped, `dry-run` passed); CI green on all three systems (run 40120117688)
 - [ ] Manual run on the real chatgpt.com (e2e README "1.3.0 fixes on the real chatgpt.com, round 2")
 
 ## Landing page (`apps/site`)
