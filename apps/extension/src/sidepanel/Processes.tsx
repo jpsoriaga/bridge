@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react';
-import { formatUptime, type BackgroundLogs, type BackgroundProcess } from '@bridge/shared';
+import {
+  formatUptime,
+  processTone,
+  type BackgroundLogs,
+  type BackgroundProcess
+} from '@bridge/shared';
 import type { RequestOutcome } from '../messages';
 import { request } from './request';
 
@@ -41,13 +46,8 @@ function ProcessRow({ proc, now }: { proc: BackgroundProcess; now: number }) {
     : proc.state === 'stopped'
       ? 'Stopped'
       : `Exited${proc.exitCode !== null ? ` (exit ${proc.exitCode})` : ''}`;
-  const tone = running
-    ? proc.url
-      ? 'success'
-      : 'warning'
-    : proc.state === 'exited'
-      ? 'danger'
-      : undefined;
+  // Red only for a failure or a kill; a clean exit is neutral.
+  const tone = processTone(proc);
   return (
     <li className="process-row">
       <div className="label-row">

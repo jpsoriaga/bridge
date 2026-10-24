@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react';
-import { formatUptime, type BackgroundLogs, type BackgroundProcess } from '@bridge/shared';
+import {
+  formatUptime,
+  processTone,
+  type BackgroundLogs,
+  type BackgroundProcess
+} from '@bridge/shared';
 import { useNow } from './hooks';
 
 /** How often an open log refreshes. */
@@ -35,13 +40,8 @@ function ProcessRow({ proc, now }: { proc: BackgroundProcess; now: number }) {
   const [busy, setBusy] = useState(false);
   const running = proc.state === 'running';
   const logs = useLogs(proc.procId, open, running);
-  const tone = running
-    ? proc.url
-      ? 'success'
-      : 'warning'
-    : proc.state === 'exited'
-      ? 'danger'
-      : undefined;
+  // Red only for a failure or a kill; a clean exit is neutral.
+  const tone = processTone(proc);
   return (
     <li className="process-row">
       <div className="process-head">

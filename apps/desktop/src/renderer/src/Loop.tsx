@@ -27,7 +27,10 @@ export function LoopStatus({ state }: { state: DesktopState }) {
       </p>
       {loop?.state === 'paused' && loop.reason && (
         <p className="hint" data-tone="warning">
-          {pauseReasonText(loop.reason, loop.detail)} Resume from the side panel in Chrome.
+          {pauseReasonText(loop.reason, loop.detail)}{' '}
+          {loop.reason === 'tab-closed'
+            ? 'Stop ends the run; nothing was reverted.'
+            : 'Resume from the side panel in Chrome.'}
         </p>
       )}
     </div>

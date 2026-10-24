@@ -231,11 +231,13 @@ One per `@@START`, `@@STOP` and `@@LOGS`, after the RUN cards (stops, then start
 | `not allowed` | `danger`  | Off the allowlist, or not marked Background in the app |
 | `starting`    | `warning` | Running, no URL yet                                    |
 | `running`     | `success` | Running at its URL                                     |
-| `exit N`      | `danger`  | Ended on its own                                       |
+| `exit 0`      | neutral   | Ended on its own, cleanly                              |
+| `exit N`      | `danger`  | Ended on its own with a non-zero exit                  |
+| `ended`       | `danger`  | Killed by a signal (no exit code)                      |
 | `stopped`     | neutral   | Stopped                                                |
 | `not running` | neutral   | A STOP or LOGS for a process that isn't there          |
 
-Footer: the mode tag and a hint ("Running for 2m 5s. It keeps running until it's stopped or the session ends."), then **Stop** (`.btn-danger`) while running and **Start** (primary) or **Restart** (secondary). LOGS: **Send logs** (primary; "Send again" after), and **Show output** in the header once it has some, the body like a RUN card's output.
+Footer: the mode tag and a hint ("Running for 2m 5s. It keeps running until it's stopped or the session ends."), then **Stop** (`.btn-danger`) while running and **Start** (primary) or **Restart** (secondary); once the process has ended (or was stopped) the primary button reads **Start again**. Colours follow `processTone` (shared): red only for a failure or a kill, never for a clean exit. LOGS: **Send logs** (primary; "Send again" after), and **Show output** in the header once it has some, the body like a RUN card's output.
 
 ### Save to project card
 
@@ -287,7 +289,7 @@ In the two `update-*` states (the app and the extension speak different protocol
 
 ### Pairing code
 
-On the desktop's Extension section: the six digits in Geist Mono 24px/600 with a space after the third digit, then a 12px muted hint with the countdown ("Expires in 1:52"). The code disappears as soon as it's used, expires, or is cancelled by the lockout.
+On the desktop's Extension section: the six digits in Geist Mono 24px/600 with a space after the third digit and, beside them, **Copy** (secondary `.btn`; "Copied" for 1.5s), which copies the six digits only, without the space. Then a 12px muted hint with the countdown ("Expires in 1:52"). The code disappears as soon as it's used, expires, or is cancelled by the lockout.
 
 ### Pairing fingerprint
 
@@ -344,7 +346,8 @@ In order: Connection (label row with **Unpair** as a text button; the project na
 ### Side panel: Mode, Full auto, Command
 
 - **Mode**: a read-only badge (`.mode-badge`, 1px `--border-strong`, 6px radius, 13px/600; `warning` text and border for Full auto) and the mode description plus "Change the mode in the Bridge app." When a session starting or ending turned Full auto off, a `--warning` hint below: "Full auto turned off: it’s per session." It goes when Full auto is on again.
-- **Full auto** (in Full auto, or while a run exists): a status line with a dot and the state (or, after sleep, "Waiting for the chat to finish (resumed after sleep)" / "Caught up after sleep") and `step / limit`. Paused: the reason in the bordered warning notice (with its detail: "The chat’s reply was interrupted after `@@FILE src/one.ts@@`.", "A command was interrupted by sleep: pnpm test"), then the buttons for that reason, one primary: **Resume**; **Continue for N more** at the step limit; **Stop & continue** for a reply stuck after sleep; **Continue generating** (primary, when the page offers it) and **Resume** for a cut-off reply; **Re-run** and **Skip** for a command sleep interrupted. Stuck and cut-off pauses add a 12px muted hint saying what the button does. Stopped: "Stopped. Nothing was reverted; undo is still available." and **Allow Full auto again** (secondary).
+- **Full auto** (in Full auto, or while a run exists): a status line with a dot and the state (or, after sleep, "Waiting for the chat to finish (resumed after sleep)" / "Caught up after sleep") and `step / limit`. Paused: the reason in the bordered warning notice (with its detail: "The chat’s reply was interrupted after `@@FILE src/one.ts@@`.", "A command was interrupted by sleep: pnpm test"), then the buttons for that reason, one primary: **Resume**; **Continue for N more** at the step limit; **Stop & continue** for a reply stuck after sleep; **Continue generating** (primary, when the page offers it) and **Resume** for a cut-off reply; **Re-run** and **Skip** for a command sleep interrupted. Stuck and cut-off pauses add a 12px muted hint saying what the button does. A message limit reads "Message limit reached; resets at 4:30 PM." (the page's time, when it shows one) with **Resume**. A tab that was closed or unloaded has no buttons, only a hint (reloading the chat ends the run; Stop in the footer or the app ends it too). Stopped: "Stopped. Nothing was reverted; undo is still available." and **Allow Full auto again** (secondary).
+- **Full auto in a background tab** (first in the body, once): while Full auto runs in a hidden tab, a section labelled "Full auto in a background tab" with the warning `.notice`: keep the tab open and add chatgpt.com to “Always keep these sites active” under Memory Saver (`chrome://settings/performance` in mono), then **Got it** (secondary), which hides it for good.
 - **Command** (while one runs, or after one ran): label row with **Cancel** (`.btn-danger`) while running; `$ command` in mono; "Running…", "Passed" or "Failed (exit N)" (`--danger`); the last 200 lines in a `--bg-muted` mono 12px box, 240px tall at most.
 
 ### Desktop app
@@ -381,7 +384,7 @@ The first-run checklist (when not dismissed), then Project, Extension, Mode, Run
 
 ### Desktop: Background processes
 
-On the Session page, under the running command, while any process is known: a section title, then one row each: a dot (`success` running at its URL, `warning` starting, `danger` exited, idle stopped), the command in mono 14px (truncated), "Running · 2m 5s" or how it ended (12px muted), **View logs / Hide logs** (link button) and **Stop** (`.btn-danger`). The URL sits under the command as a mono link button that opens it in the browser. View logs opens the last 300 lines in a `.command-output` box, refreshed every 2s while it runs. A hint under the list says when they stop. The side panel has the same rows, with the URL and View logs in the hint line.
+On the Session page, under the running command, while any process is known: a section title, then one row each: a dot (`success` running at its URL, `warning` starting, `danger` for a non-zero exit or a kill, idle for a clean exit or a stop: `processTone`), the command in mono 14px (truncated), "Running · 2m 5s" or how it ended (12px muted), **View logs / Hide logs** (link button) and **Stop** (`.btn-danger`). The URL sits under the command as a mono link button that opens it in the browser. View logs opens the last 300 lines in a `.command-output` box, refreshed every 2s while it runs. A hint under the list says when they stop. The side panel has the same rows, with the URL and View logs in the hint line.
 
 ### Desktop: Activity page
 
@@ -399,7 +402,7 @@ Bottom-right, 20px in, up to three stacked, 4s each, `aria-live="polite"`: a dot
 - **Project**: **UI guidance**, a 12px label and a segmented Auto / Always / Off (same control and keys as Appearance), with a hint for the chosen one and "Applies to the next session you start."
 - **Commands**: for a list confirmed before 1.3.0 whose project has a dev server script that isn't a background entry, a one-time `.notice` like the install note: "Add `npm run dev` as a background command?…", **Add** (primary, labelled "Add npm run dev as a background command") and **Dismiss**.
 - **Full auto**: the step limit field is followed by an **Unlimited** checkbox (the field is disabled while it's on), and a one-time `.notice` with **Got it** about Free/Go plans and the loop guard. Below, a fieldset "Also approve automatically" (a `.subsection-title` legend): a hint, then three checkboxes. While one is on, its risk is written under it in `--warning`, and a last line says Activity marks these "auto-approved".
-- **Activity**: rows say "auto-approved" in place of "auto" for what those settings let through, "downloaded" or "binary" for binary files, and background processes show as "Background · started / stopped / exited (exit 1)" rows (not openable). The detail view of an image Bridge wrote shows thumbnails (max 240px, 1px `--border`, `--radius-md`), "Before" and "After".
+- **Activity**: rows say "auto-approved" in place of "auto" for what those settings let through, "downloaded" or "binary" for binary files, and background processes show as "Background · started / stopped / exited (exit 1)" rows (not openable): `success` started, `danger` a non-zero exit or a signal, neutral a clean exit or a stop. The detail view of an image Bridge wrote shows thumbnails (max 240px, 1px `--border`, `--radius-md`), "Before" and "After".
 
 ### Desktop: Mode, Commands, loop bar, toast
 

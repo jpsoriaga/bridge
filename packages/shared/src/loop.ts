@@ -47,7 +47,9 @@ export const PAUSE_REASONS = [
   'interrupted',
   'command-interrupted',
   'download',
-  'stuck'
+  'stuck',
+  'usage-limit',
+  'tab-closed'
 ] as const;
 export const PauseReason = z.enum(PAUSE_REASONS);
 export type PauseReason = z.infer<typeof PauseReason>;
@@ -76,12 +78,14 @@ export const PAUSE_REASON_TEXT: Record<PauseReason, string> = {
   interrupted: 'The chat’s reply was interrupted.',
   'command-interrupted': 'A command was interrupted by sleep.',
   download: 'The reply wants to download a file. Downloads always need your click.',
-  stuck: 'Looks stuck: the same failure repeated.'
+  stuck: 'Looks stuck: the same failure repeated.',
+  'usage-limit': 'Message limit reached.',
+  'tab-closed': 'The chat tab was closed or unloaded.'
 };
 
 /**
  * A pause reason in words, with what it's about where that helps: the last complete marker
- * of an interrupted reply, or the interrupted command.
+ * of an interrupted reply, the interrupted command, or when a message limit resets.
  */
 export function pauseReasonText(reason: PauseReason, detail?: string): string {
   if (reason === 'interrupted') {
@@ -93,6 +97,8 @@ export function pauseReasonText(reason: PauseReason, detail?: string): string {
     return `A command was interrupted by sleep: ${detail}`;
   }
   if (reason === 'stuck' && detail) return `Looks stuck: the same failure repeated (${detail}).`;
+  // The page's own words for when the limit resets: "at 4:30 PM", "in 3 hours".
+  if (reason === 'usage-limit' && detail) return `Message limit reached; resets ${detail}.`;
   return PAUSE_REASON_TEXT[reason];
 }
 

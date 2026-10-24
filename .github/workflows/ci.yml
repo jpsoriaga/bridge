@@ -111,6 +111,7 @@ jobs:
       - run: xvfb-run -a node e2e/format.cjs .
       - run: xvfb-run -a node e2e/catchup.cjs .
       - run: xvfb-run -a node e2e/assets.cjs .
+      - run: xvfb-run -a node e2e/send.cjs .
 
   site:
     # The landing page (apps/site): its own lint, typecheck, tests and build. It installs only

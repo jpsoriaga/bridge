@@ -7,12 +7,16 @@ import { messageToText } from './adapter';
 import {
   assistantMessages,
   checkLayout,
+  composerAttachments,
+  composerBusy,
   findContinueButton,
   findStopButton,
   isMessageComplete,
   messageIdOf,
   replyError,
+  limitResetTime,
   replyStatus,
+  usageLimit,
   userMessageCount
 } from './selectors';
 
@@ -253,5 +257,64 @@ describe('replies cut off, and the buttons to catch up after sleep', () => {
     expect(replyStatus(message, document, true)).toBe('interrupted');
     banner.textContent = 'You’ve reached your usage limit.';
     expect(replyStatus(message, document, true)).toBe('complete');
+  });
+});
+
+describe('the composer’s attachments and usage limits', () => {
+  const form = () => document.querySelector('form')!;
+
+  it('sees a "Pasted text" chip, busy while it shows progress or says it’s processing', () => {
+    load('single-edit.html');
+    expect(composerAttachments()).toEqual([]);
+    expect(composerBusy()).toBe(false);
+    form().insertAdjacentHTML(
+      'afterbegin',
+      '<div data-testid="file-tile"><span>Pasted text</span><div role="progressbar"></div><button aria-label="Remove file 1: Pasted text"></button></div>'
+    );
+    expect(composerAttachments()).toHaveLength(1);
+    expect(composerBusy()).toBe(true);
+    form().querySelector('[role="progressbar"]')!.remove();
+    expect(composerBusy()).toBe(false);
+    form().querySelector('[data-testid="file-tile"] span')!.textContent = 'Processing…';
+    expect(composerBusy()).toBe(true);
+  });
+
+  it('finds a limit that was reached, and when it resets', () => {
+    load('single-edit.html');
+    expect(usageLimit()).toBeNull();
+    const banner = document.createElement('div');
+    banner.setAttribute('role', 'alert');
+    banner.textContent = 'You’ve reached your message limit. It resets at 4:30 PM.';
+    document.body.append(banner);
+    expect(usageLimit()).toEqual({ reached: true, resetsAt: 'at 4:30 PM' });
+    banner.textContent =
+      'You’ve hit the Free plan limit for GPT. Responses will use another model until it resets tomorrow.';
+    expect(usageLimit()).toEqual({ reached: true, resetsAt: 'tomorrow' });
+  });
+
+  it('tells the "usage remaining" warning from a reached limit', () => {
+    load('single-edit.html');
+    const warning = document.createElement('div');
+    warning.setAttribute('data-testid', 'usage-limit-banner');
+    warning.textContent = '3 messages remaining. Usage resets after 9:15 pm.';
+    document.body.append(warning);
+    expect(usageLimit()).toEqual({ reached: false, resetsAt: 'at 9:15 pm' });
+  });
+
+  it('never reads a limit from a message’s own text', () => {
+    load('single-edit.html');
+    const [message] = assistantMessages(document);
+    message!.insertAdjacentHTML(
+      'beforeend',
+      '<div role="status">You’ve reached your usage limit (in the test fixture).</div>'
+    );
+    expect(usageLimit()).toBeNull();
+  });
+
+  it('reads the reset time in the page’s words', () => {
+    expect(limitResetTime('Your limit resets at 16:05.')).toBe('at 16:05');
+    expect(limitResetTime('Try again in 3 hours.')).toBe('in 3 hours');
+    expect(limitResetTime('Upgrade for more.')).toBeNull();
+    expect(limitResetTime('3 messages remaining')).toBeNull();
   });
 });

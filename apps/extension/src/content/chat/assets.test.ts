@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BackgroundProcess, BridgeConfig, ParsedEdit } from '@bridge/shared';
 import type { WorkerRequest } from '../../messages';
 import { AssetCard } from './cards/asset-card';
@@ -188,6 +188,51 @@ describe('ProcessCard', () => {
     const card = new ProcessCard('start', 'npm run dev', w.ask);
     card.setConfig(CONFIG);
     expect(await card.start({ trigger: 'auto' })).toEqual({ disconnected: true });
+  });
+});
+
+describe('ProcessCard after its process ended', () => {
+  /** The card's badge (text and tone) and button labels, through an opened shadow root. */
+  function view(card: ProcessCard) {
+    const root = card.host.shadowRoot!;
+    const badge = root.querySelector('.badge')!;
+    return {
+      badge: badge.textContent,
+      tone: badge.getAttribute('data-tone'),
+      buttons: [...root.querySelectorAll('button.card-btn')].map((b) => b.textContent)
+    };
+  }
+
+  beforeEach(() => {
+    const attach = HTMLElement.prototype.attachShadow;
+    vi.spyOn(HTMLElement.prototype, 'attachShadow').mockImplementation(function (
+      this: HTMLElement,
+      init: ShadowRootInit
+    ) {
+      return attach.call(this, { ...init, mode: 'open' });
+    });
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each([
+    [{ state: 'exited', exitCode: 0 }, 'exit 0', null],
+    [{ state: 'exited', exitCode: 1 }, 'exit 1', 'danger'],
+    [{ state: 'exited', exitCode: null, signal: 'SIGKILL' }, 'ended', 'danger'],
+    [{ state: 'stopped', exitCode: null }, 'stopped', null]
+  ] as const)('shows %j as %s, red only for a failure', (patch, badge, tone) => {
+    const card = new ProcessCard('start', 'npm run dev', worker().ask);
+    card.setConfig({ ...CONFIG, processes: [proc({ ...patch, endedAt: Date.now() })] });
+    expect(view(card)).toMatchObject({ badge, tone });
+  });
+
+  it('offers Start, then Restart while running, then Start again once it exited', () => {
+    const card = new ProcessCard('start', 'npm run dev', worker().ask);
+    card.setConfig(CONFIG);
+    expect(view(card).buttons).toEqual(['Start']);
+    card.setConfig({ ...CONFIG, processes: [proc({ url: 'http://localhost:5173/' })] });
+    expect(view(card).buttons).toEqual(['Stop', 'Restart']);
+    card.setConfig({ ...CONFIG, processes: [proc({ state: 'exited', exitCode: 0 })] });
+    expect(view(card).buttons).toEqual(['Start again']);
   });
 });
 

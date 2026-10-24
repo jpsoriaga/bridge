@@ -1,7 +1,6 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, type ClipboardEvent, type FormEvent } from 'react';
 import {
   CONNECTION_STATUS_TONES,
-  PAIRING_CODE_LENGTH,
   type BridgeConfig,
   type ConnectionStatus,
   type ProjectInfo
@@ -24,11 +23,13 @@ import {
   CommandSection,
   LoopFooter,
   LoopSection,
+  BackgroundTip,
   ModeSection,
   type LiveRun
 } from './FullAuto';
 import { Logo } from './Logo';
 import { ProcessesSection } from './Processes';
+import { isFullCode, pairingDigits } from './pairing';
 import { panelWindowId, request } from './request';
 import { SendFiles } from './SendFiles';
 import { SessionSection } from './SessionSection';
@@ -114,12 +115,13 @@ function PairForm() {
   /** The fingerprint to compare with the app's, once the code went through. */
   const [fingerprint, setFingerprint] = useState<string | null>(null);
 
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    if (code.length !== PAIRING_CODE_LENGTH) return;
+  // Only a full code is sent: a shorter one is never an attempt, so it can't count toward
+  // the app's lockout.
+  const pair = (digits: string) => {
+    if (busy || !isFullCode(digits)) return;
     setBusy(true);
     setError(null);
-    void request<PairResult>({ type: 'pair', code })
+    void request<PairResult>({ type: 'pair', code: digits })
       .then((result) => {
         if (result.ok) setFingerprint(result.fingerprint);
         else setError(pairError(result));
@@ -127,6 +129,17 @@ function PairForm() {
       })
       .catch(() => setError('Pairing failed. Try again.'))
       .finally(() => setBusy(false));
+  };
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    pair(code);
+  };
+  // A pasted code is cleaned the same way, and a whole one goes straight in.
+  const paste = (event: ClipboardEvent<HTMLInputElement>) => {
+    event.preventDefault();
+    const digits = pairingDigits(event.clipboardData.getData('text'));
+    setCode(digits);
+    pair(digits);
   };
 
   const confirm = () => {
@@ -208,16 +221,17 @@ function PairForm() {
           inputMode="numeric"
           autoComplete="one-time-code"
           placeholder="000000"
-          maxLength={PAIRING_CODE_LENGTH}
           value={code}
           aria-invalid={error !== null}
           aria-describedby={error ? 'pair-error' : undefined}
-          onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, PAIRING_CODE_LENGTH))}
+          // No maxLength: it would cut "160 508" before the space is taken out.
+          onChange={(e) => setCode(pairingDigits(e.target.value))}
+          onPaste={paste}
         />
         <button
           type="submit"
           className="btn btn-primary btn-lg"
-          disabled={busy || code.length !== PAIRING_CODE_LENGTH}
+          disabled={busy || !isFullCode(code)}
         >
           {busy ? 'Pairing…' : 'Pair'}
         </button>
@@ -331,6 +345,7 @@ function Body({
   project,
   config,
   fullAutoOff,
+  backgroundTip = false,
   chat,
   live
 }: {
@@ -338,6 +353,7 @@ function Body({
   project: ProjectInfo | null;
   config: BridgeConfig | null;
   fullAutoOff: boolean;
+  backgroundTip?: boolean;
   chat: ChatPanelState;
   live: LiveRun | null;
 }) {
@@ -355,6 +371,7 @@ function Body({
     case 'connected':
       return (
         <>
+          <BackgroundTip show={backgroundTip} />
           <ConnectionSection project={project} />
           <SessionSection chat={chat} project={project} />
           <ModeSection config={config} fullAutoOff={fullAutoOff} />
@@ -465,6 +482,7 @@ export function App() {
             project={update.project}
             config={update.config ?? null}
             fullAutoOff={update.fullAutoOff}
+            backgroundTip={update.backgroundTip}
             chat={chat}
             live={live}
           />

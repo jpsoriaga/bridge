@@ -153,6 +153,9 @@ function PauseActions({ loop, stepLimit }: { loop: LoopReport | null; stepLimit?
           : [button('resume', 'Resume', true)];
       case 'command-interrupted':
         return [button('resume', 'Re-run', true), button('skip', 'Skip')];
+      case 'tab-closed':
+        // Nothing is left in the tab to resume.
+        return [];
       default:
         return [button('resume', 'Resume', true)];
     }
@@ -165,12 +168,18 @@ function PauseActions({ loop, stepLimit }: { loop: LoopReport | null; stepLimit?
           continue.
         </p>
       )}
+      {loop?.reason === 'tab-closed' && (
+        <p className="hint">
+          The run can’t carry on without its tab. Nothing was reverted; reload the chat and Full
+          auto starts again with the next reply.
+        </p>
+      )}
       {loop?.reason === 'interrupted' && (
         <p className="hint">
           Resume applies what came through whole and asks the chat to continue from there.
         </p>
       )}
-      <div className="actions">{buttons}</div>
+      {buttons.length > 0 && <div className="actions">{buttons}</div>}
     </>
   );
 }
@@ -243,5 +252,32 @@ export function LoopFooter({ loop }: { loop: LoopReport | null }) {
         Stop
       </button>
     </footer>
+  );
+}
+
+/**
+ * Once, while Full auto runs in a hidden tab: how to keep Chrome from slowing or unloading
+ * it. Got it dismisses it for good.
+ */
+export function BackgroundTip({ show }: { show: boolean }) {
+  if (!show) return null;
+  return (
+    <section>
+      <p className="label">Full auto in a background tab</p>
+      <p className="notice" role="status">
+        Full auto keeps going while its tab is in the background. Keep that tab open, and add
+        chatgpt.com to “Always keep these sites active” under Memory Saver in Chrome’s settings (
+        <span className="mono">chrome://settings/performance</span>), so Chrome doesn’t unload it.
+      </p>
+      <div className="actions">
+        <button
+          type="button"
+          className="btn"
+          onClick={() => void request({ type: 'background-tip-seen' } satisfies WorkerRequest)}
+        >
+          Got it
+        </button>
+      </div>
+    </section>
   );
 }

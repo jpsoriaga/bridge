@@ -97,6 +97,7 @@ export function installBridge(initial: DesktopState = makeState(), activity: Act
       return () => (statusListener = null);
     }),
     startPairing: vi.fn(async () => ({ code: '123456', expiresAt: Date.now() + 120_000 })),
+    copyPairingCode: vi.fn(async () => true),
     unpair: vi.fn(async () => undefined),
     openFolder: vi.fn(async () => ({ ok: false as const, reason: 'cancelled' as const })),
     openRecent: vi.fn(async () => ({ ok: true as const })),

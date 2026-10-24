@@ -9,6 +9,7 @@ import {
   LOGS_LINES,
   matchAllowlist,
   parseCommand,
+  processTone,
   type BackgroundLogs,
   type BackgroundProcess,
   type BackgroundStarted,
@@ -311,7 +312,12 @@ export class ProcessCard {
         : { text: 'starting', tone: 'warning' };
     }
     if (proc.state === 'stopped') return { text: 'stopped' };
-    return { text: proc.exitCode !== null ? `exit ${proc.exitCode}` : 'ended', tone: 'danger' };
+    // A clean exit is neutral: only a failure or a kill is red.
+    const tone = processTone(proc);
+    return {
+      text: proc.exitCode !== null ? `exit ${proc.exitCode}` : 'ended',
+      ...(tone && { tone })
+    };
   }
 
   private hint(): { text: string; tone?: string } {
@@ -368,9 +374,9 @@ export class ProcessCard {
     }
     if (this.running) out.push(button('Stop', 'stop', () => void this.stop(), false, true));
     if (this.kind === 'start' && this.refusal() === null) {
-      out.push(
-        button(this.running ? 'Restart' : 'Start', 'start', () => void this.start(), !this.running)
-      );
+      // After it ended (on its own, or stopped), it's "Start again".
+      const label = this.running ? 'Restart' : this.process ? 'Start again' : 'Start';
+      out.push(button(label, 'start', () => void this.start(), !this.running));
     }
     return out;
   }

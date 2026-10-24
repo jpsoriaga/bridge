@@ -206,11 +206,13 @@ export class Pairing {
     if (locked > 0) return { ok: false, reason: 'locked', retryAfterMs: locked };
     const client = importPublicKey(clientKey);
     if (!client) return { ok: false, reason: 'invalid_request' };
+    // Not six digits is a typo (a cut-off paste), not a guess: it doesn't count toward the
+    // lockout. `/pair` refuses it before this, too.
+    if (!PairingCode.safeParse(candidate).success) return { ok: false, reason: 'invalid_request' };
 
     const pending = this.pendingCode;
     const matches =
       pending !== null &&
-      PairingCode.safeParse(candidate).success &&
       timingSafeEqual(Buffer.from(candidate, 'utf8'), Buffer.from(pending.code, 'utf8'));
 
     if (!matches) {

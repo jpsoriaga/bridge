@@ -31,6 +31,7 @@ const api: BridgeApi = {
     };
   },
   startPairing: () => ipcRenderer.invoke(IPC.startPairing) as Promise<PairingCode>,
+  copyPairingCode: () => ipcRenderer.invoke(IPC.copyPairingCode) as Promise<boolean>,
   confirmPairing: () => ipcRenderer.invoke(IPC.confirmPairing) as Promise<boolean>,
   cancelPairing: () => ipcRenderer.invoke(IPC.cancelPairing) as Promise<void>,
   unpair: () => ipcRenderer.invoke(IPC.unpair) as Promise<void>,

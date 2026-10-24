@@ -399,6 +399,29 @@ describe('POST /pair', () => {
     expect(res.statusCode).toBe(413);
   });
 
+  it('doesn’t count a code with fewer than 6 digits as an attempt', async () => {
+    const { code } = pairing.startPairing();
+    for (const short of ['16050', '1', '', '160 508', '160-50']) {
+      for (let i = 0; i < 5; i++) {
+        expect((await post('/pair', pairBody(short))).statusCode).toBe(400);
+      }
+    }
+    // 25 short tries later, the code still works and nothing is locked.
+    expect(pairing.lockedForMs).toBe(0);
+    expect((await post('/pair', pairBody(code))).statusCode).toBe(200);
+  });
+
+  it('keeps a malformed code out of the count even past the body check', () => {
+    const { code } = pairing.startPairing();
+    const key = pairBody(code).publicKey;
+    for (let i = 0; i < 10; i++) {
+      expect(pairing.redeem('12345', key, 47821)).toEqual({ ok: false, reason: 'invalid_request' });
+    }
+    expect(pairing.lockedForMs).toBe(0);
+    expect(pairing.pendingCode?.code).toBe(code);
+    expect(code).toMatch(/^\d{6}$/);
+  });
+
   it('locks for 60s after 5 wrong codes and burns the code', async () => {
     const { code } = pairing.startPairing();
     const wrong = code === '000000' ? '111111' : '000000';

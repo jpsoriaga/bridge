@@ -92,3 +92,21 @@ export function formatUptime(ms: number): string {
   if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
+
+/** What a process's dot and badge need to know. */
+export interface ProcessToneInput {
+  state: 'running' | 'exited' | 'stopped';
+  url: string | null;
+  exitCode: number | null;
+}
+
+/**
+ * The colour a process is shown in, the same in the cards, the side panel and the app: green
+ * at its URL, orange starting, red only when it failed (a non-zero exit, or killed by a
+ * signal, which leaves no exit code). A clean exit and a stop are neutral.
+ */
+export function processTone(proc: ProcessToneInput): 'success' | 'warning' | 'danger' | undefined {
+  if (proc.state === 'running') return proc.url ? 'success' : 'warning';
+  if (proc.state === 'exited' && proc.exitCode !== 0) return 'danger';
+  return undefined;
+}

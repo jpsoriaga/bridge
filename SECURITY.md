@@ -34,7 +34,7 @@ Bridge lets a chat running in your browser change files in a folder on your comp
 
 ### Pairing
 
-- The app shows a 6-digit code (2 minutes, one use; 5 wrong codes lock pairing for 60 seconds and burn the code).
+- The app shows a 6-digit code (2 minutes, one use; 5 wrong codes lock pairing for 60 seconds and burn the code; a code that isn't six digits is refused without counting as a try, and the side panel never sends one).
 - The extension sends the code with a one-time P-256 public key; the app answers with its long-lived public key (generated once, stored with `safeStorage`) and a proof. Both derive the pairing key from the ECDH secret and the transcript (port, code, both public keys), and both show a **fingerprint** of that transcript.
 - You confirm the fingerprints match in the app, then in the side panel. Only then does either side keep the key. A process squatting a port, or relaying the exchange, changes a public key or the port, so its fingerprint differs from the app's. This closes the trust-on-first-use gap earlier versions had.
 - The app keeps the key encrypted with `safeStorage` (plain hex in a `0600` file if no keyring is available); the extension keeps it in its service worker's IndexedDB, which content scripts can't open.
@@ -87,7 +87,7 @@ Before command output or file contents go into the chat: `sk-…`, GitHub (`ghp_
 - Permissions: `storage`, `sidePanel`, `alarms`, and host access to `http://127.0.0.1/*` only. The content script runs only on `https://chatgpt.com/*`, top frame. No `<all_urls>`, no optional permissions. 1.3.0 added none: an image the chat made is read from the page itself (its own URL on chatgpt.com, a `blob:` or `data:` URL, or the loaded image drawn to a canvas), and downloads are fetched by the app.
 - Attaching an image sets the files of the chat's own file input (or pastes them), as picking them in the file dialog would; it never presses send outside Full auto.
 - Extension pages run under `script-src 'self'; object-src 'none'; base-uri 'none'`. `externally_connectable` is empty: no page or other extension can message Bridge.
-- Every `chrome.runtime` listener checks the sender and parses with zod. The worker accepts chat requests only from frame 0 of an `https://chatgpt.com` tab, and file requests only while that tab has an active session.
+- Every `chrome.runtime` listener checks the sender and parses with zod. The worker accepts chat requests only from frame 0 of an `https://chatgpt.com` tab, and file requests only while that tab has an active session. The chat tab's clock port (Full auto's timing in a background tab) is accepted from the same sender only, carries nothing but wait ids, durations, the loop's state and its report, and asks for no permission.
 - `chrome.storage.local` (which content scripts can read) holds only paths, hashes, counts, states and the port: never file contents, output or the key.
 - Cards live in closed shadow roots and are built from text nodes; nothing from the chat goes through `innerHTML`.
 

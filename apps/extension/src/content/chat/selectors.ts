@@ -110,6 +110,48 @@ export const SELECTORS = {
     '[role="alert"]'
   ],
   /**
+   * A file in the composer waiting to go with the message: an attached image, or the
+   * "Pasted text" chip the page makes of a long paste. Best guesses; the remove button is
+   * the last fallback, since every chip has one.
+   */
+  composerAttachment: [
+    '[data-testid="composer-attachment"]',
+    '[data-testid*="attachment-tile"]',
+    '[data-testid*="file-tile"]',
+    'button[aria-label^="Remove file"]',
+    'button[aria-label^="Remove attachment"]'
+  ],
+  /**
+   * Marks an attachment still uploading or being processed: the page won't send until it's
+   * done. Looked for inside the composer's form. Best guesses; a chip whose text or label
+   * says so (`UPLOADING_TEXT`) counts too.
+   */
+  attachmentBusy: [
+    '[data-testid*="upload-progress"]',
+    '[data-state="uploading"]',
+    '[data-state="processing"]',
+    '[role="progressbar"]',
+    '[aria-busy="true"]',
+    '.animate-spin'
+  ],
+  /**
+   * Where the page says a usage limit is near or reached ("You've reached your limit…",
+   * "3 messages remaining"). The specific ones first; every match must read like a limit
+   * (`LIMIT_REACHED_TEXT`, `LIMIT_WARNING_TEXT`). Best guesses; check them on the live page.
+   */
+  usageLimit: [
+    '[data-testid*="rate-limit"]',
+    '[data-testid*="usage-limit"]',
+    '[data-testid*="limit-reached"]',
+    '[data-testid*="cap-reached"]',
+    '[data-testid*="usage"]',
+    '[data-testid*="banner"]',
+    '[role="alert"]',
+    '[role="status"]',
+    '.text-token-text-error',
+    '[class*="text-red"]'
+  ],
+  /**
    * An image the chat made, inside an assistant turn. Best guesses: the page labels them
    * "Generated image"; the last fallback is any big image in the turn (`isGeneratedImage`).
    */
@@ -145,6 +187,15 @@ export const CUT_OFF_TEXT =
   /network error|something went wrong|error (?:in (?:message|body) stream|generating)|connection (?:lost|error|interrupted)|timed out/i;
 /** Turn states (`TURN_STATE_ATTRIBUTE`) that mean the reply ended early. Best guesses. */
 export const INTERRUPTED_TURN_STATES = ['error', 'failed', 'interrupted', 'aborted'];
+
+/** An attachment chip's text or label while the page is still taking it in. */
+export const UPLOADING_TEXT = /\b(?:uploading|processing|loading)\b/i;
+/** A usage limit the user has hit: nothing more can be sent until it resets. */
+export const LIMIT_REACHED_TEXT =
+  /you['’]ve (?:reached|hit|used up) (?:your|the|our) (?:[\w-]+ ){0,4}?limit|(?:usage|message|rate) (?:limit|cap) (?:reached|exceeded)|out of (?:free )?messages|no (?:more )?messages (?:left|remaining)/i;
+/** The page warning that the limit is near ("3 messages remaining", "usage remaining"). */
+export const LIMIT_WARNING_TEXT =
+  /usage remaining|\b(?:\d+|a few|few) (?:more )?(?:messages?|responses?) (?:left|remaining)/i;
 
 /** Text that marks an error or limit banner, so a stray red element doesn't pause the loop. */
 export const ERROR_TEXT =
@@ -365,6 +416,77 @@ export function findSendButton(doc: Document = document): HTMLButtonElement | nu
 export function userMessageCount(doc: Document = document): number {
   const root = findConversation(doc) ?? doc;
   return all(root, SELECTORS.userMessage).length;
+}
+
+/** Attachments in the composer: images, or the chip a long paste turned into. */
+export function composerAttachments(doc: Document = document): Element[] {
+  const scope = composerScope(doc);
+  if (scope === doc) return [];
+  return all(scope, SELECTORS.composerAttachment).filter(isShown);
+}
+
+/**
+ * Something in the composer is still uploading or being processed, so pressing send would do
+ * nothing yet: a progress mark in the composer's form, or a chip that says so.
+ */
+export function composerBusy(doc: Document = document): boolean {
+  const scope = composerScope(doc);
+  if (scope === doc) return false;
+  const composer = findComposer(doc);
+  for (const selector of SELECTORS.attachmentBusy) {
+    for (const element of scope.querySelectorAll(selector)) {
+      // The composer's own text can't be a progress mark.
+      if (composer?.contains(element) || !isShown(element)) continue;
+      return true;
+    }
+  }
+  return composerAttachments(doc).some((chip) =>
+    UPLOADING_TEXT.test(`${chip.getAttribute('aria-label') ?? ''} ${chip.textContent ?? ''}`)
+  );
+}
+
+export interface UsageLimit {
+  /** Nothing can be sent until it resets. False for the "messages remaining" warning. */
+  reached: boolean;
+  /** When it resets, in the page's words ("at 4:30 PM", "in 3 hours"), or null. */
+  resetsAt: string | null;
+}
+
+/** When a limit resets, from the page's text, or null if it doesn't say. */
+export function limitResetTime(text: string): string | null {
+  const at =
+    /\b(?:resets?|until|after|again at|available at)\b[^\d]{0,24}?(\d{1,2}(?::\d{2})?\s*(?:[ap]\.m\.|[ap]m\b)?(?:\s+(?:today|tomorrow))?)/i.exec(
+      text
+    );
+  if (at?.[1] && (/:/.test(at[1]) || /[ap]\.?m/i.test(at[1]))) {
+    return `at ${at[1].replace(/\s+/g, ' ').trim()}`;
+  }
+  const after = /\bin (\d+ (?:hours?|hrs?|minutes?|mins?|days?))\b/i.exec(text);
+  if (after?.[1]) return `in ${after[1]}`;
+  if (/\bresets? tomorrow\b/i.test(text)) return 'tomorrow';
+  return null;
+}
+
+/**
+ * The page's usage-limit state: reached ("You've reached your limit"), near ("3 messages
+ * remaining"), or null. Message text never counts.
+ */
+export function usageLimit(doc: Document = document): UsageLimit | null {
+  let warning: UsageLimit | null = null;
+  for (const selector of SELECTORS.usageLimit) {
+    for (const element of doc.querySelectorAll(selector)) {
+      if (element.closest(`[${BRIDGE_HOST_ATTRIBUTE}]`) || closest(element, SELECTORS.anyMessage)) {
+        continue;
+      }
+      const text = (element.textContent ?? '').replace(/\s+/g, ' ').trim();
+      if (!text || text.length > 600) continue;
+      if (LIMIT_REACHED_TEXT.test(text)) return { reached: true, resetsAt: limitResetTime(text) };
+      if (!warning && LIMIT_WARNING_TEXT.test(text)) {
+        warning = { reached: false, resetsAt: limitResetTime(text) };
+      }
+    }
+  }
+  return warning;
 }
 
 /** The text of a visible error or limit banner, or null. */

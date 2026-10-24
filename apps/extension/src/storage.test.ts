@@ -60,7 +60,7 @@ describe('chrome.storage.local', () => {
     ]);
   });
 
-  it('is written only by the card store, sessions, the port and the chip corner', () => {
+  it('is written only by the card store, sessions, the port, the chip corner and the tip', () => {
     const writers = sources()
       .filter((path) => /storage\.local\.set|local\.set\(/.test(readFileSync(path, 'utf8')))
       .map(rel)
@@ -69,7 +69,8 @@ describe('chrome.storage.local', () => {
     const index = readFileSync(join(SRC, 'background/index.ts'), 'utf8');
     expect(index.match(/chrome\.storage\.local\.set\(\{ (\w+)/g)).toEqual([
       'chrome.storage.local.set({ port',
-      'chrome.storage.local.set({ chipCorner'
+      'chrome.storage.local.set({ chipCorner',
+      'chrome.storage.local.set({ backgroundTipSeen'
     ]);
   });
 });
@@ -94,9 +95,11 @@ describe('runtime message listeners', () => {
       }))
     );
     expect(listeners.map((l) => l.path).sort()).toEqual([
+      'background/clock.ts',
       'background/index.ts',
       'background/index.ts',
       'background/index.ts',
+      'content/chat/clock.ts',
       'content/index.ts',
       'sidepanel/App.tsx'
     ]);

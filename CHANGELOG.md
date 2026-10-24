@@ -24,6 +24,8 @@ Dev servers that keep running, images and other binary files, and a Full auto th
 - **The chat hears when you change the allowed commands.** Change the list in the middle of a session and the next message Bridge puts in the chat starts with a short note listing what's allowed now and which are background commands.
 - **Add your dev server as a background command.** Projects set up before this version get a one-time note in Settings → Commands, "Add `npm run dev` as a background command?", with **Add** and **Dismiss**.
 - **Download from URL.** When the chat makes an image the page won't let Bridge read (it's served from another site), the Save to project card offers **Download from URL**, which has the app fetch it from its https address, only when you click, with the same checks as `@@DOWNLOAD`.
+- **Copy the pairing code.** The app's pairing code has a **Copy** button that copies just the six digits.
+- **Full auto in a background tab.** The first time Full auto runs while its tab is in the background, the side panel explains how to keep it going: keep the tab open, and add chatgpt.com to "Always keep these sites active" under Memory Saver in Chrome's settings.
 - **Install steps on every release page.** Release notes now open with **How to install**: which file to download for each computer, how to open the unsigned app, how to add the extension and pair, and which files to ignore. Each release also has a `Bridge-<version>-INSTALL.md` with troubleshooting and uninstall steps, and the extension zip has a `README.txt` with the Load unpacked steps.
 
 ### Changed
@@ -31,6 +33,9 @@ Dev servers that keep running, images and other binary files, and a Full auto th
 - **Images in Send files are attached.** Ticking an image attaches it to the message instead of pasting it as text. The character budget counts text files only and shows images separately ("2 files · 1 image"), and the button says what it will do ("Insert 2 files and attach 1 image").
 - **Large images are made to fit.** Before an image is attached (Send files, `@@READ`, Full auto), anything over 2048 pixels on its longest side is scaled down and recompressed to under 5 MB: PNG when it has transparency, JPEG otherwise. The file in your project is never changed. Only an image that still can't be made small enough is refused, and the card or panel says why.
 - **Card buttons are all the same height.** Every button on the chat's cards (Apply and Reject, Run and Cancel, Start and Stop, Save, Download…) now has one size, so pairs line up.
+- **`@@START` on a one-off command runs it.** When the chat writes `@@START npm run build@@` for an allowed command that isn't marked Background, Bridge runs it like `@@RUN` (the card says `format fixed`), and its result goes into the next message.
+- **A clean exit isn't red.** A background process that ends with exit 0 is shown neutral on its card, in the side panel, in the app and in Activity. Only a non-zero exit, a timeout or a killed process is red.
+- **Start again.** After a background process ends, its card's button says **Start again** (and a finished command's says **Run again**).
 - **`@@RUN` on a dev server starts it.** When the chat writes `@@RUN npm run dev@@` for a command marked Background, Bridge treats it as `@@START` (the card says `format fixed`), and Full auto just starts it.
 - **Full auto starts the dev server at the end.** A `@@START` in a reply that also says `@@DONE@@` is acted on before the run ends.
 - **Step limit 25 by default**, from 1 to 100 (was 10, up to 25). A limit of 10 saved by an earlier version, which was the old default, moves to 25.
@@ -39,6 +44,11 @@ Dev servers that keep running, images and other binary files, and a Full auto th
 
 ### Fixed
 
+- **Pasting the pairing code.** The app shows the code as "160 508"; pasting that into the side panel kept the space and cut off the last digit, so pairing said the code didn't match. The side panel now keeps only the digits (a space, a dash or whitespace around it are dropped), enables **Pair** at exactly six, and pairs as soon as a whole code is pasted. A code with fewer than six digits is never sent, so it doesn't count toward the five-try lockout.
+- **Full auto "send failed" after a long message.** The chat page turns a long message into a "Pasted text" attachment and won't send until it has processed it; Bridge pressed send too early and paused with "Bridge pressed send, but no new message appeared". Full auto now waits (up to 30 seconds) until nothing is still uploading or processing and the send button is enabled. If no new message appears within 5 seconds of pressing send, it checks again and presses once more before pausing.
+- **Message limits.** When the chat page says you've reached your message limit, Full auto pauses with "Message limit reached; resets at 4:30 PM." (the time when the page shows one) instead of "send failed".
+- **Full auto in a background tab.** Chrome slows a background tab's timers to once a minute after about five minutes, which stalled Full auto. Its waits are now timed by the extension's service worker, so it keeps its pace in a background tab.
+- **A closed or unloaded chat tab** (closed, reloaded away, or unloaded by Memory Saver) now pauses Full auto with "The chat tab was closed or unloaded" in the app instead of the run silently stopping.
 - **Start session after New chat.** After clicking New chat on the chat page, Start session could insert nothing, again and again, until the page was reloaded: the page can keep the previous chat's message box on the page, hidden, and Bridge pasted into that one. Bridge now only uses the message box, send and stop buttons you can see.
 - **Images counted as characters.** Ticking an image in Send files no longer counts its size as characters and then refuses it as too large.
 - **Install notes** no longer use the Apple logo character, which doesn't show outside Apple devices: they say "Apple menu (top-left corner of the screen)".

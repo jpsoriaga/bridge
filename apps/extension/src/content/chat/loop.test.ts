@@ -17,6 +17,8 @@ import {
   PROCESS_SETTLE_MS,
   MAX_FORMAT_REMINDERS,
   SEND_CONFIRM_MS,
+  SEND_READY_MS,
+  SEND_RETRY_MS,
   WAKE_WINDOW_MS,
   type EditHold,
   type LoopPage,
@@ -25,6 +27,7 @@ import {
   type ReplyStatus,
   type RunOutcome
 } from './loop';
+import type { UsageLimit } from './selectors';
 
 const CONFIG: BridgeConfig = {
   mode: 'full-auto',
@@ -52,7 +55,7 @@ const result = (exitCode: number, output = 'ok'): RunResult => ({
 });
 
 /** A chat page in memory. Sending adds a user turn unless `sendWorks` is false. */
-function fakePage() {
+function fakePage(now: () => number = () => 0) {
   const page = {
     conversation: 'conv-1' as string | null,
     turns: 1,
@@ -77,7 +80,13 @@ function fakePage() {
     online: true,
     /** Images attached with each message, and whether attaching works. */
     attached: [] as string[][],
-    attachWorks: true
+    attachWorks: true,
+    /** A long paste the page turned into a chip: busy until `busyUntil` (the loop's clock). */
+    chip: false,
+    busyUntil: 0,
+    /** Presses of send that the page swallows without sending, like a click while busy. */
+    swallow: 0,
+    limit: null as UsageLimit | null
   };
   const api: LoopPage = {
     conversationId: () => page.conversation,
@@ -85,6 +94,7 @@ function fakePage() {
     composerText: () => page.composer,
     insert: (text) => {
       if (!page.insertWorks) return { ok: false, error: 'not-inserted' };
+      if (page.chip) return { ok: true, method: 'paste', chars: text.length };
       page.composer += text;
       return { ok: true, method: 'paste', chars: text.length };
     },
@@ -99,13 +109,21 @@ function fakePage() {
         page.buttonLate -= 1;
         return false;
       }
+      if (page.swallow > 0) {
+        page.swallow -= 1;
+        return true;
+      }
       if (page.sendWorks) {
-        page.sent.push(page.composer);
+        page.sent.push(page.chip ? '[pasted text]' : page.composer);
         page.composer = '';
+        page.chip = false;
         if (!page.virtualized) page.turns += 1;
       }
       return true;
     },
+    composerBusy: () => page.chip && now() < page.busyUntil,
+    attachments: () => (page.chip ? 1 : 0),
+    usageLimit: () => page.limit,
     error: () => page.banner,
     replyStatus: () => page.status,
     replyLength: () => page.length,
@@ -268,7 +286,7 @@ function setup(config: Partial<BridgeConfig> = {}) {
   const reports: LoopReport[] = [];
   let cancels = 0;
   let ids = 0;
-  const { page, api } = fakePage();
+  const { page, api } = fakePage(() => clock);
   const loop = new FullAutoLoop({
     page: api,
     config: () => current,
@@ -626,6 +644,112 @@ describe('FullAutoLoop', () => {
     expect(t.loop.state).toBe('waiting-reply');
     expect(t.page.sent).toHaveLength(1);
     expect(t.page.buttonLate).toBe(0);
+  });
+
+  describe('a composer that isn’t ready yet', () => {
+    it('waits for a "Pasted text" chip that blocks send for 3s, then sends once', async () => {
+      const t = setup();
+      // The page turns the long follow-up into a chip and keeps send off while it works.
+      t.page.chip = true;
+      t.page.busyUntil = 100_000 + 3_000;
+      t.loop.onReply(reply({ runs: [{ command: 'pnpm test' }] }).actions);
+      await settle();
+      expect(t.page.sent).toEqual(['[pasted text]']);
+      expect(t.loop.state).toBe('waiting-reply');
+      expect(t.loop.step).toBe(1);
+      // It checked every 250ms, about 3s in all.
+      const waited = t.sleeps.reduce((a, b) => a + b, 0);
+      expect(waited).toBeGreaterThanOrEqual(3_000);
+      expect(waited).toBeLessThan(3_000 + 500);
+      expect(new Set(t.sleeps)).toEqual(new Set([250]));
+    });
+
+    it('gives up on a composer that stays busy after 30s', async () => {
+      const t = setup();
+      t.page.chip = true;
+      t.page.busyUntil = Number.POSITIVE_INFINITY;
+      t.loop.onReply(reply({ runs: [{ command: 'pnpm test' }] }).actions);
+      await settle();
+      expect(t.loop.reason).toBe('send-failed');
+      expect(t.page.sent).toEqual([]);
+      expect(t.sleeps.reduce((a, b) => a + b, 0)).toBeGreaterThanOrEqual(SEND_READY_MS);
+    });
+
+    it('doesn’t count an empty composer that still holds the chip as sent', async () => {
+      const t = setup();
+      t.page.chip = true;
+      t.page.sendWorks = false;
+      t.loop.onReply(reply({ runs: [{ command: 'pnpm test' }] }).actions);
+      await settle();
+      expect(t.loop.reason).toBe('send-failed');
+      expect(t.loop.step).toBe(0);
+    });
+
+    it('presses send again once when no new turn shows up within 5s', async () => {
+      const t = setup();
+      t.page.swallow = 1;
+      t.loop.onReply(reply({ runs: [{ command: 'pnpm test' }] }).actions);
+      await settle();
+      expect(t.page.sent).toHaveLength(1);
+      expect(t.page.sent[0]).toContain('Output of `pnpm test`');
+      expect(t.loop.state).toBe('waiting-reply');
+      expect(t.events()).toContain('sent: Sent message 1 of 10.');
+      expect(t.sleeps.reduce((a, b) => a + b, 0)).toBeGreaterThanOrEqual(SEND_RETRY_MS);
+    });
+
+    it('pauses after the retry fails too, with the text still in the composer once', async () => {
+      const t = setup();
+      t.page.swallow = 2;
+      t.loop.onReply(reply({ runs: [{ command: 'pnpm test' }] }).actions);
+      await settle();
+      expect(t.loop.reason).toBe('send-failed');
+      expect(t.page.swallow).toBe(0);
+      expect(t.page.composer.match(/Output of/g)).toHaveLength(1);
+    });
+  });
+
+  describe('usage limits', () => {
+    it('pauses with the limit and when it resets instead of sending', async () => {
+      const t = setup();
+      t.page.limit = { reached: true, resetsAt: 'at 4:30 PM' };
+      t.loop.onReply(reply({ runs: [{ command: 'pnpm test' }] }).actions);
+      await settle();
+      expect(t.loop.reason).toBe('usage-limit');
+      expect(t.page.sent).toEqual([]);
+      expect(t.reports.at(-1)).toMatchObject({ reason: 'usage-limit', detail: 'at 4:30 PM' });
+      expect(t.events().at(-1)).toBe('paused: Message limit reached; resets at 4:30 PM.');
+    });
+
+    it('says it’s the limit when a send fails while the page warns about it', async () => {
+      const t = setup();
+      t.page.sendWorks = false;
+      t.page.limit = { reached: false, resetsAt: null };
+      t.loop.onReply(reply({ runs: [{ command: 'pnpm test' }] }).actions);
+      await settle();
+      expect(t.loop.reason).toBe('usage-limit');
+      expect(t.events().at(-1)).toBe('paused: Message limit reached.');
+    });
+
+    it('pauses while waiting for a reply when the limit appears, not as a page error', async () => {
+      const t = setup();
+      t.loop.onReply(reply({ runs: [{ command: 'pnpm test' }] }).actions);
+      await settle();
+      expect(t.loop.state).toBe('waiting-reply');
+      t.page.banner = 'You’ve reached your message limit.';
+      t.page.limit = { reached: true, resetsAt: null };
+      t.loop.tick();
+      expect(t.loop.reason).toBe('usage-limit');
+    });
+
+    it('ignores the warning while sends still go through', async () => {
+      const t = setup();
+      t.page.limit = { reached: false, resetsAt: null };
+      t.loop.onReply(reply({ runs: [{ command: 'pnpm test' }] }).actions);
+      await settle();
+      expect(t.loop.state).toBe('waiting-reply');
+      t.loop.tick();
+      expect(t.loop.state).toBe('waiting-reply');
+    });
   });
 
   it('counts a send by the composer emptying when the turn count doesn’t move', async () => {

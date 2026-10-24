@@ -468,6 +468,27 @@ describe('App shell', () => {
     ).toBeTruthy();
   });
 
+  it('copies the pairing code’s digits only, and says Copied for a moment', async () => {
+    const t = installBridge(
+      makeState({
+        paired: false,
+        status: 'not-paired',
+        pairing: { phase: 'code', code: '160508', expiresAt: Date.now() + 60_000 }
+      })
+    );
+    render(<App />);
+    expect(await screen.findByText('160 508')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Copy the pairing code' }));
+    expect(t.bridge.copyPairingCode).toHaveBeenCalledWith();
+    expect(await screen.findByRole('button', { name: 'Copied' })).toBeTruthy();
+    await waitFor(
+      () => expect(screen.getByRole('button', { name: 'Copy the pairing code' })).toBeTruthy(),
+      {
+        timeout: 2_500
+      }
+    );
+  });
+
   it('shows the fingerprint to compare, and confirms or cancels it', async () => {
     const t = installBridge(
       makeState({
@@ -704,6 +725,79 @@ describe('1.3.0: background processes', () => {
     expect(await within(section).findByText(/VITE v5 ready/)).toBeTruthy();
     fireEvent.click(within(section).getByRole('button', { name: 'Stop' }));
     expect(bridge.stopProcess).toHaveBeenCalledWith('p-1');
+  });
+});
+
+describe('exit colours', () => {
+  const ended = (
+    procId: string,
+    command: string,
+    exitCode: number | null,
+    signal: string | null = null
+  ) => ({
+    procId,
+    command,
+    state: 'exited' as const,
+    url: null,
+    startedAt: Date.now() - 5_000,
+    endedAt: Date.now(),
+    exitCode,
+    signal
+  });
+
+  it('shows a clean exit neutral and a failed or killed one red on the Session page', async () => {
+    installBridge(
+      makeState({
+        processes: [
+          ended('p-1', 'npm run build:watch', 0),
+          ended('p-2', 'npm run api', 1),
+          ended('p-3', 'npm run dev', null, 'SIGKILL')
+        ]
+      })
+    );
+    render(<App />);
+    const section = (await screen.findByRole('heading', { name: 'Background processes' })).closest(
+      'section'
+    )!;
+    const tone = (command: string) =>
+      within(section)
+        .getByText(command)
+        .closest('li')!
+        .querySelector('.dot')!
+        .getAttribute('data-tone');
+    expect(tone('npm run build:watch')).toBeNull();
+    expect(tone('npm run api')).toBe('danger');
+    expect(tone('npm run dev')).toBe('danger');
+  });
+
+  it('shows exit 0 neutral and other exits red in Activity', () => {
+    installBridge();
+    render(
+      <ActivityView
+        hasProject
+        entries={[
+          entry({ id: 'a', kind: 'process', path: 'npm run once', text: 'exited (exit 0)' }),
+          entry({ id: 'b', kind: 'process', path: 'npm run api', text: 'exited (exit 1)' }),
+          entry({ id: 'c', kind: 'process', path: 'npm run dev', text: 'exited (SIGKILL)' }),
+          entry({
+            id: 'd',
+            kind: 'run',
+            path: 'npm test',
+            run: { status: 'exited', exitCode: 0, durationMs: 900 }
+          })
+        ]}
+      />
+    );
+    const tone = (text: RegExp) =>
+      screen
+        .getByText(text)
+        .closest('li, button')!
+        .querySelector('.dot')
+        ?.getAttribute('data-tone') ?? null;
+    expect(tone(/Background · exited \(exit 0\)/)).toBeNull();
+    expect(tone(/Background · exited \(exit 1\)/)).toBe('danger');
+    expect(tone(/Background · exited \(SIGKILL\)/)).toBe('danger');
+    expect(tone(/Passed · 0\.9s/)).toBe('success');
   });
 });
 

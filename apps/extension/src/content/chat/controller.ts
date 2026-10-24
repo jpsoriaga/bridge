@@ -26,6 +26,7 @@ import type {
   TabLocation,
   WorkerRequest
 } from '../../messages';
+import { CLOCK_PORT } from '../../messages';
 import { messageToText } from './adapter';
 import { AssetCard } from './cards/asset-card';
 import { ChangeCard, type FileChange } from './cards/change-card';
@@ -41,6 +42,7 @@ import { PageNotice } from './cards/page-notice';
 import { ProcessCard, type ProcessKind } from './cards/process-card';
 import { ReadCard } from './cards/read-card';
 import { RunCard } from './cards/run-card';
+import { Clock } from './clock';
 import { blockKey, contentHash } from './keys';
 import {
   FullAutoLoop,
@@ -227,7 +229,19 @@ export class ChatController {
   private history: Set<string> | null = null;
   private observer: MutationObserver | null = null;
   private observed: Element | null = null;
-  private timer: ReturnType<typeof setTimeout> | undefined;
+  /** Cancels the scan waiting to run, if any. */
+  private cancelScan: (() => void) | undefined;
+  /** Full auto's waits and ticks, from the worker's timers while the tab is hidden. */
+  private readonly clock = new Clock({
+    connect: () =>
+      typeof chrome !== 'undefined' && typeof chrome.runtime?.connect === 'function'
+        ? chrome.runtime.connect({ name: CLOCK_PORT })
+        : null,
+    hidden: () => document.visibilityState === 'hidden',
+    now: () => Date.now(),
+    setTimeout: (fn, ms) => setTimeout(fn, ms),
+    clearTimeout: (timer) => clearTimeout(timer)
+  });
   private scanning = false;
   private rescan = false;
   private firstSync = true;
@@ -265,13 +279,14 @@ export class ChatController {
       config: () => this.config,
       report: (report) => {
         void this.ask({ type: 'chat-loop', report });
+        this.clock.update(report);
         this.renderChip();
       },
       cancelRun: () => {
         for (const card of this.runCards.values()) if (card.running) void card.cancel();
       },
       now: () => Date.now(),
-      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      sleep: (ms) => this.clock.sleep(ms),
       newId: () => crypto.randomUUID()
     });
   }
@@ -285,6 +300,11 @@ export class ChatController {
     this.conversationId = conversationIdFrom(location.href);
     void this.sync();
     this.pollTimer = setInterval(() => this.poll(), POLL_MS);
+    // Hidden, the page's timers fall behind; while Full auto runs, the worker ticks instead.
+    this.clock.onTick = () => this.poll();
+    document.addEventListener('visibilitychange', () => {
+      if (!this.invalid) this.clock.visibilityChanged();
+    });
     // Client-side navigation. This isolated world can't wrap the page's own pushState, but
     // the Navigation API reports it (and replaceState) at once, popstate covers Back and
     // Forward, the poll is the fallback, and the worker asks (`locate`) before inserting.
@@ -336,7 +356,7 @@ export class ChatController {
     this.invalid = true;
     composerNote.peek = () => null;
     clearInterval(this.pollTimer);
-    clearTimeout(this.timer);
+    this.cancelScan?.();
     this.observer?.disconnect();
     this.loop.stop();
     this.clear();
@@ -722,8 +742,8 @@ export class ChatController {
   }
 
   private schedule(): void {
-    clearTimeout(this.timer);
-    this.timer = setTimeout(() => void this.scan(), SCAN_DEBOUNCE_MS);
+    this.cancelScan?.();
+    this.cancelScan = this.clock.after(SCAN_DEBOUNCE_MS, () => void this.scan());
   }
 
   private async scan(): Promise<void> {
@@ -973,11 +993,25 @@ export class ChatController {
       const parsed = parseCommand(command);
       return parsed.ok && matchAllowlist(parsed.argv, background) !== null;
     };
-    const runs = parse.runs.filter((command) => !isBackground(command));
+    // The reverse too: `@@START npm run build@@` for an allowed command that isn't marked
+    // background would only be refused. It's a task, run like a `@@RUN` (`format fixed`).
+    const allowlist = this.config?.allowlist ?? [];
+    const isTask = (command: string) => {
+      const parsed = parseCommand(command);
+      return (
+        parsed.ok &&
+        matchAllowlist(parsed.argv, allowlist) !== null &&
+        matchAllowlist(parsed.argv, background) === null
+      );
+    };
+    const startRuns = parse.starts.filter(
+      (command) => isTask(command) && !parse.runs.includes(command)
+    );
+    const runs = [...parse.runs.filter((command) => !isBackground(command)), ...startRuns];
     const runStarts = parse.runs.filter(
       (command) => isBackground(command) && !parse.starts.includes(command)
     );
-    const starts = [...parse.starts, ...runStarts];
+    const starts = [...parse.starts.filter((command) => !isTask(command)), ...runStarts];
     // Each image takes the next `@@ASSET` path. Paths with no image wait for the next reply.
     let assetPaths = parse.assets;
     if (images.length === 0) {
@@ -1160,7 +1194,7 @@ export class ChatController {
         })
     );
     for (const card of view.runs) {
-      card.formatFixed = fixed.runs.includes(card.command);
+      card.formatFixed = fixed.runs.includes(card.command) || startRuns.includes(card.command);
       card.setConfig(this.config);
     }
 

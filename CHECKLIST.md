@@ -486,6 +486,22 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [x] Release dry run on GitHub green (run 40114909873; `release` skipped, `dry-run` passed); CI green on all three systems
 - [ ] Manual run on the real chatgpt.com (e2e README "1.3.0 fixes on the real chatgpt.com")
 
+## 1.3.0-beta.1: Fixes from the live test, round 2
+
+- [x] Full auto "send failed" with long messages: waits up to 30s (every 250ms) for no attachment uploading or processing and an enabled send button; a send with no new turn in 5s is checked and pressed once more; an empty composer holding a chip isn't counted as sent (tests: loop with a 3s chip, a swallowed send, a composer busy past 30s; selectors; e2e `send.cjs`)
+- [x] Usage limits: `usageLimit` / `limitResetTime` in `selectors.ts` with fallbacks; pause `usage-limit` "Message limit reached; resets at <time>" before a send, while waiting, and for a send that fails under the warning (tests; e2e)
+- [x] Full auto in a background tab: waits and the 1s poll from the worker over `CLOCK_PORT` while a loop runs (`Clock`, `serveClock`); falls back to page timers and reconnects (tests: 6 simulated minutes hidden with page timers throttled to the minute, the send on time; without the worker, a minute late)
+- [x] One-time side panel tip while Full auto runs in a hidden tab (Memory Saver, `chrome://settings/performance`), **Got it** stores `backgroundTipSeen` (tests: clock state; storage guard)
+- [x] Tab closed, unloaded or discarded mid-run: paused `tab-closed` "The chat tab was closed or unloaded", its command stopped, Stop ends it (tests: `goneTabReport`; e2e closing the tab)
+- [x] `@@START` of an allowed command not marked background → RUN card `format fixed`, run as a task in Full auto (tests: controller; e2e)
+- [x] Exit colours: `processTone` for the START card badge, side panel and app process dots, Activity; `exit 0` never red (tests: shared, cards, renderer; e2e on all four)
+- [x] **Start again** after a background process ends; **Run again** after a task (tests; e2e)
+- [x] Pairing: digits only before the 6-digit limit (`pairingDigits`), no `maxLength`, Pair at exactly 6, auto-submit on a full paste; short codes never sent and not counted by `redeem`; **Copy** in the app copies the digits only, "Copied" briefly (tests: panel helper, server, renderer, IPC; e2e `run.cjs` pastes "123 456", "123-456", " 123456\n")
+- [x] Name in LICENSE, README, PRIVACY.md and the desktop package metadata: John Patrick Soriaga
+- [x] Format, lint, typecheck, tests with coverage, build, every e2e script (new `e2e/send.cjs`, in CI); PLAN.md, DESIGN.md, SECURITY.md, CHANGELOG, e2e README
+- [ ] Release dry run on GitHub green
+- [ ] Manual run on the real chatgpt.com (e2e README "1.3.0 fixes on the real chatgpt.com, round 2")
+
 ## Landing page (`apps/site`)
 
 - [x] `@bridge/site`: Vite 7, React 18, TypeScript, Tailwind v4 (`@tailwindcss/vite`) with the tokens mapped into its theme; self-hosted Geist; private, outside `version:set`, the release workflow and the root build

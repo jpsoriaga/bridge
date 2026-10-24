@@ -17,6 +17,7 @@ import { attachRefusalText, prepareAttachment } from '../attach-image';
 import { base64ToBytes, sha256Hex, uploadChunks } from '../binary';
 import {
   ChipCorner,
+  CLOCK_PORT,
   PanelHello,
   type AttachFilesResult,
   type AttachmentFile,
@@ -41,6 +42,7 @@ import {
   type WorkerRequestOf
 } from '../messages';
 import { CardStore } from './cards';
+import { goneTabReport, serveClock } from './clock';
 import { Connection, type ConnectionStorage, type ReconnectAlarm } from './connection';
 import { browserVersion, extensionDiagnostics } from './diagnostics';
 import { indexedDbKeyStore, migratingKeyStore } from './key-store';
@@ -171,6 +173,14 @@ const runTabs = new Map<string, number>();
 const loops = new Map<number, LoopReport>();
 const loopActive = (report: LoopReport | undefined) =>
   report !== undefined && report.state !== 'idle' && report.state !== 'stopped';
+/** Chat tabs whose Full auto runs while the tab is hidden (from their clock ports). */
+const hiddenRuns = new Set<number>();
+/** The side panel's tip about Full auto in a background tab was dismissed. A state only. */
+let backgroundTipSeen = true;
+void chrome.storage.local.get('backgroundTipSeen').then(({ backgroundTipSeen: seen }) => {
+  backgroundTipSeen = seen === true;
+  if (!backgroundTipSeen && hiddenRuns.size > 0) notifyPanels();
+});
 
 /** Each chat tab's READ and RUN cards still waiting for a click. */
 const requests = new Map<number, PendingRequest[]>();
@@ -805,7 +815,11 @@ async function handlePanel(
       return sendFiles(request.paths, request.windowId);
     case 'loop-control': {
       const tabId = await activeTabId(request.windowId);
-      if (tabId !== null) void tellTab(tabId, { type: 'loop-control', action: request.action });
+      if (tabId === null) return null;
+      // The run's tab was unloaded: nothing there can stop it, so Stop ends it here.
+      if (request.action === 'stop' && loops.get(tabId)?.reason === 'tab-closed') {
+        forgetLoop(tabId, 'Stopped.');
+      } else void tellTab(tabId, { type: 'loop-control', action: request.action });
       return null;
     }
     case 'page-diagnostics': {
@@ -818,6 +832,11 @@ async function handlePanel(
     case 'diagnostics':
       log.info('diagnostics copied');
       return diagnostics(request.windowId);
+    case 'background-tip-seen':
+      backgroundTipSeen = true;
+      await chrome.storage.local.set({ backgroundTipSeen: true });
+      notifyPanels();
+      return null;
     case 'run-cancel': {
       const running = connection.config?.running;
       if (running) await connection.request('run_cancel', { runId: running.runId });
@@ -866,7 +885,43 @@ function notifyPanels(): void {
   for (const push of panelPushers) push();
 }
 
+/**
+ * A chat tab's clock port: the worker times its waits and ticks while Full auto runs (see
+ * `content/chat/clock.ts`). The port closing under a running loop means the tab was closed
+ * or unloaded.
+ */
+function connectClock(port: chrome.runtime.Port): void {
+  const sender = port.sender ? classifySender(port.sender, chrome.runtime.id, extensionPage) : null;
+  if (sender?.kind !== 'chat-tab') {
+    port.disconnect();
+    return;
+  }
+  const { tabId } = sender;
+  serveClock(port, {
+    setTimeout: (fn, ms) => setTimeout(fn, ms),
+    clearTimeout: (timer) => clearTimeout(timer),
+    setInterval: (fn, ms) => setInterval(fn, ms),
+    clearInterval: (timer) => clearInterval(timer),
+    onState: ({ running, hidden, report }) => {
+      // A restarted worker learns the loop from the tab.
+      if (report && !loops.has(tabId)) loops.set(tabId, report);
+      const had = hiddenRuns.has(tabId);
+      if (running && hidden) hiddenRuns.add(tabId);
+      else hiddenRuns.delete(tabId);
+      if (had !== hiddenRuns.has(tabId)) notifyPanels();
+    },
+    onGone: () => {
+      hiddenRuns.delete(tabId);
+      loopGone(tabId);
+    }
+  });
+}
+
 chrome.runtime.onConnect.addListener((port) => {
+  if (port.name === CLOCK_PORT) {
+    connectClock(port);
+    return;
+  }
   if (port.name !== SIDE_PANEL_PORT || !port.sender?.url?.startsWith(extensionPage)) {
     port.disconnect();
     return;
@@ -898,6 +953,7 @@ chrome.runtime.onConnect.addListener((port) => {
           project: connection.project,
           config: connection.config,
           fullAutoOff,
+          backgroundTip: !backgroundTipSeen && hiddenRuns.size > 0,
           chat
         } satisfies StatusUpdate);
       })
@@ -963,10 +1019,34 @@ function forgetLoop(tabId: number, why: string): void {
   notifyPanels();
 }
 
+/**
+ * The tab's content script is gone mid-run (closed, unloaded, discarded by Memory Saver):
+ * the run pauses with `tab-closed` in the app and the side panel instead of silently
+ * stopping, and any command it started is stopped. Reloading the tab, or Stop, ends it.
+ */
+function loopGone(tabId: number): void {
+  const paused = goneTabReport(loops.get(tabId));
+  if (!paused) return;
+  log.info('full auto: paused, the chat tab was closed or unloaded');
+  loops.set(tabId, paused);
+  connection.notify('loop_report', paused);
+  for (const [runId, owner] of runTabs) {
+    if (owner === tabId) void connection.request('run_cancel', { runId });
+  }
+  notifyPanels();
+}
+
 chrome.tabs.onRemoved.addListener((tabId) => {
   void sessions.removeTab(tabId);
   requests.delete(tabId);
-  forgetLoop(tabId, 'The chat tab closed.');
+  hiddenRuns.delete(tabId);
+  loopGone(tabId);
+});
+chrome.tabs.onUpdated.addListener((tabId, change) => {
+  if (change.discarded === true) {
+    hiddenRuns.delete(tabId);
+    loopGone(tabId);
+  }
 });
 
 let loggedStatus: string | null = null;
@@ -1016,7 +1096,10 @@ connection.onEvent((event) => {
     case 'loop-stop':
       // Stop from the app: every tab with a running loop halts.
       for (const [tabId, report] of loops) {
-        if (loopActive(report)) void tellTab(tabId, { type: 'loop-control', action: 'stop' });
+        if (!loopActive(report)) continue;
+        // A tab that's gone can't stop its loop: say it stopped here.
+        if (report.reason === 'tab-closed') forgetLoop(tabId, 'Stopped.');
+        else void tellTab(tabId, { type: 'loop-control', action: 'stop' });
       }
       break;
     case 'files-changed': {

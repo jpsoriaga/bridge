@@ -2,7 +2,7 @@
 
 _Effective 25 October 2026 (downloads, images and attachments added in 1.3.0; first published 19 October 2026). Applies to the Bridge desktop app and the Bridge Chrome extension, version 1.0.0 and later._
 
-Bridge is a personal open-source tool by Jaypee Soriaga. It has no servers, no accounts and no analytics. Everything it does happens on your computer.
+Bridge is a personal open-source tool by John Patrick Soriaga. It has no servers, no accounts and no analytics. Everything it does happens on your computer.
 
 ## The short version
 

@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent } from 'react';
+import { useEffect, useState, type KeyboardEvent } from 'react';
 import { MODE_DESCRIPTIONS, MODE_LABELS, MODES, type Mode } from '@bridge/shared';
 import type { ActivityEntry, DesktopState, OpenFolderResult } from '../../preload/api';
 import { RunningCommand } from './Commands';
@@ -92,6 +92,9 @@ function ProjectSection({ state }: { state: DesktopState }) {
   );
 }
 
+/** How long Copy says "Copied". */
+const COPIED_MS = 1_500;
+
 /** Pairing with the Chrome extension: the code, the paired state, or Pair. */
 export function ExtensionSection({ state }: { state: DesktopState }) {
   const [busy, setBusy] = useState(false);
@@ -106,6 +109,18 @@ export function ExtensionSection({ state }: { state: DesktopState }) {
     void action().finally(() => setBusy(false));
   };
   const startPairing = () => run(() => window.bridge.startPairing());
+  // "Copied" for a moment after Copy, like the cards' Copy path.
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), COPIED_MS);
+    return () => clearTimeout(timer);
+  }, [copied]);
+  const copyCode = () =>
+    void window.bridge.copyPairingCode().then(
+      (ok) => setCopied(ok),
+      () => setCopied(false)
+    );
 
   return (
     <section aria-labelledby="extension-title" id="extension">
@@ -155,9 +170,22 @@ export function ExtensionSection({ state }: { state: DesktopState }) {
         </>
       ) : code ? (
         <>
-          <p className="pairing-code" aria-label={`Pairing code ${code.code.split('').join(' ')}`}>
-            {code.code.slice(0, 3)} {code.code.slice(3)}
-          </p>
+          <div className="pairing-row">
+            <p
+              className="pairing-code"
+              aria-label={`Pairing code ${code.code.split('').join(' ')}`}
+            >
+              {code.code.slice(0, 3)} {code.code.slice(3)}
+            </p>
+            <button
+              type="button"
+              className="btn"
+              aria-label={copied ? 'Copied' : 'Copy the pairing code'}
+              onClick={copyCode}
+            >
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+          </div>
           <p className="hint">
             Enter this code in the Bridge side panel in Chrome. Expires in{' '}
             {formatCountdown(code.expiresAt - now)}.

@@ -51,6 +51,9 @@ const ask = vi.fn(async (request: WorkerRequest) => {
       return { ok: false, error: { code: 'not-found', message: 'missing' } };
     case 'chat-write':
       return { ok: true, result: { opId: 'op-1', kind: 'create', hash: 'b'.repeat(64) } };
+    case 'chat-run':
+      // The app answers; what it says doesn't matter to these tests.
+      return { ok: false, error: { code: 'timeout', message: 'no app here' } };
     case 'chat-move-here':
       session = 'active';
       return 'active';
@@ -248,6 +251,63 @@ describe('@@RUN of a background command', () => {
     expect(text).toContain('format fixed');
     expect(hosts('run-card')[0]!.shadowRoot?.textContent).toContain('npm test');
     open.mockRestore();
+  });
+});
+
+describe('@@START of a command not marked background', () => {
+  const reply = (id: string, markers: string[]) =>
+    `<main><article data-testid="conversation-turn-2"><div data-message-author-role="assistant" data-message-id="${id}"><div class="markdown prose">${markers.map((m) => `<p><code>${m}</code></p>`).join('')}</div></div><div><button data-testid="copy-turn-action-button" aria-label="Copy"></button></div></article></main>`;
+
+  it('becomes a RUN card marked format fixed; background and unknown ones stay START cards', async () => {
+    const attach = HTMLElement.prototype.attachShadow;
+    const open = vi.spyOn(HTMLElement.prototype, 'attachShadow').mockImplementation(function (
+      this: HTMLElement,
+      init: ShadowRootInit
+    ) {
+      return attach.call(this, { ...init, mode: 'open' });
+    });
+    syncConfig = {
+      ...CONFIG,
+      mode: 'manual',
+      allowlist: ['npm run dev', 'npm run build'],
+      background: ['npm run dev']
+    };
+    await startWithNewReply(
+      reply('m-start-build', [
+        '@@START npm run build@@',
+        '@@START npm run dev@@',
+        '@@START npm run lint@@'
+      ])
+    );
+    const runs = hosts('run-card');
+    expect(runs).toHaveLength(1);
+    const run = runs[0]!.shadowRoot?.textContent ?? '';
+    expect(run).toContain('npm run build');
+    expect(run).toContain('format fixed');
+    expect(run).toContain('Run');
+    const starts = [...hosts('process-card')].map((h) => h.shadowRoot?.textContent ?? '');
+    expect(starts).toHaveLength(2);
+    expect(starts[0]).toContain('npm run dev');
+    expect(starts[0]).not.toContain('format fixed');
+    // Not on the allowlist at all: still a START, refused as before.
+    expect(starts[1]).toContain('npm run lint');
+    expect(starts[1]).toContain('not allowed');
+    open.mockRestore();
+  });
+
+  it('runs as a task in Full auto, with its result in the follow-up', async () => {
+    syncConfig = {
+      ...CONFIG,
+      mode: 'full-auto',
+      allowlist: ['npm run build'],
+      background: []
+    };
+    await startWithNewReply(reply('m-start-build-auto', ['@@START npm run build@@']));
+    await wait(400);
+    const runs = calls.filter((c) => c.type === 'chat-run');
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ argv: ['npm', 'run', 'build'] });
+    expect(calls.filter((c) => c.type === 'chat-bg-start')).toHaveLength(0);
   });
 });
 

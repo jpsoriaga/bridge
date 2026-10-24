@@ -12,6 +12,7 @@ const channels = (Object.keys(IPC) as (keyof typeof IPC)[]).filter(
 const CALLS: Record<IpcChannel, { good: unknown[]; bad: unknown[][] }> = {
   getStatus: { good: [], bad: [[1]] },
   startPairing: { good: [], bad: [['x']] },
+  copyPairingCode: { good: [], bad: [['123456']] },
   confirmPairing: { good: [], bad: [[true]] },
   cancelPairing: { good: [], bad: [[{}]] },
   unpair: { good: [], bad: [[null]] },

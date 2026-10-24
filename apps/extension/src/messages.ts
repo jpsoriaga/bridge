@@ -219,6 +219,8 @@ export const WorkerRequest = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('page-diagnostics'), windowId: WindowId }),
   // Copy diagnostics in the side panel: versions, states and recent events, as text.
   z.strictObject({ type: z.literal('diagnostics'), windowId: WindowId }),
+  // The side panel's tip about Full auto in a background tab was dismissed, for good.
+  z.strictObject({ type: z.literal('background-tip-seen') }),
 
   // Content script on chatgpt.com.
   z.strictObject({
@@ -386,6 +388,7 @@ export const EXTENSION_PAGE_REQUESTS: ReadonlySet<WorkerRequest['type']> = new S
   'attach-files',
   'page-diagnostics',
   'diagnostics',
+  'background-tip-seen',
   'dev-file'
 ]);
 
@@ -569,6 +572,8 @@ export const StatusUpdate = z.strictObject({
   config: BridgeConfig.nullable(),
   /** A session starting or ending turned Full auto off. Cleared when it's on again. */
   fullAutoOff: z.boolean(),
+  /** Full auto runs in a hidden tab and the tip about keeping it awake wasn't dismissed. */
+  backgroundTip: z.boolean(),
   chat: ChatPanelState
 });
 export type StatusUpdate = z.infer<typeof StatusUpdate>;
@@ -597,3 +602,41 @@ export type RequestOutcome<T> =
     };
 
 export const SIDE_PANEL_PORT = 'sidepanel';
+
+/**
+ * A chat tab's clock (`content/chat/clock.ts`). Chrome holds a hidden tab's timers back to
+ * once a minute after about 5 minutes, so while Full auto runs, the content script's waits
+ * and its 1s poll come from the worker's timers over this port instead.
+ */
+export const CLOCK_PORT = 'bridge-clock';
+/** The longest wait the worker times for a tab. Full auto's waits are a few seconds. */
+export const MAX_CLOCK_WAIT_MS = 60_000;
+
+/** From the content script on its clock port. */
+export const ClockRequest = z.discriminatedUnion('type', [
+  z.strictObject({
+    type: z.literal('clock-wait'),
+    id: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    ms: z.number().int().min(0).max(MAX_CLOCK_WAIT_MS)
+  }),
+  /** Whether Full auto runs and the tab is hidden; the loop's last report, for a restarted worker. */
+  z.strictObject({
+    type: z.literal('clock-state'),
+    running: z.boolean(),
+    hidden: z.boolean(),
+    report: LoopReport.nullable()
+  }),
+  /** The answer to a tick: a message to the worker keeps it running. */
+  z.strictObject({ type: z.literal('clock-tock') })
+]);
+export type ClockRequest = z.infer<typeof ClockRequest>;
+
+/** From the worker on a tab's clock port. */
+export const ClockMessage = z.discriminatedUnion('type', [
+  z.strictObject({
+    type: z.literal('clock-wake'),
+    id: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
+  }),
+  z.strictObject({ type: z.literal('clock-tick') })
+]);
+export type ClockMessage = z.infer<typeof ClockMessage>;

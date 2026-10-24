@@ -290,4 +290,4 @@ archive/prototype/  earlier prototype, reference only (not built)
 
 ## License
 
-[MIT](LICENSE) © Jaypee Soriaga. Bridge is not affiliated with or endorsed by OpenAI.
+[MIT](LICENSE) © John Patrick Soriaga. Bridge is not affiliated with or endorsed by OpenAI.

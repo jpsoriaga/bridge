@@ -32,7 +32,9 @@ const PAUSE_SHORT: Record<PauseReason, string> = {
   interrupted: 'reply cut off',
   'command-interrupted': 'command interrupted',
   download: 'download needs a click',
-  stuck: 'looks stuck'
+  stuck: 'looks stuck',
+  'usage-limit': 'message limit',
+  'tab-closed': 'tab unloaded'
 };
 
 export const CHIP_CORNERS: readonly ChipCorner[] = [

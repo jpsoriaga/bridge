@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   errorLines,
   formatUptime,
+  processTone,
   isBackgroundScript,
   isLocalUrl,
   looksLikeBackground,
@@ -106,5 +107,27 @@ describe('formatUptime', () => {
     expect(formatUptime(12 * 60_000 + 3_000)).toBe('12m 3s');
     expect(formatUptime(2 * 3_600_000 + 5 * 60_000)).toBe('2h 5m');
     expect(formatUptime(-5)).toBe('0s');
+  });
+});
+
+describe('processTone', () => {
+  const proc = (state: 'running' | 'exited' | 'stopped', exitCode: number | null, url = null) => ({
+    state,
+    exitCode,
+    url
+  });
+
+  it('is red only for a failed exit or a kill', () => {
+    expect(processTone(proc('exited', 0))).toBeUndefined();
+    expect(processTone(proc('exited', 1))).toBe('danger');
+    expect(processTone(proc('exited', null))).toBe('danger');
+    expect(processTone(proc('stopped', null))).toBeUndefined();
+  });
+
+  it('is green at its URL and orange before it', () => {
+    expect(processTone({ state: 'running', exitCode: null, url: 'http://localhost:5173/' })).toBe(
+      'success'
+    );
+    expect(processTone(proc('running', null))).toBe('warning');
   });
 });

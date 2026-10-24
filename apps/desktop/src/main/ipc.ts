@@ -14,6 +14,7 @@ const none = z.tuple([]);
 export const IPC_ARGS: Readonly<Record<IpcChannel, z.ZodType<unknown[]>>> = {
   getStatus: none,
   startPairing: none,
+  copyPairingCode: none,
   confirmPairing: none,
   cancelPairing: none,
   unpair: none,

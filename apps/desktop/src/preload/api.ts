@@ -246,6 +246,11 @@ export interface BridgeApi {
   /** Returns an unsubscribe function. */
   onStatus(listener: (state: DesktopState) => void): () => void;
   startPairing(): Promise<PairingCode>;
+  /**
+   * Puts the pairing code on screen on the clipboard: the six digits only, without the
+   * space. Main copies its own code; false if none is showing.
+   */
+  copyPairingCode(): Promise<boolean>;
   /** The fingerprints match: the extension may now finish pairing. */
   confirmPairing(): Promise<boolean>;
   /** Drops the code or the fingerprint check in progress. */
@@ -331,6 +336,7 @@ export const IPC = {
   getStatus: 'bridge:get-status',
   status: 'bridge:status',
   startPairing: 'bridge:start-pairing',
+  copyPairingCode: 'bridge:copy-pairing-code',
   confirmPairing: 'bridge:confirm-pairing',
   cancelPairing: 'bridge:cancel-pairing',
   unpair: 'bridge:unpair',

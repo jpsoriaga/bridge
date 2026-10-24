@@ -69,6 +69,19 @@ function readIdbKey() {
     step(`fingerprint ${fingerprint} matched in the app and the panel; confirmed in both`);
   }
   const wrongFor = (code) => (code === '000000' ? '111111' : '000000');
+  /** Pastes `text` into the code field, as Cmd+V would. */
+  async function paste(text) {
+    await panel.locator('#pair-code').focus();
+    await panel.evaluate((t) => {
+      const data = new DataTransfer();
+      data.setData('text/plain', t);
+      document
+        .getElementById('pair-code')
+        .dispatchEvent(
+          new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true })
+        );
+    }, text);
+  }
 
   // Wrong code, then the right one.
   let code = await getCode();
@@ -86,9 +99,45 @@ function readIdbKey() {
   await desktopStatus(win).filter({ hasText: 'Not paired' }).waitFor();
   step('fingerprint shown, then cancelled on both sides: still not paired');
 
-  // Confirming in the panel before the app is refused until the app confirms.
+  // Pasting the code as the app shows it ("160 508"), with a dash or with whitespace: only
+  // the digits count, a short one waits for more, and a whole one pairs at once. Copy in
+  // the app copies the six digits only.
   code = await getCode();
-  await enter(code);
+  await win.getByRole('button', { name: 'Copy the pairing code' }).click();
+  await win.getByRole('button', { name: 'Copied' }).waitFor();
+  const copied = await app.evaluate(({ clipboard }) => clipboard.readText());
+  if (copied !== code) throw new Error(`Copy put ${JSON.stringify(copied)} on the clipboard`);
+  step(`app Copy: ${JSON.stringify(copied)} on the clipboard, no space`);
+  for (const text of [`${code.slice(0, 3)}-${code.slice(3, 5)}`, ` ${code.slice(0, 2)} `]) {
+    await paste(text);
+    const value = await panel.inputValue('#pair-code');
+    if (value !== text.replace(/\D/g, '')) throw new Error(`pasted ${text}: field has ${value}`);
+    if (await panel.getByRole('button', { name: 'Pair' }).isEnabled()) {
+      throw new Error(`Pair enabled at ${value}`);
+    }
+    await panel.locator('#pair-code').press('Enter');
+  }
+  await panel.waitForTimeout(300);
+  if ((await panel.locator('#pair-error').count()) > 0) throw new Error('a short code was sent');
+  step('pasted "123-45" and " 12 ": digits only, Pair off, Enter sends nothing');
+  const forms = [
+    (c) => `${c.slice(0, 3)} ${c.slice(3)}`,
+    (c) => `${c.slice(0, 3)}-${c.slice(3)}`,
+    (c) => `  ${c}\n`
+  ];
+  for (const [i, form] of forms.entries()) {
+    const shown = form(code);
+    await paste(shown);
+    await panel.locator('.pairing-fingerprint').waitFor();
+    step(`pasted ${JSON.stringify(shown)}: sent at once, fingerprint shown`);
+    if (i === forms.length - 1) break;
+    await panel.getByRole('button', { name: 'Cancel' }).click();
+    await win.getByRole('button', { name: 'Cancel' }).click();
+    await panel.locator('#pair-code').waitFor();
+    code = await getCode();
+  }
+
+  // Confirming in the panel before the app is refused until the app confirms.
   await panel.getByRole('button', { name: 'They match' }).click();
   await panel.getByText(/Click “They match” in the Bridge app first/).waitFor();
   step('panel confirmed first: told to confirm in the app');
@@ -181,6 +230,15 @@ function readIdbKey() {
   await panel.getByRole('button', { name: 'Unpair' }).click();
   await panelStatus.filter({ hasText: 'Not paired' }).waitFor();
   code = await getCode();
+  // Short codes never reach the app, so they don't count: five of them, then five wrong
+  // ones still get all five tries.
+  for (let i = 1; i <= 5; i++) {
+    await panel.fill('#pair-code', code.slice(0, 5));
+    await panel.locator('#pair-code').press('Enter');
+  }
+  await panel.waitForTimeout(300);
+  if ((await panel.locator('#pair-error').count()) > 0) throw new Error('a short code counted');
+  step('five 5-digit codes: none sent');
   for (let i = 1; i <= 5; i++) {
     await enter(wrongFor(code));
     await panel.locator('#pair-error').waitFor();

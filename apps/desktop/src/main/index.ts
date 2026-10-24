@@ -682,6 +682,13 @@ function registerIpc(): void {
     broadcast();
     return code;
   });
+  handle(IPC.copyPairingCode, () => {
+    // The digits only, never logged: pasting "160 508" into a 6-digit field cut a digit.
+    const code = pairing.pendingCode?.code;
+    if (!code) return false;
+    clipboard.writeText(code);
+    return true;
+  });
   handle(IPC.confirmPairing, () => {
     const confirmed = pairing.confirmFingerprint();
     log.info(

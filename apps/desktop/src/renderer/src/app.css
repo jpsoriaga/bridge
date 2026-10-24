@@ -475,6 +475,16 @@
   color: var(--fg-muted);
 }
 
+.pairing-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.pairing-row .pairing-code {
+  margin: 0;
+}
+
 .pairing-code {
   font-family: var(--font-mono);
   font-size: var(--text-xl);

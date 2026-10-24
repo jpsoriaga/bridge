@@ -194,7 +194,13 @@ export function describeEntry(entry: ActivityEntry): EntryDescription {
       const text = entry.text ?? '';
       return {
         meta: `Background · ${text}`,
-        tone: text === 'started' ? 'success' : text.startsWith('exited') ? 'warning' : undefined
+        // A clean exit is neutral; only a failure or a kill is red.
+        tone:
+          text === 'started'
+            ? 'success'
+            : text.startsWith('exited') && text !== 'exited' && text !== 'exited (exit 0)'
+              ? 'danger'
+              : undefined
       };
     }
     case 'loop':

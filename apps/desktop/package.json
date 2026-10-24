@@ -3,7 +3,7 @@
   "version": "1.3.0-beta.1",
   "private": true,
   "description": "Bridge desktop app: applies file edits from the chat to a local project.",
-  "author": "Jaypee Soriaga",
+  "author": "John Patrick Soriaga",
   "license": "MIT",
   "homepage": "https://github.com/jpsoriaga/bridge",
   "main": "./out/main/index.js",

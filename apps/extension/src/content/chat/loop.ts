@@ -21,11 +21,18 @@ import {
   type RunResult
 } from '@bridge/shared';
 import type { AttachmentFile, InsertResult } from '../../messages';
+import type { UsageLimit } from './selectors';
 
 /** How long a sent message has to show up as a new user turn. */
 export const SEND_CONFIRM_MS = 10_000;
-/** How long the send button may take to appear after the text goes in. */
-export const SEND_BUTTON_WAIT_MS = 5_000;
+/**
+ * How long the composer may take to be ready after the text goes in: the send button there
+ * and enabled, and nothing still uploading or processing (a long paste becomes a "Pasted
+ * text" attachment the page takes a moment over).
+ */
+export const SEND_READY_MS = 30_000;
+/** No new user turn this long after pressing send: check the composer again and press once more. */
+export const SEND_RETRY_MS = 5_000;
 /** With images attached, the page enables send only once they've uploaded. */
 export const ATTACH_SEND_WAIT_MS = 60_000;
 /**
@@ -63,6 +70,12 @@ export interface LoopPage {
   attach(images: readonly AttachmentFile[]): boolean;
   /** Clicks the send button. False if there isn't one, or it's disabled. */
   submit(): boolean;
+  /** Something in the composer is still uploading or processing, so send would do nothing. */
+  composerBusy?(): boolean;
+  /** Attachments waiting in the composer (images, a long paste turned into a chip). */
+  attachments?(): number;
+  /** The page's usage-limit state, or null. */
+  usageLimit?(): UsageLimit | null;
   /** A visible error or limit banner's text, or null. */
   error(): string | null;
   replyStatus(): ReplyStatus;
@@ -726,6 +739,7 @@ export class FullAutoLoop {
       }
       return;
     }
+    if (this.limitReached()) return;
     if (!page.error()) {
       this.errorSince = null;
       return;
@@ -1071,6 +1085,7 @@ export class FullAutoLoop {
         this.pause('step-limit');
         return;
       }
+      if (this.limitReached()) return;
       // A cut-off reply's own error banner is why this step asks the chat to continue.
       if (page.error() && !step.continuation) {
         this.pause('page-error');
@@ -1095,35 +1110,60 @@ export class FullAutoLoop {
         }
       }
       step.sentFrom = before;
-      if (!(await this.pressSend(stale, step.images.length > 0))) {
-        if (!stale()) this.pause('send-failed');
-        return;
-      }
-      this.lastSendAt = this.deps.now();
     } else if (!this.sendLanded(step)) {
-      // Resumed after a send that didn't show up: press send again (the text is still there).
+      // Resumed after a send that didn't show up: press send again (the text, or the chip
+      // the page made of it, is still there).
       this.set('sending');
-      if (!page.composerText().trim() && !page.insert(step.message ?? '').ok) {
+      const empty = !page.composerText().trim() && (page.attachments?.() ?? 0) === 0;
+      if (empty && !page.insert(step.message ?? '').ok) {
         this.pause('send-failed');
         return;
       }
-      if (!(await this.pressSend(stale, step.images.length > 0))) {
-        if (!stale()) this.pause('send-failed');
-        return;
-      }
-      this.lastSendAt = this.deps.now();
+    } else {
+      this.confirmSent(step);
+      return;
     }
 
-    const deadline = this.deps.now() + SEND_CONFIRM_MS;
-    while (!this.sendLanded(step)) {
-      if (this.deps.now() >= deadline) {
-        this.pause('send-failed');
+    // Press send once the composer is ready. No new turn within `SEND_RETRY_MS`: the page
+    // may have taken the click while it was still busy, so check again and press once more.
+    for (let press = 0; press < 2; press += 1) {
+      if (!(await this.pressSend(stale, step.images.length > 0))) {
+        if (!stale()) this.sendFailed();
         return;
       }
-      await this.deps.sleep(SEND_POLL_MS);
-      if (stale()) return;
+      this.lastSendAt = this.deps.now();
+      const deadline = this.deps.now() + (press === 0 ? SEND_RETRY_MS : SEND_CONFIRM_MS);
+      while (!this.sendLanded(step)) {
+        if (this.deps.now() >= deadline) break;
+        await this.deps.sleep(SEND_POLL_MS);
+        if (stale()) return;
+      }
+      if (this.sendLanded(step)) {
+        this.confirmSent(step);
+        return;
+      }
     }
-    this.confirmSent(step);
+    this.sendFailed();
+  }
+
+  /** A send that didn't go through: the message limit if the page shows one, else `send-failed`. */
+  private sendFailed(): void {
+    const limit = this.deps.page.usageLimit?.();
+    if (limit) {
+      this.detail = limit.resetsAt ?? undefined;
+      this.pause('usage-limit');
+      return;
+    }
+    this.pause('send-failed');
+  }
+
+  /** The page says the message limit is reached: pause with when it resets. */
+  private limitReached(): boolean {
+    const limit = this.deps.page.usageLimit?.();
+    if (!limit?.reached) return false;
+    this.detail = limit.resetsAt ?? undefined;
+    this.pause('usage-limit');
+    return true;
   }
 
   /**
@@ -1135,7 +1175,8 @@ export class FullAutoLoop {
     const { page } = this.deps;
     if (page.userTurns() > (step.sentFrom ?? Number.POSITIVE_INFINITY)) return true;
     const composer = page.composerText().trim();
-    if (!composer) return true;
+    // An empty composer still holding a chip (the page made one of a long paste) hasn't sent.
+    if (!composer) return (page.attachments?.() ?? 0) === 0;
     // The first line only: a rich composer joins paragraphs without line breaks.
     const probe = (step.message ?? '').trim().split('\n')[0]!.slice(0, 40).trim();
     return probe.length > 0 && !composer.includes(probe);
@@ -1165,16 +1206,19 @@ export class FullAutoLoop {
   }
 
   /**
-   * Clicks send, waiting for the button: the page shows (or enables) it only once it has
-   * rendered the text just inserted (and uploaded any images), so it may not be there yet.
+   * Clicks send once the composer is ready: the button there and enabled (the page shows it
+   * only once it has rendered the text just inserted) and nothing still uploading or
+   * processing. Checks every 250ms for up to `SEND_READY_MS` (`ATTACH_SEND_WAIT_MS` with
+   * images); a message limit appearing ends the wait.
    */
   private async pressSend(stale: () => boolean, attached = false): Promise<boolean> {
-    const deadline = this.deps.now() + (attached ? ATTACH_SEND_WAIT_MS : SEND_BUTTON_WAIT_MS);
-    while (!this.deps.page.submit()) {
-      if (stale() || this.deps.now() >= deadline) return false;
+    const { page } = this.deps;
+    const deadline = this.deps.now() + (attached ? ATTACH_SEND_WAIT_MS : SEND_READY_MS);
+    for (;;) {
+      if (!page.composerBusy?.() && page.submit()) return true;
+      if (stale() || this.deps.now() >= deadline || page.usageLimit?.()?.reached) return false;
       await this.deps.sleep(SEND_POLL_MS);
     }
-    return true;
   }
 
   private pause(reason: PauseReason): void {
@@ -1184,7 +1228,11 @@ export class FullAutoLoop {
     if (reason === 'disconnected' && this.catchUp && this.inWakeWindow()) {
       this.resumeOnConnect = true;
     }
-    if (reason !== 'interrupted' && reason !== 'command-interrupted' && reason !== 'stuck') {
+    if (
+      !(['interrupted', 'command-interrupted', 'stuck', 'usage-limit'] as const).some(
+        (r) => r === reason
+      )
+    ) {
       this.detail = undefined;
     }
     if (reason !== 'interrupted') this.pageContinue = false;

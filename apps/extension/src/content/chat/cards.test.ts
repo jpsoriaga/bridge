@@ -437,6 +437,29 @@ describe('RunCard', () => {
     expect(c.badge).toBe(badge);
   });
 
+  it.each([
+    [0, 'success'],
+    [1, 'danger']
+  ] as const)(
+    'colours exit %s as %s, and offers Run again once it finished',
+    async (code, tone) => {
+      const shadows = openShadows();
+      const { card: c } = runCard(fakeWorker({}), 'pnpm test');
+      const root = c.host.shadowRoot!;
+      const buttons = () => [...root.querySelectorAll('button.card-btn')].map((b) => b.textContent);
+      expect(buttons()).toContain('Run');
+      const done = c.run();
+      await vi.waitFor(() => expect(c.running).toBe(true));
+      await new Promise((r) => setTimeout(r, 0));
+      c.onExit(exit('run-1', code));
+      await done;
+      expect(root.querySelector('.badge')?.getAttribute('data-tone')).toBe(tone);
+      expect(buttons()).toContain('Run again');
+      expect(buttons()).not.toContain('Run');
+      shadows.mockRestore();
+    }
+  );
+
   it('cancels by run id', async () => {
     const worker = fakeWorker({});
     const { card: c, registered } = runCard(worker, 'pnpm test');

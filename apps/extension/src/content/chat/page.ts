@@ -3,6 +3,8 @@ import { attachToComposer, insertIntoComposer } from './composer';
 import type { LoopPage } from './loop';
 import {
   assistantMessages,
+  composerAttachments,
+  composerBusy,
   conversationIdFrom,
   findComposer,
   findContinueButton,
@@ -12,6 +14,7 @@ import {
   messageBody,
   pageError,
   replyStatus,
+  usageLimit,
   userMessageCount
 } from './selectors';
 
@@ -43,6 +46,9 @@ export const livePage: LoopPage = {
   insert: (text) => insertIntoComposer(text),
   attach: (images) => attachToComposer(attachmentFiles(images)).ok,
   submit: () => press(findSendButton()),
+  composerBusy: () => composerBusy(),
+  attachments: () => composerAttachments().length,
+  usageLimit: () => usageLimit(),
   error: () => pageError(),
   replyStatus: () => {
     const reply = newestReply();

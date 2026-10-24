@@ -3,7 +3,7 @@
 # See RELEASE.md.
 appId: com.jpsoriaga.bridge
 productName: Bridge
-copyright: Copyright © 2026 Jaypee Soriaga
+copyright: Copyright © 2026 John Patrick Soriaga
 directories:
   output: dist
   buildResources: resources

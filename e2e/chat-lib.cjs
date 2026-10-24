@@ -105,6 +105,15 @@ async function cardText(cdp, kind, index) {
   return textOf(host).replace(/\s+/g, ' ').trim();
 }
 
+/** A card's badges, each with its text and tone (`data-tone`, null when neutral). */
+async function badges(cdp, kind, index) {
+  const host = (await hosts(cdp, kind))[index];
+  if (!host) throw new Error(`no ${kind} #${index}`);
+  return [...walk(host)]
+    .filter((n) => (attr(n, 'class') ?? '').split(' ').includes('badge'))
+    .map((n) => ({ text: textOf(n).trim(), tone: attr(n, 'data-tone') ?? null }));
+}
+
 /** Clicks a button inside a card (closed shadow root) with a trusted mouse click. */
 async function clickInCard(page, cdp, kind, index, label) {
   const host = (await hosts(cdp, kind))[index];
@@ -229,6 +238,7 @@ module.exports = {
   assistantTurn,
   hosts,
   cardText,
+  badges,
   clickInCard,
   checkCardButtons,
   waitFor,
