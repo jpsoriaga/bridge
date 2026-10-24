@@ -466,7 +466,7 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [x] `e2e/assets.cjs` (dev server, logs, restart, Save to project, Attach, downloads, Full auto with requested files, dev server errors, an auto-approved delete, Unlimited, the loop guard, a download pause, End session stopping the tree); the other e2e scripts still pass
 - [x] Session prompt, PLAN.md, SECURITY.md, PRIVACY.md, README.md, BETA.md, DESIGN.md, CHANGELOG, e2e README, CI
 - [x] Version 1.3.0-beta.1
-- [ ] Release dry run on GitHub
+- [x] Release dry run on GitHub green (run 40084559309; `release` skipped, `dry-run` passed); CI green on all three systems
 - [ ] Manual run on the real chatgpt.com (e2e README "1.3.0 on the real chatgpt.com"): generated image selectors, the file input, dev server errors
 
 ## Landing page (`apps/site`)
