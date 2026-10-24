@@ -561,6 +561,39 @@ describe('insertIntoComposer', () => {
     document.body.innerHTML = '<main></main>';
     expect(insertIntoComposer('x')).toEqual({ ok: false, error: 'no-composer' });
   });
+
+  // New chat: the page puts in a new composer and may keep the old one, hidden, before it.
+  it.each([
+    ['in a hidden subtree', '<div hidden><form>OLD</form></div><form>NEW</form>'],
+    ['in an inert subtree', '<div inert><form>OLD</form></div><form>NEW</form>'],
+    ['not rendered', '<div class="gone"><form>OLD</form></div><form>NEW</form>']
+  ])('skips an old composer %s and inserts into the one shown', (_, html) => {
+    const editor = (id: string) =>
+      `<div id="prompt-textarea" contenteditable="true" class="ProseMirror" data-id="${id}"></div>`;
+    document.body.innerHTML = html.replace('OLD', editor('old')).replace('NEW', editor('new'));
+    const visibility = vi
+      .spyOn(HTMLElement.prototype as { checkVisibility: () => boolean }, 'checkVisibility')
+      .mockImplementation(function (this: HTMLElement) {
+        return !this.closest('.gone');
+      });
+    for (const composer of document.querySelectorAll<HTMLElement>('#prompt-textarea')) {
+      composer.addEventListener('paste', (event) => {
+        event.preventDefault();
+        composer.textContent +=
+          (event as ClipboardEvent).clipboardData?.getData('text/plain') ?? '';
+      });
+    }
+    expect(insertIntoComposer('hello')).toMatchObject({ ok: true, method: 'paste' });
+    expect(document.querySelector('[data-id="new"]')?.textContent).toBe('hello');
+    expect(document.querySelector('[data-id="old"]')?.textContent).toBe('');
+    visibility.mockRestore();
+  });
+
+  it('says there is no composer when the only one is hidden', () => {
+    document.body.innerHTML =
+      '<div hidden><div id="prompt-textarea" contenteditable="true"></div></div>';
+    expect(insertIntoComposer('x')).toEqual({ ok: false, error: 'no-composer' });
+  });
 });
 
 /** The card's own row, through a shadow root forced open for the test. */

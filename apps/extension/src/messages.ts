@@ -447,12 +447,15 @@ export type AttachResult =
   | { ok: true; method: 'input' | 'paste' | 'drop'; count: number }
   | { ok: false; error: 'no-composer' | 'not-attached' };
 
+/** Why a file wasn't attached: the app refused it, or it can't go to the chat as an image. */
+export type AttachRefusal = FileErrorCode | 'not-an-image' | 'image-too-large' | 'image-unreadable';
+
 /** Send files → Attach. */
 export type AttachFilesResult =
   | {
       ok: true;
       attached: string[];
-      refused: { path: string; code: FileErrorCode | 'not-an-image' }[];
+      refused: { path: string; code: AttachRefusal }[];
     }
   | { ok: false; error: SessionError | 'not-attached' };
 
@@ -496,16 +499,18 @@ export type SessionPreview =
 
 export type SessionStartResult = { ok: true; chars: number } | { ok: false; error: SessionError };
 
+/** Send files: text files inserted, images attached. */
 export type SendFilesResult =
   | {
       ok: true;
       chars: number;
       sent: string[];
-      refused: { path: string; code: FileErrorCode }[];
+      attached: string[];
+      refused: { path: string; code: AttachRefusal }[];
       /** Likely secrets replaced with `[redacted]` in what was inserted. */
       redacted: number;
     }
-  | { ok: false; error: SessionError };
+  | { ok: false; error: SessionError | 'not-attached' };
 
 /** One file in context, as the side panel shows it. */
 export const ContextEntry = SentFile.extend({

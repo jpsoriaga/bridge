@@ -268,11 +268,15 @@ export class ChatController {
     this.conversationId = conversationIdFrom(location.href);
     void this.sync();
     this.pollTimer = setInterval(() => this.poll(), POLL_MS);
-    // Client-side navigation: the Navigation API says so at once; the poll is the fallback.
-    const navigation = (window as { navigation?: EventTarget }).navigation;
-    navigation?.addEventListener('currententrychange', () => {
+    // Client-side navigation. This isolated world can't wrap the page's own pushState, but
+    // the Navigation API reports it (and replaceState) at once, popstate covers Back and
+    // Forward, the poll is the fallback, and the worker asks (`locate`) before inserting.
+    const follow = () => {
       if (!this.invalid) this.followUrl();
-    });
+    };
+    const navigation = (window as { navigation?: EventTarget }).navigation;
+    navigation?.addEventListener('currententrychange', follow);
+    window.addEventListener('popstate', follow);
     this.attach();
   }
 

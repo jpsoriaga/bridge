@@ -12,12 +12,14 @@ import {
   type LoopReport,
   type WriteResult
 } from '@bridge/shared';
+import { attachRefusalText, prepareAttachment } from '../attach-image';
 import { base64ToBytes, sha256Hex, uploadChunks } from '../binary';
 import {
   ChipCorner,
   PanelHello,
   type AttachFilesResult,
   type AttachmentFile,
+  type AttachRefusal,
   type AttachResult,
   SIDE_PANEL_PORT,
   TabLocation,
@@ -340,13 +342,61 @@ async function endSession(windowId: number): Promise<void> {
   void syncWatch();
 }
 
+/**
+ * Project images, read and made to fit (`prepareAttachment`) for attaching. The file on disk
+ * isn't changed. Null when the app isn't there.
+ */
+async function readAttachments(paths: readonly string[]): Promise<{
+  files: AttachmentFile[];
+  attached: string[];
+  refused: { path: string; code: AttachRefusal }[];
+} | null> {
+  const files: AttachmentFile[] = [];
+  const attached: string[] = [];
+  const refused: { path: string; code: AttachRefusal }[] = [];
+  for (const path of paths) {
+    if (!isAttachablePath(path)) {
+      refused.push({ path, code: 'not-an-image' });
+      continue;
+    }
+    const read = await connection.request('read_binary', { path });
+    if (read.ok) {
+      const prepared = await prepareAttachment({
+        name: path.split('/').pop()!,
+        mime: read.result.mime,
+        data: read.result.data
+      });
+      if (prepared.ok) {
+        files.push(prepared.file);
+        attached.push(path);
+      } else {
+        refused.push({
+          path,
+          code: prepared.reason === 'too-large' ? 'image-too-large' : 'image-unreadable'
+        });
+      }
+    } else if (read.error.code === 'not-connected' || read.error.code === 'timeout') {
+      return null;
+    } else if (read.error.code !== 'bad-response' && read.error.code !== 'no-session') {
+      refused.push({ path, code: read.error.code });
+    }
+  }
+  return { files, attached, refused };
+}
+
+/**
+ * Send files: text files go into the message box in `@@CONTEXT` format, images are
+ * attached (never pasted as text), and the text says which images went with it.
+ */
 async function sendFiles(paths: string[], windowId: number): Promise<SendFilesResult> {
   const tab = await chatTab(windowId);
   if (!tab.ok) return tab;
   if (!(await sessions.isActive(tab.tabId))) return { ok: false, error: 'no-session' };
+  const images = paths.filter(isAttachablePath);
   const files: { path: string; content: string; hash: string }[] = [];
-  const refused: { path: string; code: FileErrorCode }[] = [];
+  const refused: { path: string; code: AttachRefusal }[] = [];
   for (const path of paths) {
+    if (isAttachablePath(path)) continue;
     const read = await connection.request('read', { path });
     if (read.ok) files.push({ path, content: read.result.content, hash: read.result.hash });
     else if (read.error.code === 'not-connected' || read.error.code === 'timeout') {
@@ -355,10 +405,22 @@ async function sendFiles(paths: string[], windowId: number): Promise<SendFilesRe
       refused.push({ path, code: read.error.code });
     }
   }
-  if (files.length === 0) return { ok: true, chars: 0, sent: [], refused, redacted: 0 };
+  const prepared = images.length > 0 ? await readAttachments(images) : null;
+  if (images.length > 0 && !prepared) return { ok: false, error: 'not-connected' };
+  const attached = prepared?.attached ?? [];
+  refused.push(...(prepared?.refused ?? []));
+  if (files.length === 0 && attached.length === 0) {
+    return { ok: true, chars: 0, sent: [], attached, refused, redacted: 0 };
+  }
+  if (prepared && prepared.files.length > 0) {
+    const result = (await tellTab(tab.tabId, { type: 'attach-files', files: prepared.files })) as
+      AttachResult | undefined;
+    if (!result?.ok) return { ok: false, error: 'not-attached' };
+  }
   const { text, redacted } = buildContextMessage(
     files,
-    refused.map(({ path, code }) => ({ path, reason: FILE_ERROR_LABELS[code] }))
+    refused.map(({ path, code }) => ({ path, reason: attachRefusalText(code) })),
+    attached
   );
   const inserted = await insertIntoChat(tab.tabId, text);
   if (!inserted.ok) return inserted;
@@ -368,7 +430,7 @@ async function sendFiles(paths: string[], windowId: number): Promise<SendFilesRe
     files.map((f) => sentFile(f.path, f.content, f.hash))
   );
   void syncWatch();
-  return { ok: true, chars: inserted.chars, sent, refused, redacted };
+  return { ok: true, chars: inserted.chars, sent, attached, refused, redacted };
 }
 
 /**
@@ -396,29 +458,14 @@ async function writeBinary(
   });
 }
 
-/** Send files → Attach: each image, as bytes, into the message box as an attachment. */
+/** Send files → Attach: each image, made to fit, into the message box as an attachment. */
 async function attachFiles(paths: string[], windowId: number): Promise<AttachFilesResult> {
   const tab = await chatTab(windowId);
   if (!tab.ok) return tab;
   if (!(await sessions.isActive(tab.tabId))) return { ok: false, error: 'no-session' };
-  const files: AttachmentFile[] = [];
-  const attached: string[] = [];
-  const refused: Extract<AttachFilesResult, { ok: true }>['refused'] = [];
-  for (const path of paths) {
-    if (!isAttachablePath(path)) {
-      refused.push({ path, code: 'not-an-image' });
-      continue;
-    }
-    const read = await connection.request('read_binary', { path });
-    if (read.ok) {
-      files.push({ name: path.split('/').pop()!, mime: read.result.mime, data: read.result.data });
-      attached.push(path);
-    } else if (read.error.code === 'not-connected' || read.error.code === 'timeout') {
-      return { ok: false, error: 'not-connected' };
-    } else if (read.error.code !== 'bad-response' && read.error.code !== 'no-session') {
-      refused.push({ path, code: read.error.code });
-    }
-  }
+  const prepared = await readAttachments(paths);
+  if (!prepared) return { ok: false, error: 'not-connected' };
+  const { files, attached, refused } = prepared;
   if (files.length === 0) return { ok: true, attached, refused };
   const result = (await tellTab(tab.tabId, { type: 'attach-files', files })) as
     AttachResult | undefined;

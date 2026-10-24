@@ -164,22 +164,26 @@ async function waitFor(what, fn, timeout = 10_000) {
   throw new Error(`timed out waiting for ${what}: ${last instanceof Error ? last.message : last}`);
 }
 
-/** The side panel's view of the chat in its window's active tab, as the worker pushes it. */
-function panelChat(panel) {
+/**
+ * The side panel's view of the chat in its window's active tab, as the worker pushes it.
+ * Waits for a session unless `anySession`.
+ */
+function panelChat(panel, anySession = false) {
   return panel.evaluate(
-    () =>
+    (any) =>
       new Promise((resolve) => {
         const port = chrome.runtime.connect({ name: 'sidepanel' });
-        // The first push comes before the panel says which window it's in: no session yet.
+        // The first push comes before the panel says which window it's in: no tab yet.
         port.onMessage.addListener((m) => {
-          if (m.type !== 'status' || !m.chat.session) return;
+          if (m.type !== 'status' || !m.chat.tab || (!any && !m.chat.session)) return;
           port.disconnect();
           resolve(m.chat);
         });
         void chrome.windows
           .getCurrent()
           .then(({ id }) => port.postMessage({ type: 'panel-window', windowId: id }));
-      })
+      }),
+    anySession
   );
 }
 

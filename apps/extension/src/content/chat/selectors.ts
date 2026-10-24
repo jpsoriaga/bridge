@@ -176,6 +176,26 @@ export function all(root: ParentNode, selectors: readonly string[]): Element[] {
   return [];
 }
 
+/**
+ * Whether the user can see the element: on the page, outside `hidden` and `inert` subtrees,
+ * and rendered (where the browser can tell; tests' DOM can't). The page may keep a chat it
+ * navigated away from mounted but hidden, composer and all, so lookups of things Bridge
+ * types into or clicks skip what isn't shown.
+ */
+export function isShown(element: Element): boolean {
+  if (!element.isConnected || element.closest('[hidden], [inert]')) return false;
+  const check = (element as { checkVisibility?: (options?: object) => boolean }).checkVisibility;
+  return typeof check === 'function' ? check.call(element, { visibilityProperty: true }) : true;
+}
+
+/** The first shown element matching the selectors, tried in order. */
+export function firstShown(root: ParentNode, selectors: readonly string[]): Element | null {
+  for (const selector of selectors) {
+    for (const found of root.querySelectorAll(selector)) if (isShown(found)) return found;
+  }
+  return null;
+}
+
 export function closest(element: Element, selectors: readonly string[]): Element | null {
   for (const selector of selectors) {
     const found = element.closest(selector);
@@ -185,12 +205,21 @@ export function closest(element: Element, selectors: readonly string[]): Element
 }
 
 export function findConversation(doc: Document = document): Element | null {
-  return first(doc, SELECTORS.conversation);
+  return firstShown(doc, SELECTORS.conversation) ?? first(doc, SELECTORS.conversation);
 }
 
+/**
+ * The composer the user sees. Looked up on every use, never kept: the page replaces it on
+ * New chat, and may leave the old one in the DOM, hidden, where a paste still "works".
+ */
 export function findComposer(doc: Document = document): HTMLElement | null {
-  const found = first(doc, SELECTORS.composer);
+  const found = firstShown(doc, SELECTORS.composer);
   return found instanceof HTMLElement ? found : null;
+}
+
+/** Where the composer's own buttons and inputs are: its form, else the whole page. */
+function composerScope(doc: Document): ParentNode {
+  return findComposer(doc)?.closest('form, [data-composer-layout]') ?? doc;
 }
 
 export function assistantMessages(root: ParentNode): Element[] {
@@ -275,7 +304,7 @@ export function composerArea(doc: Document = document): DOMRect[] {
 }
 
 export function findStopButton(doc: Document = document): HTMLButtonElement | null {
-  const found = first(doc, SELECTORS.stopButton);
+  const found = firstShown(doc, SELECTORS.stopButton);
   return found instanceof HTMLButtonElement ? found : null;
 }
 
@@ -328,7 +357,8 @@ export function replyStatus(
 }
 
 export function findSendButton(doc: Document = document): HTMLButtonElement | null {
-  const found = first(doc, SELECTORS.sendButton);
+  const found =
+    firstShown(composerScope(doc), SELECTORS.sendButton) ?? firstShown(doc, SELECTORS.sendButton);
   return found instanceof HTMLButtonElement ? found : null;
 }
 
@@ -404,8 +434,8 @@ export function generatedImages(message: Element): HTMLImageElement[] {
   );
 }
 
-/** The composer's file input, if the page has one. */
+/** The composer's file input, if the page has one. It's never shown itself. */
 export function findFileInput(doc: Document = document): HTMLInputElement | null {
-  const found = first(doc, SELECTORS.fileInput);
+  const found = first(composerScope(doc), SELECTORS.fileInput) ?? first(doc, SELECTORS.fileInput);
   return found instanceof HTMLInputElement ? found : null;
 }

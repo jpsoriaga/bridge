@@ -23,6 +23,40 @@ const CONV = 'e2e00000-0000-4000-8000-000000000013';
 const PNG_B64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 
+/**
+ * A 3000 × 1500 PNG of random pixels, a band of them half transparent: too big on every
+ * count (pixels and, as noise doesn't compress, bytes), so attaching it must scale it down.
+ */
+function bigTransparentPng() {
+  const zlib = require('node:zlib');
+  const crypto = require('node:crypto');
+  const [width, height] = [3000, 1500];
+  const row = width * 4 + 1;
+  const raw = crypto.randomBytes(row * height);
+  for (let y = 0; y < height; y += 1) {
+    raw[y * row] = 0;
+    for (let x = 0; x < width; x += 1) raw[y * row + 1 + x * 4 + 3] = y < 100 ? 128 : 255;
+  }
+  const chunk = (type, data) => {
+    const body = Buffer.concat([Buffer.from(type), data]);
+    const out = Buffer.alloc(body.length + 8);
+    out.writeUInt32BE(data.length, 0);
+    body.copy(out, 4);
+    out.writeUInt32BE(zlib.crc32(body), body.length + 4);
+    return out;
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header.set([8, 6, 0, 0, 0], 8);
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', header),
+    chunk('IDAT', zlib.deflateSync(raw, { level: 1 })),
+    chunk('IEND', Buffer.alloc(0))
+  ]);
+}
+
 // The stand-in page, plus the composer's file input (behind its attach button), which
 // records what was attached.
 const PAGE = SHELL.replace(
@@ -278,6 +312,47 @@ const alive = (pid) => {
   }
   step('a READ card attached the image and inserted the text file');
   await clearComposer();
+
+  // Send files with a text file and a large image: the image is attached, scaled down to
+  // 2048px and under 5 MB, still a PNG (it has transparency); the file on disk is untouched.
+  const big = bigTransparentPng();
+  write('public/big.png', big);
+  const sent = await ask({
+    type: 'send-files',
+    windowId: 0,
+    paths: ['src/app.ts', 'public/big.png']
+  });
+  if (!sent.ok || sent.attached[0] !== 'public/big.png' || sent.sent[0] !== 'src/app.ts') {
+    throw new Error('send-files with an image: ' + JSON.stringify(sent));
+  }
+  const shrunk = await waitFor('big image attached', () =>
+    chat.evaluate(async () => {
+      const picked = document.getElementById('upload').files[0];
+      if (!picked || picked.name !== 'big.png') return null;
+      const bitmap = await createImageBitmap(picked);
+      return { type: picked.type, size: picked.size, width: bitmap.width, height: bitmap.height };
+    })
+  );
+  if (
+    shrunk.type !== 'image/png' ||
+    shrunk.size > 5 * 1024 * 1024 ||
+    Math.max(shrunk.width, shrunk.height) > 2048
+  ) {
+    throw new Error('big image not made to fit: ' + JSON.stringify(shrunk));
+  }
+  if (!fs.readFileSync(file('public/big.png')).equals(big)) throw new Error('big.png changed');
+  const sentText = await composerText();
+  if (
+    !sentText.includes('@@CONTEXT src/app.ts@@') ||
+    !sentText.includes('Attached image: public/big.png.')
+  ) {
+    throw new Error('send-files text: ' + sentText);
+  }
+  await chat.evaluate(() => window.__attached.pop());
+  await clearComposer();
+  step(
+    `Send files attached a ${(big.length / 1e6).toFixed(1)} MB 3000×1500 PNG as ${shrunk.width}×${shrunk.height}, ${(shrunk.size / 1e6).toFixed(1)} MB PNG; the file on disk is unchanged`
+  );
 
   // 6. Downloads: https only, never local, always a click.
   await addTurn(

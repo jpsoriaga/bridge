@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   COMPOSER_WARN_CHARS,
-  FILE_ERROR_LABELS,
   FILE_ERROR_MESSAGES,
   isAttachablePath,
   type FileErrorCode,
@@ -10,27 +9,21 @@ import {
   type TreeEntry,
   type TreeResult
 } from '@bridge/shared';
+import { attachRefusalText } from '../attach-image';
 import {
+  MAX_ATTACHMENTS,
   MAX_FILES_PER_SEND,
   type AttachFilesResult,
   type RequestOutcome,
   type SendFilesResult
 } from '../messages';
 import { formatCount, panelWindowId, redactedText, request, sessionErrorText } from './request';
+import { insertLabel, selectionSummary, sentSummary, splitSelection } from './selection';
 
-/** Marker, fence and blank lines around each file in `@@CONTEXT` format. */
-const PER_FILE_OVERHEAD = 40;
 const FILTER_LIMIT = 200;
 
 const depthOf = (path: string) => path.split('/').length - 1;
 const nameOf = (path: string) => path.slice(path.lastIndexOf('/') + 1);
-
-/** Estimated characters for a selection: file sizes plus the context format around them. */
-export function estimateChars(sizes: ReadonlyMap<string, number>, selected: ReadonlySet<string>) {
-  let total = 0;
-  for (const path of selected) total += (sizes.get(path) ?? 0) + path.length + PER_FILE_OVERHEAD;
-  return total;
-}
 
 type Folder =
   { status: 'loading' } | { status: 'ok'; result: ListResult } | { status: 'error'; text: string };
@@ -159,9 +152,12 @@ export function SendFiles({ project, version }: { project: ProjectInfo; version:
     return out;
   }, [folders, fullTree, open, query]);
 
-  const chars = estimateChars(sizes, selected);
+  // Images are attached, so only text files count against the character budget.
+  const picked = splitSelection(sizes, selected);
+  const chars = picked.chars;
   const over = chars > COMPOSER_WARN_CHARS;
   const tooMany = selected.size > MAX_FILES_PER_SEND;
+  const tooManyImages = picked.images.length > MAX_ATTACHMENTS;
   const root = folders.get('');
 
   const toggleOpen = (dir: string) => {
@@ -239,7 +235,7 @@ export function SendFiles({ project, version }: { project: ProjectInfo; version:
         setResult(
           refused
             ? {
-                text: `Not attached: ${refused.path} (${refused.code === 'not-an-image' ? 'not an image' : FILE_ERROR_LABELS[refused.code]}).`,
+                text: `Not attached: ${refused.path} (${attachRefusalText(refused.code)}).`,
                 tone: 'danger'
               }
             : { text: `Attached ${path} to the message. Review it and press send.` }
@@ -258,18 +254,24 @@ export function SendFiles({ project, version }: { project: ProjectInfo; version:
       )
       .then((outcome) => {
         if (!outcome.ok) {
-          setResult({ text: sessionErrorText(outcome.error), tone: 'danger' });
+          setResult({
+            text:
+              outcome.error === 'not-attached'
+                ? 'Bridge couldn’t attach the images. Attach them with the page’s own button instead.'
+                : sessionErrorText(outcome.error),
+            tone: 'danger'
+          });
           return;
         }
         const refused = outcome.refused
-          .map(({ path, code }) => `${path} (${FILE_ERROR_LABELS[code]})`)
+          .map(({ path, code }) => `${path} (${attachRefusalText(code)})`)
           .join(', ');
-        if (outcome.sent.length === 0) {
+        if (outcome.sent.length === 0 && outcome.attached.length === 0) {
           setResult({ text: `Nothing sent. Refused: ${refused}.`, tone: 'danger' });
           return;
         }
         setResult({
-          text: `Added ${outcome.sent.length} ${outcome.sent.length === 1 ? 'file' : 'files'} to the message box. Review it and press send.${refused ? ` Not sent: ${refused}.` : ''}${redactedText(outcome.redacted)}`
+          text: `${sentSummary(outcome.sent.length, outcome.attached.length)}${refused ? ` Not sent: ${refused}.` : ''}${redactedText(outcome.redacted)}`
         });
         setSelected(new Set());
       })
@@ -399,8 +401,8 @@ export function SendFiles({ project, version }: { project: ProjectInfo; version:
               />
             </div>
             <p className="hint">
-              {selected.size} {selected.size === 1 ? 'file' : 'files'} · about {formatCount(chars)}{' '}
-              of {formatCount(COMPOSER_WARN_CHARS)} characters
+              {selectionSummary(picked.files.length, picked.images.length)} · about{' '}
+              {formatCount(chars)} of {formatCount(COMPOSER_WARN_CHARS)} characters
             </p>
             {over && (
               <p className="hint" data-tone="warning">
@@ -411,18 +413,17 @@ export function SendFiles({ project, version }: { project: ProjectInfo; version:
             {tooMany && (
               <p className="error-text">Pick at most {MAX_FILES_PER_SEND} files at a time.</p>
             )}
+            {tooManyImages && (
+              <p className="error-text">Attach at most {MAX_ATTACHMENTS} images at a time.</p>
+            )}
           </div>
           <button
             type="button"
             className="btn btn-primary btn-lg action"
-            disabled={busy || selected.size === 0 || tooMany}
+            disabled={busy || selected.size === 0 || tooMany || tooManyImages}
             onClick={send}
           >
-            {busy
-              ? 'Adding…'
-              : selected.size === 0
-                ? 'Insert files'
-                : `Insert ${selected.size} ${selected.size === 1 ? 'file' : 'files'}`}
+            {busy ? 'Adding…' : insertLabel(picked.files.length, picked.images.length)}
           </button>
           {result && (
             <p className={result.tone ? 'error-text' : 'hint'} role="status">

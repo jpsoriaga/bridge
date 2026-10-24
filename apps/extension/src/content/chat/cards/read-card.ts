@@ -10,6 +10,7 @@ import {
   type ReadResult,
   type RefusedFile
 } from '@bridge/shared';
+import { IMAGE_REFUSALS, prepareAttachment } from '../../../attach-image';
 import { base64ToBytes } from '../../../binary';
 import type { AttachmentFile, ReadCardRecord, RequestOutcome, SentFile } from '../../../messages';
 import { attachToComposer, insertIntoComposer } from '../composer';
@@ -28,8 +29,19 @@ import { createHost } from './host';
 type Entry =
   | { path: string; status: 'loading' }
   | { path: string; status: 'ok'; content: string; hash: string }
-  /** A project image: it goes with the message as an attachment, not as text. */
-  | { path: string; status: 'image'; mime: string; data: string; size: number }
+  /**
+   * A project image: it goes with the message as an attachment, not as text, scaled down
+   * and recompressed first when it's too big (`resized`). `size` is the file's on disk.
+   */
+  | {
+      path: string;
+      status: 'image';
+      name: string;
+      mime: string;
+      data: string;
+      size: number;
+      resized: boolean;
+    }
   | { path: string; status: 'refused'; reason: string };
 
 /** An image the READ card attaches, for Full auto. */
@@ -111,9 +123,7 @@ export class ReadCard {
 
   private images(): ImageAttachment[] {
     return this.entries.flatMap((e) =>
-      e.status === 'image'
-        ? [{ path: e.path, name: e.path.split('/').pop() ?? e.path, mime: e.mime, data: e.data }]
-        : []
+      e.status === 'image' ? [{ path: e.path, name: e.name, mime: e.mime, data: e.data }] : []
     );
   }
 
@@ -192,7 +202,11 @@ export class ReadCard {
     });
     if (outcome?.ok) {
       const { mime, data, size } = outcome.result;
-      this.entries[i] = { path, status: 'image', mime, data, size };
+      const name = path.split('/').pop() ?? path;
+      const prepared = await prepareAttachment({ name, mime, data });
+      this.entries[i] = prepared.ok
+        ? { path, status: 'image', ...prepared.file, size, resized: prepared.resized }
+        : { path, status: 'refused', reason: IMAGE_REFUSALS[prepared.reason] };
     } else if (
       outcome &&
       outcome.error.code !== 'not-connected' &&
@@ -289,7 +303,11 @@ export class ReadCard {
           : entry.status === 'ok'
             ? h('span', { class: 'meta' }, `${formatCount(entry.content.length)} chars`)
             : entry.status === 'image'
-              ? h('span', { class: 'meta' }, `image · ${formatSize(entry.size)} · attached`)
+              ? h(
+                  'span',
+                  { class: 'meta' },
+                  `image · ${formatSize(entry.size)}${entry.resized ? ' · resized' : ''} · attached`
+                )
               : h(
                   'span',
                   { class: 'badge', attrs: { 'data-tone': 'danger' } },
