@@ -10,7 +10,16 @@ import { bytesToBase64 } from '../../../binary';
 import type { BinaryCardRecord, CardState, RequestOutcome } from '../../../messages';
 import { imageFor } from '../images';
 import { failureText, modeTag, type Ask } from './diff-card';
-import { formatSize, formatTime, h, icon, renderCard, resultIcon, resultWord } from './dom';
+import {
+  cardButton,
+  formatSize,
+  formatTime,
+  h,
+  icon,
+  renderCard,
+  resultIcon,
+  resultWord
+} from './dom';
 import { createHost } from './host';
 
 /** How a save ended, for Auto-apply and Full auto. */
@@ -223,11 +232,10 @@ export class AssetCard {
       : null;
     let card: HTMLElement;
     if (this.state === 'applied') {
-      const undo = h(
-        'button',
+      const undo = cardButton(
+        'secondary',
         {
-          class: 'btn',
-          attrs: { type: 'button', 'data-focus': 'undo' },
+          attrs: { 'data-focus': 'undo' },
           onClick: () => void this.undo()
         },
         this.busy === 'undo' ? 'Undoing…' : 'Undo'
@@ -292,11 +300,10 @@ export class AssetCard {
         this.error = null;
         save.disabled = !this.path.trim() || this.disabled || this.busy !== null;
       });
-      const save = h(
-        'button',
+      const save = cardButton(
+        'primary',
         {
-          class: 'btn btn-primary btn-lg',
-          attrs: { type: 'button', 'data-focus': 'save' },
+          attrs: { 'data-focus': 'save' },
           onClick: () => void this.save()
         },
         this.busy === 'save' ? 'Saving…' : this.confirming ? 'Replace' : 'Save'

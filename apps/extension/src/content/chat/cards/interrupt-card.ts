@@ -1,6 +1,6 @@
 import { buildContinuation, type Interruption } from '@bridge/shared';
 import { insertIntoComposer } from '../composer';
-import { h, icon, renderCard } from './dom';
+import { cardButton, h, icon, renderCard } from './dom';
 import { createHost } from './host';
 
 /** What the card does on the page, injected so tests can use a fake. */
@@ -96,22 +96,20 @@ export class InterruptCard {
             : canContinue
               ? 'Continue generating keeps the same reply. Or ask the chat to continue.'
               : 'Bridge applies only what came through whole. Ask the chat to continue.';
-    const insert = h(
-      'button',
+    const insert = cardButton(
+      canContinue ? 'secondary' : 'primary',
       {
-        class: canContinue ? 'btn' : 'btn btn-primary',
-        attrs: { type: 'button', 'data-focus': 'continuation' },
+        attrs: { 'data-focus': 'continuation' },
         onClick: () => this.insert()
       },
       this.inserted || this.autoSent ? 'Insert again' : 'Insert continuation'
     );
     insert.disabled = this.disabled;
     const pageContinue = canContinue
-      ? h(
-          'button',
+      ? cardButton(
+          'primary',
           {
-            class: 'btn btn-primary',
-            attrs: { type: 'button', 'data-focus': 'continue' },
+            attrs: { 'data-focus': 'continue' },
             onClick: () => this.continueReply()
           },
           'Continue generating'

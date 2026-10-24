@@ -7,7 +7,15 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { EXT, tempDir, launchApp, launchChrome, enterCode } = require('./lib.cjs');
-const { step, SHELL, escapeHtml, hosts, cardText, waitFor } = require('./chat-lib.cjs');
+const {
+  step,
+  SHELL,
+  escapeHtml,
+  hosts,
+  cardText,
+  checkCardButtons,
+  waitFor
+} = require('./chat-lib.cjs');
 
 const CONV = 'e2e00000-0000-4000-8000-000000000111';
 
@@ -157,6 +165,7 @@ const doneTurn = (id) =>
     throw new Error('interrupted card: ' + card);
   }
   step('cut-off reply: src/one.ts applied, src/two.ts not; continuation sent on its own');
+  step('card buttons line up: ' + JSON.stringify(await checkCardButtons(cdp)));
 
   // 4. Cut off again: no second automatic continuation. Pause; Resume sends it.
   await addTurn(

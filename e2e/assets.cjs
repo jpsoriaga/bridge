@@ -15,6 +15,7 @@ const {
   hosts,
   cardText,
   clickInCard,
+  checkCardButtons,
   waitFor
 } = require('./chat-lib.cjs');
 
@@ -374,6 +375,7 @@ const alive = (pid) => {
   );
   if (fs.existsSync(file('public/local.png'))) throw new Error('downloaded from 127.0.0.1');
   step('downloads: http blocked on the card, 127.0.0.1 refused by the app');
+  step('card buttons line up: ' + JSON.stringify(await checkCardButtons(cdp)));
 
   // 7. Full auto, Unlimited, and deletes approved automatically.
   await nav('Settings').click();

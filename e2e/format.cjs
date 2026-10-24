@@ -13,6 +13,7 @@ const {
   hosts,
   cardText,
   clickInCard,
+  checkCardButtons,
   waitFor
 } = require('./chat-lib.cjs');
 
@@ -169,6 +170,7 @@ const broken = (id) =>
   if ((await sends()).length !== sentBefore) throw new Error('the reminder was sent');
   await clearComposer();
   step('format card: ' + card.split(' Not a')[0] + ' → reminder inserted, not sent');
+  step('card buttons line up: ' + JSON.stringify(await checkCardButtons(cdp)));
 
   // 5. Full auto: two reminders sent on its own, then a pause with "format issues".
   await win.getByRole('radio', { name: 'Full auto' }).click();

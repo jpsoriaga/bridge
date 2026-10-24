@@ -12,6 +12,7 @@ import {
 import type { CardState, ChangeCardRecord, RequestOutcome } from '../../../messages';
 import { failureText, modeTag, type Ask } from './diff-card';
 import {
+  cardButton,
   copyButton,
   formatFixedBadge,
   formatSize,
@@ -377,11 +378,10 @@ export class ChangeCard {
       hint = `${deleting ? 'Deletes' : 'Renames'} need your click unless the app allows Full auto to approve them. ${hint}`;
     }
 
-    const reject = h(
-      'button',
+    const reject = cardButton(
+      'secondary',
       {
-        class: 'btn',
-        attrs: { type: 'button', 'data-focus': 'reject' },
+        attrs: { 'data-focus': 'reject' },
         onClick: () => this.reject()
       },
       'Reject'
@@ -394,11 +394,10 @@ export class ChangeCard {
       : this.busy === 'apply'
         ? 'Renaming…'
         : 'Rename';
-    const apply = h(
-      'button',
+    const apply = cardButton(
+      deleting ? 'danger' : 'primary',
       {
-        class: deleting ? 'btn btn-danger btn-lg' : 'btn btn-primary btn-lg',
-        attrs: { type: 'button', 'data-focus': 'apply' },
+        attrs: { 'data-focus': 'apply' },
         onClick: () => void this.apply()
       },
       label
@@ -406,11 +405,10 @@ export class ChangeCard {
     apply.disabled = !this.applicable;
     const retry =
       this.base === undefined && !this.blocked && this.busy === null
-        ? h(
-            'button',
+        ? cardButton(
+            'secondary',
             {
-              class: 'btn',
-              attrs: { type: 'button', 'data-focus': 'retry' },
+              attrs: { 'data-focus': 'retry' },
               onClick: () => void this.check()
             },
             'Retry'
@@ -462,11 +460,10 @@ export class ChangeCard {
         this.footer()
       );
     } else if (this.state === 'applied') {
-      const undo = h(
-        'button',
+      const undo = cardButton(
+        'secondary',
         {
-          class: 'btn',
-          attrs: { type: 'button', 'data-focus': 'undo' },
+          attrs: { 'data-focus': 'undo' },
           onClick: () => void this.undo()
         },
         this.busy === 'undo' ? 'Undoing…' : 'Undo'

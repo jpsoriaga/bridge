@@ -17,6 +17,7 @@ import {
 } from '@bridge/shared';
 import type { CardState, DiffCardRecord, RequestOutcome, WorkerRequest } from '../../../messages';
 import {
+  cardButton,
   copyButton,
   formatCount,
   formatFixedBadge,
@@ -527,31 +528,28 @@ export class DiffCard {
 
     const retry =
       this.base === undefined && !this.blocked && this.busy === null
-        ? h(
-            'button',
+        ? cardButton(
+            'secondary',
             {
-              class: 'btn',
-              attrs: { type: 'button', 'data-focus': 'retry' },
+              attrs: { 'data-focus': 'retry' },
               onClick: () => void this.load()
             },
             'Retry'
           )
         : null;
-    const reject = h(
-      'button',
+    const reject = cardButton(
+      'secondary',
       {
-        class: 'btn',
-        attrs: { type: 'button', 'data-focus': 'reject' },
+        attrs: { 'data-focus': 'reject' },
         onClick: () => this.reject()
       },
       'Reject'
     );
     reject.disabled = this.disabled || this.busy !== null;
-    const apply = h(
-      'button',
+    const apply = cardButton(
+      'primary',
       {
-        class: 'btn btn-primary btn-lg',
-        attrs: { type: 'button', 'data-focus': 'apply' },
+        attrs: { 'data-focus': 'apply' },
         onClick: () => void this.apply()
       },
       this.busy === 'apply' ? 'Applying…' : this.confirmingPartial ? 'Apply anyway' : 'Apply'
@@ -613,11 +611,10 @@ export class DiffCard {
         this.footer()
       );
     } else if (this.state === 'applied') {
-      const undo = h(
-        'button',
+      const undo = cardButton(
+        'secondary',
         {
-          class: 'btn',
-          attrs: { type: 'button', 'data-focus': 'undo' },
+          attrs: { 'data-focus': 'undo' },
           onClick: () => void this.undo()
         },
         this.busy === 'undo' ? 'Undoing…' : 'Undo'

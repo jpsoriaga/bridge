@@ -14,6 +14,7 @@ const {
   hosts,
   cardText,
   clickInCard,
+  checkCardButtons,
   waitFor
 } = require('./chat-lib.cjs');
 
@@ -191,6 +192,7 @@ const CONV = 'e2e00000-0000-4000-8000-000000000001';
   );
   const read = await cardText(cdp, 'read-card', 0);
   step('READ card: ' + read.slice(0, 120));
+  step('card buttons line up: ' + JSON.stringify(await checkCardButtons(cdp)));
   if (!read.includes('blocked · not found')) throw new Error('missing file not marked: ' + read);
   await clickInCard(chat, cdp, 'read-card', 0, 'Send these files');
   const context = await waitFor('context inserted', async () => {
@@ -343,6 +345,7 @@ const CONV = 'e2e00000-0000-4000-8000-000000000001';
     throw new Error('unexpected first follow-up: ' + sendOne.text);
   }
   step('step 1 sent the failing output: ' + sendOne.text.split('\n')[0]);
+  step('card buttons line up: ' + JSON.stringify(await checkCardButtons(cdp)));
   // The chip shows the step counter on the page.
   await waitFor('chip', async () => (await cardText(cdp, 'loop-chip', 0)).includes('1 / 25'));
   step('page chip: ' + (await cardText(cdp, 'loop-chip', 0)));

@@ -12,6 +12,7 @@ const {
   hosts,
   cardText,
   clickInCard,
+  checkCardButtons,
   waitFor,
   panelChat
 } = require('./chat-lib.cjs');
@@ -114,6 +115,7 @@ const CONV = 'e2e00000-0000-4000-8000-000000000006';
   if (!fs.existsSync(file('src/old.ts'))) throw new Error('Auto-apply deleted a file');
   step('DELETE card: ' + (await cardText(cdp, 'change-card', 0)).slice(0, 110));
   step('RENAME card: ' + (await cardText(cdp, 'change-card', 1)).slice(0, 110));
+  step('card buttons line up: ' + JSON.stringify(await checkCardButtons(cdp)));
 
   await clickInCard(chat, cdp, 'change-card', 0, 'Delete file');
   await waitFor('deleted', () => !fs.existsSync(file('src/old.ts')));

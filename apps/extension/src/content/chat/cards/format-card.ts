@@ -1,6 +1,6 @@
 import { FORMAT_REMINDER, type FormatIssue, type FormatIssueKind } from '@bridge/shared';
 import { insertIntoComposer } from '../composer';
-import { h, icon, renderCard } from './dom';
+import { cardButton, h, icon, renderCard } from './dom';
 import { createHost } from './host';
 
 /** Issues listed on the card before "and N more". */
@@ -75,11 +75,10 @@ export class FormatCard {
         : this.inserted
           ? 'The reminder is in the message box. Press send.'
           : 'Bridge ignored what it couldn’t read. A reminder asks the chat to redo the reply.';
-    const button = h(
-      'button',
+    const button = cardButton(
+      'primary',
       {
-        class: 'btn btn-primary',
-        attrs: { type: 'button', 'data-focus': 'remind' },
+        attrs: { 'data-focus': 'remind' },
         onClick: () => this.insert()
       },
       this.inserted || this.autoSent ? 'Insert again' : 'Send format reminder'

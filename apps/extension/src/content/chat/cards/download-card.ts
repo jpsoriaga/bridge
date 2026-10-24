@@ -13,6 +13,7 @@ import { base64ToBytes } from '../../../binary';
 import type { BinaryCardRecord, CardState, RequestOutcome } from '../../../messages';
 import { failureText, modeTag, type Ask } from './diff-card';
 import {
+  cardButton,
   copyButton,
   formatFixedBadge,
   formatSize,
@@ -279,11 +280,10 @@ export class DownloadCard {
       : null;
     let card: HTMLElement;
     if (this.state === 'applied') {
-      const undo = h(
-        'button',
+      const undo = cardButton(
+        'secondary',
         {
-          class: 'btn',
-          attrs: { type: 'button', 'data-focus': 'undo' },
+          attrs: { 'data-focus': 'undo' },
           onClick: () => void this.undo()
         },
         this.busy === 'undo' ? 'Undoing…' : 'Undo'
@@ -346,21 +346,19 @@ export class DownloadCard {
             { class: 'badge', attrs: { 'data-tone': this.base ? 'warning' : undefined } },
             this.base ? 'replaces' : 'download'
           );
-      const reject = h(
-        'button',
+      const reject = cardButton(
+        'secondary',
         {
-          class: 'btn',
-          attrs: { type: 'button', 'data-focus': 'reject' },
+          attrs: { 'data-focus': 'reject' },
           onClick: () => this.reject()
         },
         'Reject'
       );
       reject.disabled = this.disabled || this.busy !== null;
-      const download = h(
-        'button',
+      const download = cardButton(
+        'primary',
         {
-          class: 'btn btn-primary btn-lg',
-          attrs: { type: 'button', 'data-focus': 'download' },
+          attrs: { 'data-focus': 'download' },
           onClick: () => void this.fetch()
         },
         this.busy === 'download' ? 'Downloading…' : 'Download'

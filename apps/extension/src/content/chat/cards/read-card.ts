@@ -16,6 +16,7 @@ import type { AttachmentFile, ReadCardRecord, RequestOutcome, SentFile } from '.
 import { attachToComposer, insertIntoComposer } from '../composer';
 import { failureText, type Ask } from './diff-card';
 import {
+  cardButton,
   formatCount,
   formatFixedBadge,
   formatSize,
@@ -330,11 +331,10 @@ export class ReadCard {
     if (built.redacted > 0) hint += ` ${redactionNote(built.redacted)}`;
     if (this.disabled) hint = 'Session ended.';
 
-    const button = h(
-      'button',
+    const button = cardButton(
+      this.sent ? 'secondary' : 'primary',
       {
-        class: this.sent ? 'btn btn-lg' : 'btn btn-primary btn-lg',
-        attrs: { type: 'button', 'data-focus': 'send' },
+        attrs: { 'data-focus': 'send' },
         onClick: () => this.send()
       },
       this.sent ? 'Send again' : 'Send these files'

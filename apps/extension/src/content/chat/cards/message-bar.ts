@@ -1,5 +1,5 @@
 import type { DiffCard } from './diff-card';
-import { h, renderCard } from './dom';
+import { cardButton, h, renderCard } from './dom';
 import { createHost } from './host';
 
 /**
@@ -87,11 +87,10 @@ export class MessageBar {
 
     const buttons: HTMLElement[] = [];
     if (undoCount >= 2 || this.running === 'undo') {
-      const undo = h(
-        'button',
+      const undo = cardButton(
+        'secondary',
         {
-          class: 'btn',
-          attrs: { type: 'button', 'data-focus': 'undo-all' },
+          attrs: { 'data-focus': 'undo-all' },
           onClick: () => void this.undoAll()
         },
         this.running === 'undo' ? 'Undoing…' : `Undo all (${undoCount})`
@@ -100,11 +99,10 @@ export class MessageBar {
       buttons.push(undo);
     }
     if (applyCount >= 2 || this.running === 'apply') {
-      const apply = h(
-        'button',
+      const apply = cardButton(
+        'primary',
         {
-          class: 'btn btn-primary',
-          attrs: { type: 'button', 'data-focus': 'apply-all' },
+          attrs: { 'data-focus': 'apply-all' },
           onClick: () => void this.applyAll()
         },
         this.running === 'apply' ? 'Applying…' : `Apply all (${applyCount})`

@@ -14,6 +14,7 @@ import type { RequestOutcome } from '../../../messages';
 import { insertIntoComposer } from '../composer';
 import { DIFF_RENDER_LIMIT, failureText, modeTag, type Ask } from './diff-card';
 import {
+  cardButton,
   copyButton,
   formatCount,
   formatFixedBadge,
@@ -311,11 +312,10 @@ export class RunCard {
 
     const buttons: HTMLElement[] = [];
     if (this.running) {
-      const cancel = h(
-        'button',
+      const cancel = cardButton(
+        'danger',
         {
-          class: 'btn btn-danger',
-          attrs: { type: 'button', 'data-focus': 'cancel' },
+          attrs: { 'data-focus': 'cancel' },
           onClick: () => void this.cancel()
         },
         this.cancelling ? 'Cancelling…' : 'Cancel'
@@ -324,10 +324,9 @@ export class RunCard {
       buttons.push(cancel);
     } else {
       if (this.result) {
-        const send = h(
-          'button',
+        const send = cardButton(
+          'primary',
           {
-            class: 'btn btn-primary',
             attrs: { type: 'button', 'data-focus': 'send' },
             onClick: () => this.sendOutput()
           },
@@ -337,11 +336,10 @@ export class RunCard {
         buttons.push(send);
       }
       if (badge !== 'not allowed' || this.result) {
-        const run = h(
-          'button',
+        const run = cardButton(
+          this.result ? 'secondary' : 'primary',
           {
-            class: this.result ? 'btn' : 'btn btn-primary',
-            attrs: { type: 'button', 'data-focus': 'run' },
+            attrs: { 'data-focus': 'run' },
             onClick: () => void this.run()
           },
           this.result ? 'Run again' : 'Run'

@@ -28,6 +28,29 @@ export function h<K extends keyof HTMLElementTagNameMap>(
   return element;
 }
 
+/** A card action's look: the one primary action, the rest, or a destructive one. */
+export type ButtonVariant = 'primary' | 'secondary' | 'danger';
+
+/**
+ * Every action on a card (Apply, Reject, Run, Cancel, Save, Download, Send these files…):
+ * one fixed height, padding, font size and radius in every variant and state, so a pair of
+ * them always lines up and no label, icon or click can change a button's size
+ * (`.card-btn` in card.css).
+ */
+export function cardButton(
+  variant: ButtonVariant,
+  props: Omit<Props, 'class'>,
+  ...children: Child[]
+): HTMLButtonElement {
+  const button = h(
+    'button',
+    { ...props, attrs: { type: 'button', ...props.attrs, 'data-variant': variant } },
+    ...children
+  );
+  button.className = 'card-btn';
+  return button;
+}
+
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 /** Outline icons, 16px, 1.5px stroke (DESIGN.md "Icons"). Path data is ours, not the chat's. */

@@ -149,6 +149,39 @@ async function clickInCard(page, cdp, kind, index, label) {
   await page.mouse.click(x, y);
 }
 
+/**
+ * Every card on the page (not the chip or the notice): each action is a `card-btn`, and
+ * all of a card's actions have the same rendered height, 32px. Returns the kinds checked
+ * with their button labels. Hidden buttons (a collapsed card) have no box and are skipped.
+ */
+async function checkCardButtons(cdp) {
+  const root = await piercedTree(cdp);
+  const checked = {};
+  for (const host of [...walk(root)]) {
+    const kind = host.nodeName === 'DIV' ? attr(host, 'data-bridge-host') : undefined;
+    if (!kind || kind === 'loop-chip' || kind === 'page-notice') continue;
+    const heights = [];
+    for (const node of walk(host)) {
+      if (node.nodeName !== 'BUTTON') continue;
+      const cls = attr(node, 'class') ?? '';
+      if (/(^|\s)btn(\s|$)/.test(cls)) throw new Error(`${kind}: a .btn button: ${textOf(node)}`);
+      if (cls !== 'card-btn') continue;
+      let box;
+      try {
+        ({ model: box } = await cdp.send('DOM.getBoxModel', { backendNodeId: node.backendNodeId }));
+      } catch {
+        continue;
+      }
+      heights.push([textOf(node).trim(), box.border[5] - box.border[1]]);
+    }
+    if (heights.some(([, h]) => Math.abs(h - 32) > 0.5)) {
+      throw new Error(`${kind}: card buttons differ in height: ${JSON.stringify(heights)}`);
+    }
+    if (heights.length > 0) (checked[kind] ??= new Set()).add(heights.map(([l]) => l).join(' + '));
+  }
+  return Object.fromEntries(Object.entries(checked).map(([k, v]) => [k, [...v]]));
+}
+
 async function waitFor(what, fn, timeout = 10_000) {
   const end = Date.now() + timeout;
   let last;
@@ -197,6 +230,7 @@ module.exports = {
   hosts,
   cardText,
   clickInCard,
+  checkCardButtons,
   waitFor,
   panelChat
 };

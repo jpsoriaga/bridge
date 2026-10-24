@@ -21,7 +21,15 @@ import {
 import type { RequestOutcome } from '../../../messages';
 import { insertIntoComposer } from '../composer';
 import { DIFF_RENDER_LIMIT, failureText, modeTag, type Ask } from './diff-card';
-import { copyButton, formatFixedBadge, h, icon, redactionNote, renderCard } from './dom';
+import {
+  cardButton,
+  copyButton,
+  formatFixedBadge,
+  h,
+  icon,
+  redactionNote,
+  renderCard
+} from './dom';
 import { createHost } from './host';
 
 /** How long Full auto waits for a started process to print its URL (or end) before going on. */
@@ -340,11 +348,10 @@ export class ProcessCard {
       primary = false,
       danger = false
     ) => {
-      const el = h(
-        'button',
+      const el = cardButton(
+        danger ? 'danger' : primary ? 'primary' : 'secondary',
         {
-          class: danger ? 'btn btn-danger' : primary ? 'btn btn-primary' : 'btn',
-          attrs: { type: 'button', 'data-focus': focus },
+          attrs: { 'data-focus': focus },
           onClick
         },
         label

@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildContinuation,
@@ -13,6 +14,7 @@ import {
 import type { RequestOutcome, WorkerRequest } from '../../messages';
 import { applyAllTargets, MessageBar, undoAllTargets } from './cards/message-bar';
 import { DiffCard, type Ask } from './cards/diff-card';
+import { cardButton } from './cards/dom';
 import { FormatCard, issueLines } from './cards/format-card';
 import { InterruptCard } from './cards/interrupt-card';
 import { ReadCard } from './cards/read-card';
@@ -795,7 +797,7 @@ describe('InterruptCard', () => {
     const f = fake(true);
     const c = new InterruptCard(cut, f.actions);
     const root = c.host.shadowRoot!;
-    const primary = root.querySelector<HTMLButtonElement>('.btn-primary')!;
+    const primary = root.querySelector<HTMLButtonElement>('[data-variant="primary"]')!;
     expect(primary.textContent).toBe('Continue generating');
     primary.click();
     expect(f.presses()).toBe(1);
@@ -808,5 +810,48 @@ describe('InterruptCard', () => {
       true
     );
     spy.mockRestore();
+  });
+});
+
+describe('card buttons', () => {
+  const css = readFileSync(`${import.meta.dirname}/cards/card.css`, 'utf8');
+  /** Every rule whose selector starts with `.card-btn`, as [selector, declarations]. */
+  const rules = [...css.matchAll(/(\.card-btn[^{]*)\{([^}]*)\}/g)].map(
+    ([, selector, body]) => [selector!.trim(), body!] as const
+  );
+
+  it('fixes one size for every card action', () => {
+    const base = rules.find(([selector]) => selector === '.card-btn')?.[1] ?? '';
+    for (const declaration of [
+      'box-sizing: border-box',
+      'height: 32px',
+      'min-height: 32px',
+      'max-height: 32px',
+      'line-height: 1',
+      'font-size: var(--text-sm)',
+      'border: 1px solid',
+      'border-radius: var(--radius-md)',
+      'white-space: nowrap'
+    ]) {
+      expect(base).toContain(declaration);
+    }
+  });
+
+  it('lets no variant or state change the size', () => {
+    for (const [selector, body] of rules) {
+      if (selector === '.card-btn' || selector.startsWith('.card-btn >')) continue;
+      if (selector === '.card-btn svg') continue;
+      expect(body, selector).not.toMatch(
+        /(^|[\s;])(height|padding|font-size|line-height|border-width|border:|margin|transform)\b/
+      );
+    }
+  });
+
+  it('builds each one with its variant, as a plain button', () => {
+    const button = cardButton('danger', { attrs: { 'data-focus': 'stop' } }, 'Stop');
+    expect(button.className).toBe('card-btn');
+    expect(button.type).toBe('button');
+    expect(button.dataset.variant).toBe('danger');
+    expect(button.dataset.focus).toBe('stop');
   });
 });
