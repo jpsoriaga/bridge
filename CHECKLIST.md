@@ -483,7 +483,7 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [x] Save to project: **Download from URL** for an https image the page won't hand over, click only (tests)
 - [x] Install notes: no Apple logo glyph
 - [x] Format, lint, typecheck, tests with coverage, build, every e2e script; PLAN.md, DESIGN.md, CHANGELOG, README, SECURITY.md, PRIVACY.md, e2e README
-- [ ] Release dry run on GitHub green
+- [x] Release dry run on GitHub green (run 40114909873; `release` skipped, `dry-run` passed); CI green on all three systems
 - [ ] Manual run on the real chatgpt.com (e2e README "1.3.0 fixes on the real chatgpt.com")
 
 ## Landing page (`apps/site`)
