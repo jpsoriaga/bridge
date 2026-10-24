@@ -33,10 +33,12 @@ import {
   OpId,
   RunId,
   serverMessage,
+  UI_GUIDANCE,
   type BridgeConfig,
   type LoopReport,
   type Mode,
   type RunResult,
+  type UiGuidance,
   type UpdateChannel
 } from '@bridge/shared';
 import {
@@ -198,6 +200,7 @@ function bridgeConfig(): BridgeConfig {
     background: allowlist() === null ? [] : backgroundEntries(),
     processes: processes.list(),
     autoApprove: settings.read().autoApprove,
+    uiGuidance: settings.read().uiGuidance,
     instance
   };
 }
@@ -239,6 +242,7 @@ function desktopState(): DesktopState {
     loop,
     watch: projects.watchMode,
     theme: saved.theme,
+    uiGuidance: saved.uiGuidance,
     backupRetentionDays: saved.backupRetentionDays,
     onboarding: { dismissed: saved.onboardingDismissed, sessionStarted: saved.sessionStarted },
     about: {
@@ -839,6 +843,12 @@ function registerIpc(): void {
     settings.update({ theme: theme as Theme });
     applyTheme(theme as Theme);
     broadcast();
+    return true;
+  });
+  handle(IPC.setUiGuidance, (value) => {
+    if (!UI_GUIDANCE.includes(value as UiGuidance)) return false;
+    settings.update({ uiGuidance: value as UiGuidance });
+    configChanged();
     return true;
   });
   handle(IPC.setBackupRetention, async (days) => {

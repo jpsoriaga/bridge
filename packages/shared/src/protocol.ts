@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { UI_GUIDANCE } from './project';
 import {
   BackgroundLogsParams,
   BackgroundProcess,
@@ -263,6 +264,11 @@ export const BridgeConfig = z.strictObject({
     /** Files that look partial ("…rest unchanged"). */
     partial: z.boolean()
   }),
+  /**
+   * Settings → Project → UI guidance: whether the session prompt has the UI quality block
+   * (Auto: frontend projects, their own design rules first).
+   */
+  uiGuidance: z.enum(UI_GUIDANCE),
   /**
    * Random per app launch. A new one after a reconnect means the app restarted: Full auto
    * was reset, so a loop that was running pauses.

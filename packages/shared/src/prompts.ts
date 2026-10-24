@@ -1,6 +1,7 @@
 import { CHAT_OUTPUT_CHARS, formatArgv, isInstallCommand, truncateMiddle } from './commands';
 import type { TreeEntry } from './files';
 import type { Interruption } from './parser';
+import { conventionsBlock, uiGuidanceBlock, type ProjectProfile, type UiGuidance } from './project';
 import type { RunResult } from './protocol';
 import { redactSecrets } from './redact';
 
@@ -210,6 +211,10 @@ export interface SessionPromptInput {
   allowlist?: readonly string[];
   /** The allowlist entries that are background processes (dev servers): `@@START` only. */
   background?: readonly string[];
+  /** What the project is (`detectProject`); its conventions and UI guidance follow the rules. */
+  profile?: ProjectProfile;
+  /** Settings → Project → UI guidance. */
+  uiGuidance?: UiGuidance;
 }
 
 function commandRule(allowlist: readonly string[], background: readonly string[]): string {
@@ -243,7 +248,9 @@ export function buildSessionPrompt({
   tree,
   truncated,
   allowlist = [],
-  background = []
+  background = [],
+  profile,
+  uiGuidance = 'auto'
 }: SessionPromptInput): string {
   const summary = summarizeTree(tree);
   const listing = summary.lines.join('\n');
@@ -268,9 +275,13 @@ export function buildSessionPrompt({
       '5. Binary files (images, fonts) can never be written as text. To save an image you generate, put `@@ASSET public/hero.png@@` on the line before it. To fetch one: `@@DOWNLOAD https://example.com/logo.svg -> public/logo.svg@@` (I approve each). `@@READ` on an image attaches it.',
       '6. When the task is finished: `@@DONE@@`',
       '7. Every marker starts AND ends with @@ and is wrapped in single backticks. Paths are relative to the project root. One code block per file.',
-      "8. Files I send as `@@CONTEXT path@@` are for reference only. Don't edit them unless I ask."
+      "8. Files I send as `@@CONTEXT path@@` are for reference only. Don't edit them unless I ask.",
+      "9. Follow the project's existing structure and naming. If the project is new, use the standard structure for its framework. Don't reorganise existing files unless I ask."
     ].join('\n'),
     'Before every reply, check that each marker matches these formats exactly.',
+    ...(profile ? [conventionsBlock(profile), uiGuidanceBlock(profile, uiGuidance)] : []).filter(
+      (block): block is string => block !== null
+    ),
     `PROJECT FILES${trimmed}\n${fence}\n${listing}\n${fence}`,
     'Reply with only "Ready." to this message.'
   ].join('\n\n');

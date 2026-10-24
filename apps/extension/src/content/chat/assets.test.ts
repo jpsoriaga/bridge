@@ -29,6 +29,7 @@ const CONFIG: BridgeConfig = {
   stepLimit: 25,
   pauseOnFailure: false,
   catchUpAfterSleep: true,
+  uiGuidance: 'auto',
   running: null,
   background: ['npm run dev'],
   processes: [],

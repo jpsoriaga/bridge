@@ -124,6 +124,7 @@ export function createBridgeServer(options: BridgeServerOptions) {
       stepLimit: DEFAULT_STEP_LIMIT,
       pauseOnFailure: false,
       catchUpAfterSleep: true,
+      uiGuidance: 'auto',
       running: null,
       background: [],
       processes: [],

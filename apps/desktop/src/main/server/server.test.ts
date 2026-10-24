@@ -852,6 +852,7 @@ describe('modes, commands and the loop (real project, real runner)', () => {
         stepLimit: 10,
         pauseOnFailure: false,
         catchUpAfterSleep: true,
+        uiGuidance: 'auto',
         running: runner.current,
         background: [],
         processes: [],

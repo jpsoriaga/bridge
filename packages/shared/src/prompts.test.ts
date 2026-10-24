@@ -135,9 +135,9 @@ describe('buildSessionPrompt', () => {
     expect(prompt).toMatchSnapshot();
   });
 
-  it('keeps the rules before the tree, under 1,500 characters', () => {
+  it('keeps the rules before the tree, under 1,700 characters', () => {
     const before = prompt.slice(0, prompt.indexOf('PROJECT FILES'));
-    expect(before.length).toBeLessThan(1_500);
+    expect(before.length).toBeLessThan(1_700);
     expect(prompt.indexOf('RULES')).toBeLessThan(prompt.indexOf('PROJECT FILES'));
     expect(prompt.endsWith('Reply with only "Ready." to this message.')).toBe(true);
   });
@@ -167,7 +167,7 @@ describe('buildSessionPrompt', () => {
       allowlist: ['pnpm install', ...allowlist]
     });
     expect(withInstall).toContain(line);
-    expect(withInstall.slice(0, withInstall.indexOf('PROJECT FILES')).length).toBeLessThan(1_500);
+    expect(withInstall.slice(0, withInstall.indexOf('PROJECT FILES')).length).toBeLessThan(1_700);
   });
 
   it('includes the project name and tree', () => {
@@ -388,7 +388,7 @@ describe('1.3.0: background processes, logs, attachments', () => {
     expect(prompt).toContain('`@@ASSET public/hero.png@@`');
     expect(prompt).toContain('@@DOWNLOAD');
     const before = prompt.slice(0, prompt.indexOf('PROJECT FILES'));
-    expect(before.length).toBeLessThan(1_600);
+    expect(before.length).toBeLessThan(1_850);
   });
 
   it('says how each START and STOP went, with the URL', () => {

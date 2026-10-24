@@ -330,6 +330,22 @@ describe('Settings forms', () => {
     );
   });
 
+  it('sets UI guidance under Project: Auto by default, then Always or Off', () => {
+    const { bridge } = installBridge();
+    const { rerender } = render(<SettingsView state={makeState()} />);
+    const group = screen.getByRole('radiogroup', { name: 'UI guidance' });
+    expect(within(group).getByRole('radio', { name: 'Auto' }).getAttribute('aria-checked')).toBe(
+      'true'
+    );
+    expect(screen.getByText(/For projects with a UI/)).toBeTruthy();
+    fireEvent.click(within(group).getByRole('radio', { name: 'Off' }));
+    expect(bridge.setUiGuidance).toHaveBeenLastCalledWith('off');
+    fireEvent.keyDown(group, { key: 'ArrowRight' });
+    expect(bridge.setUiGuidance).toHaveBeenLastCalledWith('always');
+    rerender(<SettingsView state={makeState({ uiGuidance: 'off' })} />);
+    expect(screen.getByText(/says nothing about UI design/)).toBeTruthy();
+  });
+
   it('switches the appearance, with the keyboard too', () => {
     const { bridge } = installBridge();
     render(<SettingsView state={makeState()} />);

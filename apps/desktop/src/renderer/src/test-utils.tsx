@@ -50,6 +50,7 @@ export function makeState(overrides: Partial<DesktopState> = {}): DesktopState {
     loop: null,
     watch: 'watch',
     theme: 'system',
+    uiGuidance: 'auto',
     backupRetentionDays: 7,
     onboarding: { dismissed: true, sessionStarted: true },
     about: {
@@ -124,6 +125,7 @@ export function installBridge(initial: DesktopState = makeState(), activity: Act
     getOpDetail: vi.fn(async () => detail),
     getRunDetail: vi.fn(async () => null),
     setTheme: vi.fn(async () => true),
+    setUiGuidance: vi.fn(async () => true),
     setBackupRetention: vi.fn(async (days: number) => days >= 1 && days <= 90),
     openBackupsFolder: vi.fn(async () => true),
     clearBackups: vi.fn(async () => true),

@@ -80,6 +80,7 @@ const api: BridgeApi = {
   getOpDetail: (opId) => ipcRenderer.invoke(IPC.getOpDetail, opId) as Promise<OpDetail | null>,
   getRunDetail: (runId) => ipcRenderer.invoke(IPC.getRunDetail, runId) as Promise<RunDetail | null>,
   setTheme: (theme) => ipcRenderer.invoke(IPC.setTheme, theme) as Promise<boolean>,
+  setUiGuidance: (value) => ipcRenderer.invoke(IPC.setUiGuidance, value) as Promise<boolean>,
   setBackupRetention: (days) =>
     ipcRenderer.invoke(IPC.setBackupRetention, days) as Promise<boolean>,
   openBackupsFolder: () => ipcRenderer.invoke(IPC.openBackupsFolder) as Promise<boolean>,

@@ -3,6 +3,7 @@ import {
   buildContextMessage,
   buildSessionPrompt,
   candidatePorts,
+  detectProject,
   FILE_ERROR_LABELS,
   formatContextBlock,
   isAttachablePath,
@@ -281,6 +282,10 @@ async function sessionPrompt(): Promise<
     return { ok: false, error: tree.error.code === 'no-project' ? 'no-project' : 'failed' };
   const { entries, truncated } = tree.result;
   const { total, shown } = summarizeTree(entries);
+  // Only the dependency names are used (stack, styling, tests); nothing of it is inserted.
+  const manifest = entries.some((e) => e.path === 'package.json' && e.type === 'file')
+    ? await connection.request('read', { path: 'package.json' })
+    : null;
   return {
     ok: true,
     text: buildSessionPrompt({
@@ -288,7 +293,9 @@ async function sessionPrompt(): Promise<
       tree: entries,
       truncated,
       allowlist: connection.config?.allowlist ?? [],
-      background: connection.config?.background ?? []
+      background: connection.config?.background ?? [],
+      profile: detectProject(entries, manifest?.ok ? manifest.result.content : null),
+      uiGuidance: connection.config?.uiGuidance ?? 'auto'
     }),
     total,
     shown

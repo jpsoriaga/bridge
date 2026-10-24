@@ -10,7 +10,9 @@ import {
   MAX_STEP_LIMIT,
   MIN_RUN_TIMEOUT_MS,
   parseAllowlistEntry,
+  UI_GUIDANCE,
   UPDATE_CHANNELS,
+  type UiGuidance,
   type UpdateChannel
 } from '@bridge/shared';
 import { isValidEnvPattern, MAX_ENV_PATTERNS } from './commands/env';
@@ -92,6 +94,8 @@ export interface Settings {
   catchUpAfterSleep: boolean;
   /** The PATH commands get instead of the login shell's. Empty: no override. */
   pathOverride: string;
+  /** Settings → Project → UI guidance in the session prompt. */
+  uiGuidance: UiGuidance;
   theme: Theme;
   /** Days ops and backups are kept, 1–90. */
   backupRetentionDays: number;
@@ -240,6 +244,9 @@ export function settingsFile(path: string) {
       pauseOnFailure: data.pauseOnFailure === true,
       catchUpAfterSleep: data.catchUpAfterSleep !== false,
       pathOverride: isUsablePath(data.pathOverride) ? data.pathOverride : '',
+      uiGuidance: UI_GUIDANCE.includes(data.uiGuidance as UiGuidance)
+        ? (data.uiGuidance as UiGuidance)
+        : 'auto',
       theme: THEMES.includes(data.theme as Theme) ? (data.theme as Theme) : 'system',
       backupRetentionDays: clampInt(
         data.backupRetentionDays,

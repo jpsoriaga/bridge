@@ -8,6 +8,7 @@ import type {
   Mode,
   ProjectInfo,
   RunResult,
+  UiGuidance,
   UpdateChannel
 } from '@bridge/shared';
 
@@ -93,6 +94,8 @@ export interface DesktopState {
   /** How the open project is watched: every change, or only the files in context. */
   watch: 'watch' | 'poll' | null;
   theme: Theme;
+  /** Settings → Project → UI guidance in the session prompt. */
+  uiGuidance: UiGuidance;
   /** Days ops and backups are kept. */
   backupRetentionDays: number;
   /** The first-run checklist. */
@@ -289,6 +292,8 @@ export interface BridgeApi {
   /** A command's full output, while the app is still open. Null once it's forgotten. */
   getRunDetail(runId: string): Promise<RunDetail | null>;
   setTheme(theme: Theme): Promise<boolean>;
+  /** UI guidance in the session prompt: Auto, Always or Off. */
+  setUiGuidance(value: UiGuidance): Promise<boolean>;
   /** Days to keep ops and backups, 1–90. Prunes now. */
   setBackupRetention(days: number): Promise<boolean>;
   /** Opens the project's backups folder in Finder/Explorer. */
@@ -347,6 +352,7 @@ export const IPC = {
   getOpDetail: 'bridge:get-op-detail',
   getRunDetail: 'bridge:get-run-detail',
   setTheme: 'bridge:set-theme',
+  setUiGuidance: 'bridge:set-ui-guidance',
   setBackupRetention: 'bridge:set-backup-retention',
   openBackupsFolder: 'bridge:open-backups-folder',
   clearBackups: 'bridge:clear-backups',

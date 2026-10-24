@@ -1,5 +1,11 @@
 import { useState, type KeyboardEvent, type ReactNode } from 'react';
-import { UPDATE_CHANNELS, type UpdateChannel } from '@bridge/shared';
+import {
+  UI_GUIDANCE,
+  UI_GUIDANCE_LABELS,
+  UPDATE_CHANNELS,
+  type UiGuidance,
+  type UpdateChannel
+} from '@bridge/shared';
 import type { DesktopState, Theme, UpdateCheck } from '../../preload/api';
 import {
   AllowlistEditor,
@@ -322,6 +328,45 @@ function UpdateChannelSetting({ about }: { about: DesktopState['about'] }) {
   );
 }
 
+const UI_GUIDANCE_HINTS: Record<UiGuidance, string> = {
+  auto: 'For projects with a UI, the session prompt asks the chat for polished, accessible design, or to follow the project’s own design rules (DESIGN.md, tokens, a Tailwind theme) when it has them.',
+  always:
+    'Every session prompt asks for polished, accessible UI, even when the project looks backend only. The project’s own design rules still come first.',
+  off: 'The session prompt says nothing about UI design.'
+};
+
+/** Settings → Project → UI guidance: the UI quality block in the session prompt. */
+function UiGuidanceSetting({ value }: { value: UiGuidance }) {
+  const choose = (next: UiGuidance) => void window.bridge.setUiGuidance(next);
+  return (
+    <>
+      <p className="label" id="ui-guidance-label">
+        UI guidance
+      </p>
+      <div
+        className="segmented"
+        role="radiogroup"
+        aria-labelledby="ui-guidance-label"
+        onKeyDown={radioKeys(UI_GUIDANCE, value, choose)}
+      >
+        {UI_GUIDANCE.map((option) => (
+          <button
+            key={option}
+            type="button"
+            role="radio"
+            aria-checked={value === option}
+            tabIndex={value === option ? 0 : -1}
+            onClick={() => choose(option)}
+          >
+            {UI_GUIDANCE_LABELS[option]}
+          </button>
+        ))}
+      </div>
+      <p className="hint">{UI_GUIDANCE_HINTS[value]} Applies to the next session you start.</p>
+    </>
+  );
+}
+
 /** Copy diagnostics (a toast says it's copied) and the logs folder, for bug reports. */
 function ReportProblem() {
   return (
@@ -436,6 +481,7 @@ export function SettingsView({ state }: { state: DesktopState }) {
           invalidText={PATTERN_HINT}
           save={(patterns) => window.bridge.setGatedPatterns(patterns)}
         />
+        <UiGuidanceSetting value={state.uiGuidance} />
       </Section>
       <Section id="commands" title="Commands">
         <h3 className="subsection-title">Allowed commands</h3>

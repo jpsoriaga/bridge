@@ -62,6 +62,15 @@ describe('update channel', () => {
   });
   afterEach(() => t.cleanup());
 
+  it('UI guidance is Auto until set, and only auto, always or off', () => {
+    const settings = settingsFile(path);
+    expect(settings.read().uiGuidance).toBe('auto');
+    settings.update({ uiGuidance: 'off' });
+    expect(settings.read().uiGuidance).toBe('off');
+    writeFileSync(path, JSON.stringify({ uiGuidance: 'loud' }));
+    expect(settings.read().uiGuidance).toBe('auto');
+  });
+
   it('is unset until the user picks one, and only stable or beta', () => {
     const settings = settingsFile(path);
     expect(settings.read().updateChannel).toBeUndefined();

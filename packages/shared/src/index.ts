@@ -7,6 +7,7 @@ export * from './diff';
 export * from './files';
 export * from './loop';
 export * from './parser';
+export * from './project';
 export * from './prompts';
 export * from './protocol';
 export * from './redact';

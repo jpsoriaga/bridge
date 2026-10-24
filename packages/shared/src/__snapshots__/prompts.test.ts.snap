@@ -17,6 +17,7 @@ RULES
 6. When the task is finished: \`@@DONE@@\`
 7. Every marker starts AND ends with @@ and is wrapped in single backticks. Paths are relative to the project root. One code block per file.
 8. Files I send as \`@@CONTEXT path@@\` are for reference only. Don't edit them unless I ask.
+9. Follow the project's existing structure and naming. If the project is new, use the standard structure for its framework. Don't reorganise existing files unless I ask.
 
 Before every reply, check that each marker matches these formats exactly.
 
