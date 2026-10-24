@@ -1,7 +1,11 @@
 import { z } from 'zod';
 import {
+  BackgroundLogsParams,
   BridgeConfig,
   DeleteParams,
+  DownloadParams,
+  ProcessId,
+  ReadBinaryResult,
   ListParams,
   LoopId,
   LoopReport,
@@ -45,15 +49,19 @@ export const LoopAction = z.enum([
 export type LoopAction = z.infer<typeof LoopAction>;
 
 export const MAX_FILES_PER_SEND = 50;
+/** Most images one Attach (or one READ card) adds to the message. */
+export const MAX_ATTACHMENTS = 10;
+/** A binary file's bytes between the content script and the worker, base64. */
+const BinaryData = ReadBinaryResult.shape.data;
 
 /**
  * `conversationId:messageId:slot:contentHash`. See `blockKey`. The slot is a diff card's
- * block index, `read` for the message's READ card, or `d<n>` / `r<n>` for its n-th
- * DELETE or RENAME card.
+ * block index, `read` for the message's READ card, `d<n>` / `r<n>` for its n-th DELETE or
+ * RENAME card, `a<n>` for its n-th image (Save to project) and `w<n>` for its n-th DOWNLOAD.
  */
 export const BlockKey = z
   .string()
-  .regex(/^[\w-]{1,64}:[\w-]{1,128}:(?:\d{1,4}|read|[dr]\d{1,4}):[0-9a-f]{16}$/);
+  .regex(/^[\w-]{1,64}:[\w-]{1,128}:(?:\d{1,4}|read|[draw]\d{1,4}):[0-9a-f]{16}$/);
 
 export const CardState = z.enum(['pending', 'applied', 'rejected', 'undone']);
 export type CardState = z.infer<typeof CardState>;
@@ -76,11 +84,13 @@ export const DiffCardRecord = z.strictObject({
 });
 export type DiffCardRecord = z.infer<typeof DiffCardRecord>;
 
-/** A DELETE or RENAME card. Always applied by a click. */
+/** A DELETE or RENAME card. Applied by a click, or Full auto when the app allows it. */
 export const ChangeCardRecord = z.strictObject({
   card: z.literal('change'),
   state: CardState,
   opId: OpId.optional(),
+  /** Applied by Full auto ("Also approve automatically") rather than a click. */
+  auto: z.literal(true).optional(),
   appliedAt: z.number().int().nonnegative().optional(),
   updatedAt: z.number().int().nonnegative()
 });
@@ -94,7 +104,26 @@ export const ReadCardRecord = z.strictObject({
 });
 export type ReadCardRecord = z.infer<typeof ReadCardRecord>;
 
-export const CardRecord = z.union([DiffCardRecord, ReadCardRecord, ChangeCardRecord]);
+/** A generated image's Save to project card, or a DOWNLOAD card: where it went, and how. */
+export const BinaryCardRecord = z.strictObject({
+  card: z.enum(['asset', 'download']),
+  state: CardState,
+  /** Where it was saved (an image's path is the user's to choose). */
+  path: ChatPath.optional(),
+  opId: OpId.optional(),
+  kind: z.enum(['create', 'modify']).optional(),
+  auto: z.literal(true).optional(),
+  appliedAt: z.number().int().nonnegative().optional(),
+  updatedAt: z.number().int().nonnegative()
+});
+export type BinaryCardRecord = z.infer<typeof BinaryCardRecord>;
+
+export const CardRecord = z.union([
+  DiffCardRecord,
+  ReadCardRecord,
+  ChangeCardRecord,
+  BinaryCardRecord
+]);
 export type CardRecord = z.infer<typeof CardRecord>;
 
 const WindowId = z.number().int().nonnegative();
@@ -123,7 +152,7 @@ export type SentFile = z.infer<typeof SentFile>;
 export const PendingRequest = z.strictObject({
   /** Identifies the card on its page, for "Show". */
   id: z.string().max(200),
-  kind: z.enum(['read', 'run']),
+  kind: z.enum(['read', 'run', 'start', 'download']),
   /** The files asked for, or the command. */
   text: z.string().max(2_000),
   /** RUN: whether the allowlist allows it. READ: whether any file can be sent. */
@@ -176,6 +205,16 @@ export const WorkerRequest = z.discriminatedUnion('type', [
   }),
   // Cancels the command running now, whoever started it.
   z.strictObject({ type: z.literal('run-cancel') }),
+  // Background processes, from the side panel: Stop, its recent lines, open its URL.
+  z.strictObject({ type: z.literal('process-stop'), procId: ProcessId }),
+  z.strictObject({ type: z.literal('process-logs'), procId: ProcessId }),
+  z.strictObject({ type: z.literal('process-open'), procId: ProcessId }),
+  // Send files → Attach: project images go into the chat's message as real attachments.
+  z.strictObject({
+    type: z.literal('attach-files'),
+    windowId: WindowId,
+    paths: z.array(ChatPath).min(1).max(MAX_ATTACHMENTS)
+  }),
   // Dev builds: what the page script sees on the panel's active tab, to fix selectors.
   z.strictObject({ type: z.literal('page-diagnostics'), windowId: WindowId }),
   // Copy diagnostics in the side panel: versions, states and recent events, as text.
@@ -193,16 +232,22 @@ export const WorkerRequest = z.discriminatedUnion('type', [
   }),
   z.strictObject({ type: z.literal('chat-read'), path: ChatPath }),
   z.strictObject({ type: z.literal('chat-stat'), path: ChatPath }),
+  // A click, unless Full auto sends it because "Also approve automatically" allows it (the
+  // app checks that setting itself).
   z.strictObject({
     type: z.literal('chat-delete'),
     path: ChatPath,
-    baseHash: DeleteParams.shape.baseHash
+    baseHash: DeleteParams.shape.baseHash,
+    trigger: Trigger.optional(),
+    loopId: LoopId.optional()
   }),
   z.strictObject({
     type: z.literal('chat-rename'),
     from: ChatPath,
     to: RenameParams.shape.to,
-    baseHash: RenameParams.shape.baseHash
+    baseHash: RenameParams.shape.baseHash,
+    trigger: Trigger.optional(),
+    loopId: LoopId.optional()
   }),
   z.strictObject({ type: z.literal('chip-corner'), corner: ChipCorner }),
   // The page says this conversation doesn't exist (deleted, or a 404): end its session.
@@ -220,7 +265,9 @@ export const WorkerRequest = z.discriminatedUnion('type', [
     content: WriteParams.shape.content,
     baseHash: Sha256Hex.optional(),
     trigger: Trigger,
-    loopId: LoopId.optional()
+    loopId: LoopId.optional(),
+    /** A partial-looking file Full auto applies because "Also approve automatically" allows it. */
+    autoApproved: z.literal(true).optional()
   }),
   z.strictObject({
     type: z.literal('chat-run'),
@@ -229,6 +276,39 @@ export const WorkerRequest = z.discriminatedUnion('type', [
     loopId: LoopId.optional()
   }),
   z.strictObject({ type: z.literal('chat-run-cancel'), runId: RunId }),
+  // An image the chat made (Save to project), or any binary write: the worker sends it to
+  // the app in chunks.
+  z.strictObject({
+    type: z.literal('chat-write-binary'),
+    path: ChatPath,
+    data: BinaryData,
+    baseHash: Sha256Hex.optional(),
+    trigger: Trigger,
+    loopId: LoopId.optional()
+  }),
+  // A project image, as bytes, to attach to the message.
+  z.strictObject({ type: z.literal('chat-read-binary'), path: ChatPath }),
+  // `@@DOWNLOAD`, on a click only: the worker never sends one with `trigger: 'auto'`.
+  z.strictObject({
+    type: z.literal('chat-download'),
+    url: DownloadParams.shape.url,
+    path: ChatPath,
+    baseHash: Sha256Hex.optional()
+  }),
+  // `@@START`, `@@STOP` and `@@LOGS`.
+  z.strictObject({
+    type: z.literal('chat-bg-start'),
+    argv: RunParams.shape.argv,
+    trigger: Trigger,
+    loopId: LoopId.optional()
+  }),
+  z.strictObject({ type: z.literal('chat-bg-stop'), argv: RunParams.shape.argv, trigger: Trigger }),
+  z.strictObject({
+    type: z.literal('chat-bg-logs'),
+    argv: RunParams.shape.argv,
+    since: BackgroundLogsParams.shape.since,
+    tail: BackgroundLogsParams.shape.tail
+  }),
   z.strictObject({ type: z.literal('chat-loop'), report: LoopReport }),
   z.strictObject({ type: z.literal('chat-undo'), opId: OpId }),
   z.strictObject({
@@ -270,7 +350,13 @@ export const CONTENT_SCRIPT_REQUESTS: ReadonlySet<WorkerRequest['type']> = new S
   'card-set',
   'chat-run',
   'chat-run-cancel',
-  'chat-loop'
+  'chat-loop',
+  'chat-write-binary',
+  'chat-read-binary',
+  'chat-download',
+  'chat-bg-start',
+  'chat-bg-stop',
+  'chat-bg-logs'
 ]);
 
 /** The requests only the extension's own pages (the side panel) may make. */
@@ -294,10 +380,23 @@ export const EXTENSION_PAGE_REQUESTS: ReadonlySet<WorkerRequest['type']> = new S
   'send-files',
   'loop-control',
   'run-cancel',
+  'process-stop',
+  'process-logs',
+  'process-open',
+  'attach-files',
   'page-diagnostics',
   'diagnostics',
   'dev-file'
 ]);
+
+/** One file to attach to the chat's message. */
+export const AttachmentFile = z.strictObject({
+  /** The file's name only, never a folder. */
+  name: z.string().min(1).max(255),
+  mime: z.string().max(100),
+  data: BinaryData
+});
+export type AttachmentFile = z.infer<typeof AttachmentFile>;
 
 /** Worker → content script, over `chrome.tabs.sendMessage`. */
 export const TabMessage = z.discriminatedUnion('type', [
@@ -323,7 +422,12 @@ export const TabMessage = z.discriminatedUnion('type', [
   }),
   z.strictObject({ type: z.literal('diagnose') }),
   // Which conversation the tab shows right now, checked on the spot (`TabLocation`).
-  z.strictObject({ type: z.literal('locate') })
+  z.strictObject({ type: z.literal('locate') }),
+  // Project images for the message, as attachments (Send files → Attach).
+  z.strictObject({
+    type: z.literal('attach-files'),
+    files: z.array(AttachmentFile).min(1).max(MAX_ATTACHMENTS)
+  })
 ]);
 export type TabMessage = z.infer<typeof TabMessage>;
 
@@ -337,6 +441,20 @@ export type TabLocation = z.infer<typeof TabLocation>;
 export type InsertResult =
   | { ok: true; method: 'paste' | 'insert-text' | 'textarea'; chars: number }
   | { ok: false; error: 'no-composer' | 'not-inserted' };
+
+/** Attaching files to the message: how many went in, or why none did. */
+export type AttachResult =
+  | { ok: true; method: 'input' | 'paste' | 'drop'; count: number }
+  | { ok: false; error: 'no-composer' | 'not-attached' };
+
+/** Send files → Attach. */
+export type AttachFilesResult =
+  | {
+      ok: true;
+      attached: string[];
+      refused: { path: string; code: FileErrorCode | 'not-an-image' }[];
+    }
+  | { ok: false; error: SessionError | 'not-attached' };
 
 /**
  * The chat session for one conversation, or the tab waiting for its first message.

@@ -28,6 +28,7 @@ import {
   type LiveRun
 } from './FullAuto';
 import { Logo } from './Logo';
+import { ProcessesSection } from './Processes';
 import { panelWindowId, request } from './request';
 import { SendFiles } from './SendFiles';
 import { SessionSection } from './SessionSection';
@@ -359,6 +360,7 @@ function Body({
           <ModeSection config={config} fullAutoOff={fullAutoOff} />
           <LoopSection config={config} loop={chat.loop} />
           <CommandSection config={config} live={live} />
+          <ProcessesSection processes={config?.processes ?? []} />
           {active && <Requests requests={chat.requests} />}
           {active && <ContextFiles files={session.context} watch={chat.watch} />}
           {/* Applied edits can add files, so the tree reloads when the count changes. */}

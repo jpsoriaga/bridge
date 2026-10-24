@@ -28,6 +28,12 @@ export interface OpRecord {
   trigger?: 'auto';
   /** The Full auto run that made it. */
   loopId?: string;
+  /** Full auto did it on its own although it normally waits for a click ("auto-approved"). */
+  autoApproved?: true;
+  /** Bytes, not text: an image the chat made, or a download. */
+  binary?: true;
+  /** `download`: fetched from a URL. */
+  origin?: 'download';
 }
 
 interface LogFile {
@@ -59,7 +65,11 @@ function isOpRecord(value: unknown): value is OpRecord {
     (op.undoneAt === undefined || typeof op.undoneAt === 'number') &&
     (op.source === undefined || op.source === 'chat') &&
     (op.trigger === undefined || op.trigger === 'auto') &&
-    (op.loopId === undefined || (typeof op.loopId === 'string' && /^[\w-]{1,64}$/.test(op.loopId)))
+    (op.loopId === undefined ||
+      (typeof op.loopId === 'string' && /^[\w-]{1,64}$/.test(op.loopId))) &&
+    (op.autoApproved === undefined || op.autoApproved === true) &&
+    (op.binary === undefined || op.binary === true) &&
+    (op.origin === undefined || op.origin === 'download')
   );
 }
 

@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FileErrorCode, Mode, RunResult } from '@bridge/shared';
 import { tempProject } from '../project/test-utils';
+import { BackgroundRunner } from './background';
 import { CommandRunner } from './runner';
 import { CommandService } from './service';
 
@@ -241,5 +242,114 @@ describe('CommandService', () => {
     }
     expect(await code(['tool', 'plain arg'])).toBe('ok');
     await finished();
+  });
+});
+
+describe('CommandService: background processes', () => {
+  let processes: BackgroundRunner;
+  let background: string[];
+  let bg: CommandService;
+
+  beforeEach(() => {
+    processes = new BackgroundRunner(() => {});
+    background = [];
+    bg = new CommandService({
+      runner,
+      processes,
+      root: () => t.root,
+      mode: () => mode,
+      allowlist: () => allowlist,
+      background: () => background,
+      envPatterns: () => [],
+      timeoutMs: () => 10_000,
+      env: () => ({ PATH: pathEnv, PATHEXT: '.EXE;.CMD', SECRET_TOKEN: 'x' }),
+      onRefused: (argv, code) => refused.push({ argv, code })
+    });
+  });
+  afterEach(() => processes.stopAll());
+
+  const server = () =>
+    script('server.js', "console.log('http://localhost:5173/'); setInterval(() => {}, 1000);");
+
+  it('starts only entries marked as background, and never runs them with @@RUN', async () => {
+    const argv = ['node', server()];
+    const start = await bg.start({ argv, trigger: 'click' });
+    expect(start).toMatchObject({ ok: false, error: { code: 'not-background' } });
+    background = ['node *'];
+    expect(await bg.start({ argv, trigger: 'click' })).toMatchObject({ ok: true });
+    // A dev server would only time out as a one-off.
+    expect(await bg.run({ argv, trigger: 'click' })).toMatchObject({
+      ok: false,
+      error: { code: 'background-only' }
+    });
+    expect(refused.map((r) => r.code)).toEqual(['not-background', 'background-only']);
+  });
+
+  it('applies the same rules as @@RUN: allowlist, denied options, the mode for automatic starts', async () => {
+    background = ['node *'];
+    expect(
+      await bg.start({ argv: ['python3', '-m', 'http.server'], trigger: 'click' })
+    ).toMatchObject({
+      ok: false,
+      error: { code: 'not-allowlisted' }
+    });
+    expect(await bg.start({ argv: ['node', '-e', 'x'], trigger: 'click' })).toMatchObject({
+      ok: false,
+      error: { code: 'denied-flag' }
+    });
+    expect(await bg.start({ argv: ['node', server()], trigger: 'auto' })).toMatchObject({
+      ok: false,
+      error: { code: 'mode' }
+    });
+    mode = 'full-auto';
+    expect(await bg.start({ argv: ['node', server()], trigger: 'auto' })).toMatchObject({
+      ok: true
+    });
+  });
+
+  it('runs it in the project with the filtered environment, and reads and stops it by command', async () => {
+    background = ['node *'];
+    const argv = [
+      'node',
+      script(
+        'where.js',
+        'console.log(process.cwd(), process.env.SECRET_TOKEN || "-"); setInterval(() => {}, 1000);'
+      )
+    ];
+    expect(await bg.start({ argv, trigger: 'click' })).toMatchObject({ ok: true });
+    const end = Date.now() + 5_000;
+    let logs = bg.logs({ argv });
+    while (Date.now() < end && (!logs.ok || logs.result.lines.length === 0)) {
+      await new Promise((r) => setTimeout(r, 25));
+      logs = bg.logs({ argv });
+    }
+    expect(logs).toMatchObject({ ok: true, result: { lines: [`${t.root} -`] } });
+    expect(await bg.stop({ argv, trigger: 'auto' })).toEqual({
+      ok: true,
+      result: { stopped: true }
+    });
+    expect(await bg.stop({ argv, trigger: 'click' })).toEqual({
+      ok: true,
+      result: { stopped: false }
+    });
+    expect(bg.logs({ argv: ['node', 'never-started.js'] })).toMatchObject({
+      ok: false,
+      error: { code: 'unknown-process' }
+    });
+  });
+
+  it('refuses a fourth background process', async () => {
+    background = ['node *'];
+    for (const name of ['a', 'b', 'c']) {
+      const path = script(`${name}.js`, 'setInterval(() => {}, 1000);');
+      expect(await bg.start({ argv: ['node', path], trigger: 'click' })).toMatchObject({
+        ok: true
+      });
+    }
+    const fourth = script('d.js', 'setInterval(() => {}, 1000);');
+    expect(await bg.start({ argv: ['node', fourth], trigger: 'click' })).toMatchObject({
+      ok: false,
+      error: { code: 'too-many' }
+    });
   });
 });

@@ -1,11 +1,13 @@
 import type { FileEdit } from './types';
 
 /**
- * A marker line: `@@FILE path@@`, `@@READ path@@`, `@@CONTEXT path@@` or `@@RUN command@@`.
+ * A marker line: `@@FILE path@@`, `@@READ path@@`, `@@CONTEXT path@@`, `@@RUN command@@`,
+ * `@@START command@@`, `@@STOP command@@`, `@@LOGS command@@` or `@@ASSET path@@`.
  * Checked after removing inline-code backticks and a list bullet, so `` `@@FILE a.ts@@` ``
  * and `- @@READ a.ts@@` both count.
  */
-const MARKER = /^@@(FILE|READ|CONTEXT|RUN)\s+((?!@@)[^\s`](?:(?!@@)[^`])*?)\s*@@$/;
+const MARKER =
+  /^@@(FILE|READ|CONTEXT|RUN|START|STOP|LOGS|ASSET)\s+((?!@@)[^\s`](?:(?!@@)[^`])*?)\s*@@$/;
 /** `@@DONE@@`: the chat says the task is finished. Ends a Full auto run. */
 const DONE = /^@@DONE\s*@@$/;
 /** `@@DELETE path@@`: remove a file. No fence follows. */
@@ -13,16 +15,22 @@ const DELETE = /^@@DELETE\s+((?!@@)[^\s`](?:(?!@@)[^`])*?)\s*@@$/;
 /** `@@RENAME old/path -> new/path@@` (or `→`): move a file. No fence follows. */
 const RENAME =
   /^@@RENAME\s+((?!@@)[^\s`](?:(?!@@|->|→)[^`])*?)\s*(?:->|→)\s*([^\s`](?:(?!@@)[^`])*?)\s*@@$/;
+/** `@@DOWNLOAD https://… -> public/logo.svg@@` (or `→`): fetch a file into the project. */
+const DOWNLOAD =
+  /^@@DOWNLOAD\s+((?!@@)[^\s`](?:(?!@@|->|→)[^`\s])*?)\s*(?:->|→)\s*([^\s`](?:(?!@@)[^`])*?)\s*@@$/;
 /**
  * The same markers with the closing `@@` missing (or half there), as the chat sometimes
  * writes them: `` `@@RUN npm test` ``. Only tried inside an inline-code span that holds
  * nothing else, so prose that happens to start with `@@` never counts.
  */
-const LOOSE_MARKER = /^@@(FILE|READ|RUN)\s+((?!@@|@$)[^\s`](?:(?!@@)[^`])*?)\s*@?$/;
+const LOOSE_MARKER =
+  /^@@(FILE|READ|RUN|START|STOP|LOGS|ASSET)\s+((?!@@|@$)[^\s`](?:(?!@@)[^`])*?)\s*@?$/;
 const LOOSE_DONE = /^@@DONE\s*@?$/;
 const LOOSE_DELETE = /^@@DELETE\s+((?!@@|@$)[^\s`](?:(?!@@)[^`])*?)\s*@?$/;
 const LOOSE_RENAME =
   /^@@RENAME\s+((?!@@|@$)[^\s`](?:(?!@@|->|→)[^`])*?)\s*(?:->|→)\s*((?!@$)[^\s`](?:(?!@@)[^`])*?)\s*@?$/;
+const LOOSE_DOWNLOAD =
+  /^@@DOWNLOAD\s+((?!@@|@$)[^\s`](?:(?!@@|->|→)[^`\s])*?)\s*(?:->|→)\s*((?!@$)[^\s`](?:(?!@@)[^`])*?)\s*@?$/;
 const FENCE_OPEN = /^(`{3,}|~{3,})[^`]*$/;
 const BULLET = /^(?:[-*+]|\d{1,3}[.)])\s+/;
 /** A line made only of `@@READ path@@` markers, for when line breaks were lost. */
@@ -61,6 +69,19 @@ export interface ChatParse {
   deletes: string[];
   /** Files to move with `@@RENAME from -> to@@`, without repeats, in order. */
   renames: FileRename[];
+  /** Background commands to start with `@@START command@@`, as written, without repeats. */
+  starts: string[];
+  /** Background commands to stop with `@@STOP command@@`. */
+  stops: string[];
+  /** Background commands whose recent log the chat asked for with `@@LOGS command@@`. */
+  logs: string[];
+  /**
+   * Where to save images the chat made, `@@ASSET path@@`, in order. The n-th one goes with
+   * the n-th image in the reply.
+   */
+  assets: string[];
+  /** Files to fetch with `@@DOWNLOAD url -> path@@`, without repeats, in order. */
+  downloads: FileDownload[];
   /**
    * Markers Bridge read although their closing `@@` was missing. Their cards say "format
    * fixed". Edits carry `formatFixed` themselves.
@@ -84,6 +105,11 @@ export interface FixedMarkers {
   runs: string[];
   deletes: string[];
   renames: FileRename[];
+  starts: string[];
+  stops: string[];
+  logs: string[];
+  assets: string[];
+  downloads: FileDownload[];
   done: boolean;
 }
 
@@ -108,7 +134,17 @@ export interface FileRename {
   to: string;
 }
 
-type Marker = { kind: 'FILE' | 'READ' | 'CONTEXT' | 'RUN'; path: string; fixed?: true };
+export interface FileDownload {
+  url: string;
+  path: string;
+}
+
+type MarkerKind = 'FILE' | 'READ' | 'CONTEXT' | 'RUN' | 'START' | 'STOP' | 'LOGS' | 'ASSET';
+type Marker = { kind: MarkerKind; path: string; fixed?: true };
+
+/** One-line markers that name a command or a path and take no block. */
+const LINE_MARKERS = ['RUN', 'START', 'STOP', 'LOGS', 'ASSET'] as const;
+type LineMarker = (typeof LINE_MARKERS)[number];
 
 /** The inline-code span that is the whole line (bar a list bullet), or null. */
 function codeSpan(line: string): string | null {
@@ -146,7 +182,19 @@ function matchMarker(
   return fixed ? { match: fixed, fixed: true } : null;
 }
 
-const MARKER_WORDS = ['FILE', 'READ', 'RUN', 'DELETE', 'RENAME', 'DONE'];
+const MARKER_WORDS = [
+  'FILE',
+  'READ',
+  'RUN',
+  'DELETE',
+  'RENAME',
+  'DONE',
+  'START',
+  'STOP',
+  'LOGS',
+  'ASSET',
+  'DOWNLOAD'
+];
 
 const sorted = (word: string) => [...word].sort().join('');
 
@@ -269,7 +317,33 @@ export function parseChat(text: string): ChatParse {
   const runs: string[] = [];
   const deletes: string[] = [];
   const renames: FileRename[] = [];
-  const fixed: FixedMarkers = { reads: [], runs: [], deletes: [], renames: [], done: false };
+  const downloads: FileDownload[] = [];
+  const lists: Record<LineMarker, string[]> = {
+    RUN: runs,
+    START: [],
+    STOP: [],
+    LOGS: [],
+    ASSET: []
+  };
+  const fixed: FixedMarkers = {
+    reads: [],
+    runs: [],
+    deletes: [],
+    renames: [],
+    starts: [],
+    stops: [],
+    logs: [],
+    assets: [],
+    downloads: [],
+    done: false
+  };
+  const fixedLists: Record<LineMarker, string[]> = {
+    RUN: fixed.runs,
+    START: fixed.starts,
+    STOP: fixed.stops,
+    LOGS: fixed.logs,
+    ASSET: fixed.assets
+  };
   const issues: FormatIssue[] = [];
   const markers: string[] = [];
   let unclosed: string | null = null;
@@ -295,11 +369,25 @@ export function parseChat(text: string): ChatParse {
       continue;
     }
 
-    if (marker?.kind === 'RUN') {
-      markers.push(`@@RUN ${marker.path}@@`);
-      if (!runs.includes(marker.path)) {
-        runs.push(marker.path);
-        if (marker.fixed) fixed.runs.push(marker.path);
+    if (marker && (LINE_MARKERS as readonly string[]).includes(marker.kind)) {
+      const kind = marker.kind as LineMarker;
+      markers.push(`@@${kind} ${marker.path}@@`);
+      // Two images may well go to the same path; every other kind is listed once.
+      if (kind === 'ASSET' || !lists[kind].includes(marker.path)) {
+        lists[kind].push(marker.path);
+        if (marker.fixed) fixedLists[kind].push(marker.path);
+      }
+      i += 1;
+      continue;
+    }
+
+    const downloadMarker = matchMarker(line, DOWNLOAD, LOOSE_DOWNLOAD);
+    const [, url, saveTo] = downloadMarker?.match ?? [];
+    if (downloadMarker && url && saveTo) {
+      markers.push(`@@DOWNLOAD ${url} -> ${saveTo}@@`);
+      if (!downloads.some((d) => d.url === url && d.path === saveTo)) {
+        downloads.push({ url, path: saveTo });
+        if (downloadMarker.fixed) fixed.downloads.push({ url, path: saveTo });
       }
       i += 1;
       continue;
@@ -401,6 +489,11 @@ export function parseChat(text: string): ChatParse {
     done,
     deletes,
     renames,
+    starts: lists.START,
+    stops: lists.STOP,
+    logs: lists.LOGS,
+    assets: lists.ASSET,
+    downloads,
     fixed,
     issues,
     markers,

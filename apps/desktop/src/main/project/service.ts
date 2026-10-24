@@ -4,6 +4,10 @@ import { basename, dirname, join, sep } from 'node:path';
 import {
   FILE_ERROR_MESSAGES,
   MAX_FILE_BYTES,
+  MIME_TYPES,
+  sniffType,
+  type DownloadParams,
+  type DownloadResult,
   type FileErrorCode,
   type FileOutcome,
   type FileRequest,
@@ -11,6 +15,7 @@ import {
   type UndoResult
 } from '@bridge/shared';
 import type { ActivityEntry } from '../../preload/api';
+import { download, type DownloadDeps } from './download';
 import { History, projectId } from './history';
 import {
   decodeText,
@@ -18,13 +23,16 @@ import {
   FileOpError,
   listDir,
   listTree,
+  readBinary,
   readFile,
   renameFile,
   statFile,
   undo,
+  writeBinary,
   writeFile
 } from './operations';
 import { Sandbox } from './sandbox';
+import { Uploads } from './uploads';
 import { ProjectWatcher } from './watcher';
 
 export const MAX_RECENT_PROJECTS = 5;
@@ -66,6 +74,8 @@ export interface ProjectServiceOptions {
   onFilesChanged?: (paths: string[], overflow: boolean) => void;
   /** How long ops and backups are kept. Read when a project opens. */
   retentionMs?: () => number;
+  /** How downloads reach the network. Tests pass a fake. */
+  download?: DownloadDeps;
 }
 
 /** One op as the app's diff viewer shows it: the text before and after, when it's text. */
@@ -81,7 +91,12 @@ export interface OpDetail {
   after: string | null;
   /** Why there's no text to show: binary, too big, or the backup is gone. */
   unavailable?: 'binary' | 'too-large' | 'missing';
+  /** An image Bridge wrote: what it wrote (and what was there before), for a thumbnail. */
+  image?: { mime: string; after: string | null; before: string | null };
 }
+
+/** Images at most this big get a thumbnail in the app's Activity detail. */
+const THUMBNAIL_MAX_BYTES = 4 * 1024 * 1024;
 
 interface OpenProject {
   info: ProjectInfo;
@@ -111,6 +126,8 @@ export class ProjectService {
   private current: OpenProject | null = null;
   private sessionEvents: ActivityEntry[] = [];
   private lock: Promise<unknown> = Promise.resolve();
+  /** Binary writes on their way in, chunk by chunk. */
+  private readonly uploads = new Uploads();
 
   constructor(private readonly options: ProjectServiceOptions) {}
 
@@ -177,6 +194,7 @@ export class ProjectService {
       await this.current?.watcher?.close();
       this.current = { info, sandbox, history, watcher: null, missing: false };
       this.sessionEvents = [];
+      this.uploads.clear();
       void this.watch(this.current);
 
       const { recentProjects } = this.options.settings.read();
@@ -285,6 +303,27 @@ export class ProjectService {
       if (data.length > MAX_FILE_BYTES) throw new FileOpError('too-large');
       return decodeText(data).content;
     };
+    if (op.binary && op.kind !== 'rename') {
+      // An image the chat made or a download: a thumbnail of each side, if it's an image.
+      const before = op.kind === 'create' ? null : await history.readBackup(opId).catch(() => null);
+      const after = op.kind === 'delete' ? null : await history.readAfter(opId);
+      const picture = (data: Buffer | null) => {
+        const type = data && data.length <= THUMBNAIL_MAX_BYTES ? sniffType(data) : null;
+        return type && MIME_TYPES[type].startsWith('image/') ? type : null;
+      };
+      const type = picture(after) ?? picture(before);
+      return {
+        ...detail,
+        unavailable: 'binary',
+        ...(type && {
+          image: {
+            mime: MIME_TYPES[type],
+            after: picture(after) ? after!.toString('base64') : null,
+            before: picture(before) ? before!.toString('base64') : null
+          }
+        })
+      };
+    }
     try {
       const before = op.kind === 'create' ? null : await history.readBackup(opId).catch(() => null);
       if (op.kind !== 'create' && before === null) return { ...detail, unavailable: 'missing' };
@@ -330,10 +369,20 @@ export class ProjectService {
   }
 
   /** A file request from the extension. Never throws; never returns an absolute path. */
-  async handle(request: FileRequest): Promise<FileOutcome<unknown>> {
+  async handle(
+    request: FileRequest,
+    labels: { autoApproved?: boolean } = {}
+  ): Promise<FileOutcome<unknown>> {
     const project = this.current;
     const payload = request.payload as { path?: unknown; from?: unknown };
     const path = payload.path ?? payload.from;
+    if (request.type === 'upload') {
+      // Chunks only go into memory; `write_binary` does the checking and the writing.
+      const received = project ? this.uploads.add(request.payload) : null;
+      return received === null
+        ? this.fail('upload', undefined, project ? 'upload' : 'no-project')
+        : { ok: true, result: { received } };
+    }
     if (!project) return this.fail(request.type, path, 'no-project');
     if (!(await this.checkRoot())) return this.fail(request.type, path, 'project-missing');
     try {
@@ -346,26 +395,77 @@ export class ProjectService {
           return { ok: true, result: await readFile(project.sandbox, request.payload.path) };
         case 'stat':
           return { ok: true, result: await statFile(project.sandbox, request.payload.path) };
-        case 'write':
-          return await this.change(() =>
-            writeFile(project.sandbox, project.history, request.payload)
-          );
+        case 'write': {
+          // The extension's own word that a write was auto-approved is never taken as is.
+          const write = { ...request.payload, autoApproved: labels.autoApproved === true };
+          return await this.change(() => writeFile(project.sandbox, project.history, write));
+        }
         case 'delete':
           return await this.change(() =>
-            deleteFile(project.sandbox, project.history, request.payload)
+            deleteFile(project.sandbox, project.history, { ...request.payload, ...labels })
           );
         case 'rename':
           return await this.change(() =>
-            renameFile(project.sandbox, project.history, request.payload)
+            renameFile(project.sandbox, project.history, { ...request.payload, ...labels })
           );
         case 'undo':
           return await this.undo(request.payload.opId);
         case 'watch':
           return { ok: true, result: { mode: this.watchFiles(request.payload.paths) } };
+        case 'read_binary':
+          return { ok: true, result: await readBinary(project.sandbox, request.payload.path) };
+        case 'write_binary': {
+          const { uploadId, size, sha256, ...rest } = request.payload;
+          const data = this.uploads.take(uploadId, size, sha256);
+          if (!data) return this.fail('write_binary', path, 'upload');
+          return await this.change(() =>
+            writeBinary(project.sandbox, project.history, {
+              ...rest,
+              data,
+              autoApproved: labels.autoApproved === true
+            })
+          );
+        }
+        case 'download':
+          return await this.download(project, request.payload);
       }
     } catch (error) {
       return this.fail(request.type, path, error instanceof FileOpError ? error.code : 'io-error');
     }
+  }
+
+  /**
+   * `@@DOWNLOAD`, after the user's click: fetches the URL (https, public hosts only, 20 MB),
+   * then writes it like any binary file, which checks its type from the bytes.
+   */
+  private async download(
+    project: OpenProject,
+    params: DownloadParams
+  ): Promise<FileOutcome<DownloadResult>> {
+    // The path first: no request leaves for a file Bridge would refuse to write anyway.
+    const target = await project.sandbox.resolve(params.path);
+    if (!target.ok) throw new FileOpError(target.code);
+    const data = await download(params.url, this.options.download);
+    const outcome = await this.change(() =>
+      writeBinary(project.sandbox, project.history, {
+        path: params.path,
+        data,
+        ...(params.baseHash !== undefined && { baseHash: params.baseHash }),
+        source: 'chat',
+        trigger: params.trigger,
+        origin: 'download'
+      })
+    );
+    if (!outcome.ok) return outcome;
+    const type = sniffType(data);
+    return {
+      ok: true,
+      result: {
+        ...outcome.result,
+        size: data.length,
+        mime: type ? MIME_TYPES[type] : 'application/octet-stream'
+      }
+    };
   }
 
   /** A write, delete or rename: one at a time, then the activity list updates. */
@@ -398,6 +498,11 @@ export class ProjectService {
     this.sessionEvents.unshift({ id: randomUUID(), time: Date.now(), ...entry });
     this.sessionEvents.length = Math.min(this.sessionEvents.length, MAX_SESSION_EVENTS);
     this.options.onActivity?.();
+  }
+
+  /** A binary write the server refused before it got here: its chunks go. */
+  dropUpload(uploadId: string): void {
+    this.uploads.drop(uploadId);
   }
 
   /** A write the server refused before the sandbox (mode or gated file). */
@@ -438,7 +543,10 @@ export class ProjectService {
       ...(op.from && { from: op.from }),
       ...(op.source && { source: op.source }),
       ...(op.trigger && { trigger: op.trigger }),
-      ...(op.loopId && { loopId: op.loopId })
+      ...(op.loopId && { loopId: op.loopId }),
+      ...(op.autoApproved && { autoApproved: true as const }),
+      ...(op.binary && { binary: true as const }),
+      ...(op.origin && { origin: op.origin })
     }));
     return [...writes, ...this.sessionEvents]
       .sort((a, b) => b.time - a.time)
@@ -447,7 +555,13 @@ export class ProjectService {
 
   private fail(op: FileRequest['type'], path: unknown, code: FileErrorCode) {
     // Reads that simply miss aren't worth a row; refusals and failed changes are.
-    const change = op === 'write' || op === 'delete' || op === 'rename' || op === 'undo';
+    const change =
+      op === 'write' ||
+      op === 'delete' ||
+      op === 'rename' ||
+      op === 'undo' ||
+      op === 'write_binary' ||
+      op === 'download';
     if (SANDBOX_CODES.has(code) || change || code === 'io-error') {
       this.sessionEvents.unshift({
         id: randomUUID(),

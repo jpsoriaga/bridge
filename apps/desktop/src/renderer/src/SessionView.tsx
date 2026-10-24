@@ -8,6 +8,7 @@ import { UpdateNotice } from './Header';
 import { formatCountdown, formatTime, useNow } from './hooks';
 import { LoopStatus } from './Loop';
 import { Onboarding, type Step } from './Onboarding';
+import { BackgroundProcesses } from './Processes';
 
 /** The open project, or what to do without one (or with one that went missing). */
 function ProjectSection({ state }: { state: DesktopState }) {
@@ -357,6 +358,7 @@ export function SessionView({
       <ExtensionSection state={state} />
       <ModeSection state={state} />
       <RunningCommand state={state} />
+      <BackgroundProcesses processes={state.processes} />
       <RecentActivity entries={entries} onShowAll={onShowActivity} />
     </>
   );

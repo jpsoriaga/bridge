@@ -1,14 +1,14 @@
 # Privacy policy
 
-_Effective 19 October 2026. Applies to the Bridge desktop app and the Bridge Chrome extension, version 1.0.0 and later._
+_Effective 24 October 2026 (downloads and images added in 1.3.0; first published 19 October 2026). Applies to the Bridge desktop app and the Bridge Chrome extension, version 1.0.0 and later._
 
 Bridge is a personal open-source tool by Jaypee Soriaga. It has no servers, no accounts and no analytics. Everything it does happens on your computer.
 
 ## The short version
 
 - Bridge collects **no data** about you. There is no telemetry, no analytics, no crash reporting and no account.
-- The extension talks **only to the Bridge app on your own computer** (`127.0.0.1`). It never sends anything to the developer or to any other server.
-- The desktop app makes **no network requests** except to that extension on loopback, and, only if you ask it to, one request to GitHub to see whether a newer version exists (see "Update check").
+- The extension talks **only to the Bridge app on your own computer** (`127.0.0.1`). It never sends anything to the developer or to any other server. When you save an image the chat made, it reads that image from the chat page you're on (`chatgpt.com`), as the page already shows it.
+- The desktop app makes **no network requests** except to that extension on loopback, and, only if you ask it to: one request to GitHub to see whether a newer version exists (see "Update check"), and a download the chat suggested, when you click **Download** on its card (see "Downloads").
 - What you choose to send to the chat (files, command output) goes to the chat service you use, under its own privacy policy. Bridge doesn't see or keep what the chat does with it.
 
 ## What the extension stores, and where
@@ -52,9 +52,13 @@ The app writes inside the project folder you opened, and only when you (or a mod
 
 Settings → About has **Check for updates**. When you click it, or at launch if you turned on "Check for updates when Bridge starts" (off by default), the app asks GitHub (`github.com`, which hosts Bridge's releases) for the latest version number (on the **Beta** update channel, pre-releases too). That request carries what any web request does (your IP address and a user agent) and nothing about you, your projects or your chats. GitHub's privacy statement applies to it. Nothing is downloaded or installed; the app shows a link if a newer version exists. Unsigned macOS builds never check.
 
+## Downloads
+
+When the chat suggests a file to download (`@@DOWNLOAD https://… -> path`), Bridge shows a card and does nothing until you click **Download**, in every mode. Then the app requests that https address, and only that one (and the addresses it redirects to), with no cookies and no referrer. The request carries what any web request does (your IP address and a user agent saying "Bridge") and nothing about you, your projects or your chats. The server you download from sees that request under its own terms. The file is saved in your project like any other change Bridge makes, with a backup.
+
 ## Permissions the extension asks for
 
-- **Read and change data on chatgpt.com**: to find Bridge's markers in replies, show cards, and fill the message box when you click.
+- **Read and change data on chatgpt.com**: to find Bridge's markers in replies, show cards, fill the message box or attach an image when you click, and read an image the chat made when you save it.
 - **`http://127.0.0.1/*`**: to reach the Bridge app on your own computer. Nothing outside your computer.
 - **Storage**: for the session and card states above.
 - **Side panel**: Bridge's controls.

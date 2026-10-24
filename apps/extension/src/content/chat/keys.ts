@@ -7,14 +7,15 @@ export async function contentHash(path: string, content: string): Promise<string
 
 /**
  * Identifies one card across re-renders and reloads:
- * `conversationId:messageId:slot:contentHash`, where the slot is a `@@FILE` block's index
- * or `read` for the READ card. A regenerated or edited reply gets a new message id or new
- * content, so it never inherits an old card's state.
+ * `conversationId:messageId:slot:contentHash`, where the slot is a `@@FILE` block's index,
+ * `read` for the READ card, `d`/`r` and a number for a DELETE or RENAME, `a` for an image
+ * the chat made and `w` for a DOWNLOAD. A regenerated or edited reply gets a new message
+ * id or new content, so it never inherits an old card's state.
  */
 export function blockKey(
   conversationId: string,
   messageId: string,
-  slot: number | 'read' | `d${number}` | `r${number}`,
+  slot: number | 'read' | `${'d' | 'r' | 'a' | 'w'}${number}`,
   hash: string
 ): string {
   return `${conversationId}:${messageId}:${slot}:${hash}`;

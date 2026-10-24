@@ -18,6 +18,22 @@ export const LIST_MAX_ENTRIES = 2_000;
 export const MAX_BACKUP_BYTES = 50 * 1024 * 1024;
 /** Files in context the desktop polls when the project is too big to watch. */
 export const MAX_WATCHED_PATHS = 500;
+/** Largest binary file (an image, a font, a download) Bridge writes, reads or attaches. */
+export const MAX_BINARY_BYTES = 20 * 1024 * 1024;
+/**
+ * Raw bytes in one `upload` chunk. A binary write travels in chunks of this size, base64,
+ * so no frame comes near the socket's size limit.
+ */
+export const UPLOAD_CHUNK_BYTES = 1024 * 1024;
+/**
+ * Longest command a background process reports (`formatArgv`): a 1,000-character argv of
+ * 100 words, each quoted and escaped, can't pass this.
+ */
+export const MAX_PROCESS_COMMAND_CHARS = 4_000;
+/** Background processes (dev servers) running at once. */
+export const MAX_BACKGROUND_PROCESSES = 3;
+/** Lines a background process keeps in its log. */
+export const BACKGROUND_LOG_LINES = 2_000;
 
 /**
  * Every reason a request (file operation or command) can fail. Rejections never include
@@ -62,7 +78,25 @@ export const FILE_ERROR_CODES = [
   'command-not-found',
   'project-binary',
   'busy',
-  'unknown-run'
+  'unknown-run',
+  /** A background command (`@@START`) asked for with `@@RUN`, which would never finish. */
+  'background-only',
+  /** A one-off command asked for with `@@START`: it isn't marked as a background process. */
+  'not-background',
+  /** `MAX_BACKGROUND_PROCESSES` are running already. */
+  'too-many',
+  'unknown-process',
+  // Binary files and downloads.
+  /** A binary write whose chunks didn't add up (missing, out of order, wrong size or hash). */
+  'upload',
+  'not-https',
+  /** The download's host is this computer or the local network. */
+  'private-address',
+  'download-failed',
+  /** The file's bytes aren't one of the types Bridge downloads, or not the type its name says. */
+  'unsupported-type',
+  /** An SVG with scripts or event handlers. */
+  'unsafe-svg'
 ] as const;
 export const FileErrorCode = z.enum(FILE_ERROR_CODES);
 export type FileErrorCode = z.infer<typeof FileErrorCode>;
@@ -77,6 +111,14 @@ export const OpId = z.string().regex(/^[0-9a-z-]{1,64}$/);
 export const RunId = z.string().regex(/^[0-9a-z-]{1,64}$/);
 /** One Full auto run. Writes and runs it makes carry it, so the app can group them. */
 export const LoopId = z.string().regex(/^[\w-]{1,64}$/);
+export const UploadId = z.string().regex(/^[0-9a-z-]{1,64}$/);
+export const ProcessId = z.string().regex(/^[0-9a-z-]{1,64}$/);
+/** Standard base64 with padding, at most `bytes` decoded bytes. */
+const base64 = (bytes: number) =>
+  z
+    .string()
+    .max(Math.ceil(bytes / 3) * 4)
+    .regex(/^[A-Za-z0-9+/]*={0,2}$/);
 
 /**
  * `click`: the user pressed a button for this. `auto`: Bridge did it on its own (Auto-apply,
@@ -114,24 +156,32 @@ export const WriteParams = z.strictObject({
   /** `chat`: applied from a diff card. The desktop's activity list says "via chat". */
   source: z.literal('chat').optional(),
   trigger: Trigger,
-  loopId: LoopId.optional()
+  loopId: LoopId.optional(),
+  /**
+   * Full auto wrote a file that looks partial because "Also approve automatically" allows
+   * it. Only a label for Activity; the app keeps it only while that setting is on.
+   */
+  autoApproved: z.literal(true).optional()
 });
 /**
- * Deletes and renames always need a click: the desktop refuses `trigger: 'auto'` in every
- * mode. Both need the hash the card saw, so a file changed since gets `conflict`.
+ * Deletes and renames need a click: the desktop refuses `trigger: 'auto'` unless Full
+ * auto's "Also approve automatically" allows them. Both need the hash the card saw, so a
+ * file changed since gets `conflict`.
  */
 export const DeleteParams = z.strictObject({
   path: RelPath,
   baseHash: Sha256Hex,
   source: z.literal('chat').optional(),
-  trigger: Trigger
+  trigger: Trigger,
+  loopId: LoopId.optional()
 });
 export const RenameParams = z.strictObject({
   from: RelPath,
   to: RelPath,
   baseHash: Sha256Hex,
   source: z.literal('chat').optional(),
-  trigger: Trigger
+  trigger: Trigger,
+  loopId: LoopId.optional()
 });
 export const UndoParams = z.strictObject({ opId: OpId });
 /**
@@ -148,6 +198,77 @@ export const RunParams = z.strictObject({
   loopId: LoopId.optional()
 });
 export const RunCancelParams = z.strictObject({ runId: RunId });
+
+/**
+ * One chunk of a binary write, base64. Chunks of one `uploadId` arrive in order (`offset`
+ * is where this one starts); `write_binary` then commits them. The desktop keeps them in
+ * memory only, briefly.
+ */
+export const UploadParams = z.strictObject({
+  uploadId: UploadId,
+  offset: z.number().int().nonnegative().max(MAX_BINARY_BYTES),
+  data: base64(UPLOAD_CHUNK_BYTES)
+});
+/**
+ * Writes the uploaded bytes to `path`: the same sandbox, denylist, gated files, backup and
+ * undo as a text write. `size` and `sha256` must match what arrived.
+ */
+export const WriteBinaryParams = z.strictObject({
+  path: RelPath,
+  uploadId: UploadId,
+  size: z.number().int().nonnegative().max(MAX_BINARY_BYTES),
+  sha256: Sha256Hex,
+  /** Required to replace an existing file, absent to create one. From `stat`. */
+  baseHash: Sha256Hex.optional(),
+  source: z.literal('chat').optional(),
+  trigger: Trigger,
+  loopId: LoopId.optional(),
+  autoApproved: z.literal(true).optional()
+});
+/** Any regular file up to MAX_BINARY_BYTES, as bytes: an image to attach to the chat. */
+export const ReadBinaryParams = z.strictObject({ path: RelPath });
+/**
+ * Fetches an https URL in the desktop and writes it to `path` as a binary write. Always a
+ * click, in every mode. HTTPS only, no local addresses, MAX_BINARY_BYTES, and the bytes
+ * must be one of `DOWNLOAD_TYPES` (sniffed, not just the name).
+ */
+export const DownloadParams = z.strictObject({
+  url: z.string().min(1).max(2048),
+  path: RelPath,
+  baseHash: Sha256Hex.optional(),
+  trigger: Trigger
+});
+/** A command that keeps running (a dev server): an allowlisted background entry. */
+export const BackgroundStartParams = z.strictObject({
+  argv: RunParams.shape.argv,
+  trigger: Trigger,
+  loopId: LoopId.optional()
+});
+/** A background process, by the command that started it (`@@STOP cmd@@`) or its id. */
+const ProcessRef = {
+  procId: ProcessId.optional(),
+  argv: RunParams.shape.argv.optional()
+};
+export const BackgroundStopParams = z.strictObject({
+  ...ProcessRef,
+  trigger: Trigger
+});
+/**
+ * A background process's log: lines numbered from 0 since it started, `since` onwards, or
+ * the last `tail` lines.
+ */
+export const BackgroundLogsParams = z.strictObject({
+  ...ProcessRef,
+  since: z.number().int().nonnegative().optional(),
+  tail: z.number().int().nonnegative().max(BACKGROUND_LOG_LINES).optional()
+});
+export type UploadParams = z.infer<typeof UploadParams>;
+export type WriteBinaryParams = z.infer<typeof WriteBinaryParams>;
+export type ReadBinaryParams = z.infer<typeof ReadBinaryParams>;
+export type DownloadParams = z.infer<typeof DownloadParams>;
+export type BackgroundStartParams = z.infer<typeof BackgroundStartParams>;
+export type BackgroundStopParams = z.infer<typeof BackgroundStopParams>;
+export type BackgroundLogsParams = z.infer<typeof BackgroundLogsParams>;
 export type RunParams = z.infer<typeof RunParams>;
 export type ReadParams = z.infer<typeof ReadParams>;
 export type WriteParams = z.infer<typeof WriteParams>;
@@ -202,6 +323,62 @@ export const UndoResult = z.strictObject({ opId: OpId, path: z.string() });
 export const WatchResult = z.strictObject({ mode: z.enum(['watch', 'poll']) });
 export const RunStarted = z.strictObject({ runId: RunId });
 export const RunCancelResult = z.strictObject({ cancelled: z.boolean() });
+export const UploadResult = z.strictObject({ received: z.number().int().nonnegative() });
+export const WriteBinaryResult = WriteResult;
+export const ReadBinaryResult = z.strictObject({
+  data: base64(MAX_BINARY_BYTES),
+  size: z.number().int().nonnegative(),
+  hash: Sha256Hex,
+  /** Sniffed from the bytes, e.g. `image/png`; `application/octet-stream` if unknown. */
+  mime: z.string().max(100)
+});
+export const DownloadResult = z.strictObject({
+  opId: OpId,
+  kind: z.enum(['create', 'modify']),
+  hash: Sha256Hex,
+  size: z.number().int().nonnegative(),
+  mime: z.string().max(100)
+});
+export const BackgroundStarted = z.strictObject({
+  procId: ProcessId,
+  /** It was running already, so it was stopped and started again. */
+  restarted: z.boolean()
+});
+export const BackgroundStopped = z.strictObject({ stopped: z.boolean() });
+/** Most characters kept per log line. */
+export const BACKGROUND_LINE_CHARS = 4_000;
+export const BackgroundLogs = z.strictObject({
+  procId: ProcessId,
+  command: z.string().max(MAX_PROCESS_COMMAND_CHARS),
+  lines: z.array(z.string().max(BACKGROUND_LINE_CHARS)).max(BACKGROUND_LOG_LINES),
+  /** The number of `lines[0]`: lines before it scrolled out of the log. */
+  first: z.number().int().nonnegative(),
+  /** The number the next line will get. Pass it as `since` to get only newer lines. */
+  next: z.number().int().nonnegative()
+});
+/**
+ * A background process as the app reports it in `status`, on every change of state (not on
+ * every line). `running` until it exits or is stopped; `url` once it printed a local one.
+ */
+export const BackgroundProcess = z.strictObject({
+  procId: ProcessId,
+  /** As the allowlist writes it (`formatArgv`). */
+  command: z.string().max(MAX_PROCESS_COMMAND_CHARS),
+  state: z.enum(['running', 'exited', 'stopped']),
+  /** The first local URL it printed (`http://localhost:5173/`), once it has. */
+  url: z.string().max(200).nullable(),
+  startedAt: z.number().int().nonnegative(),
+  endedAt: z.number().int().nonnegative().nullable(),
+  exitCode: z.number().int().nullable(),
+  signal: z.string().max(32).nullable()
+});
+export type BackgroundProcess = z.infer<typeof BackgroundProcess>;
+export type UploadResult = z.infer<typeof UploadResult>;
+export type ReadBinaryResult = z.infer<typeof ReadBinaryResult>;
+export type DownloadResult = z.infer<typeof DownloadResult>;
+export type BackgroundStarted = z.infer<typeof BackgroundStarted>;
+export type BackgroundStopped = z.infer<typeof BackgroundStopped>;
+export type BackgroundLogs = z.infer<typeof BackgroundLogs>;
 export type RunStarted = z.infer<typeof RunStarted>;
 export type TreeResult = z.infer<typeof TreeResult>;
 export type ReadResult = z.infer<typeof ReadResult>;
@@ -231,7 +408,14 @@ export const FILE_RESULTS = {
   undo: UndoResult,
   watch: WatchResult,
   run: RunStarted,
-  run_cancel: RunCancelResult
+  run_cancel: RunCancelResult,
+  upload: UploadResult,
+  write_binary: WriteBinaryResult,
+  read_binary: ReadBinaryResult,
+  download: DownloadResult,
+  bg_start: BackgroundStarted,
+  bg_stop: BackgroundStopped,
+  bg_logs: BackgroundLogs
 } as const;
 export type FileRequestType = keyof typeof FILE_RESULTS;
 export type FileResult<T extends FileRequestType> = z.infer<(typeof FILE_RESULTS)[T]>;
@@ -252,8 +436,10 @@ export const FILE_ERROR_MESSAGES: Record<FileErrorCode, string> = {
     'That file has more than one hard link, so it may be a file outside the project. Bridge won’t touch it.',
   'not-found': 'That file does not exist.',
   'not-a-file': 'That path is not a regular file.',
-  binary: 'That file looks binary. Bridge only reads text files.',
-  'too-large': 'That file is too large for Bridge (over 1 MB to read or write, 50 MB to delete).',
+  binary:
+    'That file looks binary. Bridge saves binary files only through @@ASSET or @@DOWNLOAD, and sends images as attachments.',
+  'too-large':
+    'That file is too large for Bridge (over 1 MB for text, 20 MB for an image or download, 50 MB to delete).',
   encoding: 'That file isn’t UTF-8 text, so Bridge won’t read or overwrite it.',
   conflict: 'The file changed since it was read.',
   exists: 'A file already exists at that path.',
@@ -271,7 +457,20 @@ export const FILE_ERROR_MESSAGES: Record<FileErrorCode, string> = {
   'project-binary':
     'Bridge doesn’t run programs from inside the project unless they’re allowlisted.',
   busy: 'Another command is still running.',
-  'unknown-run': 'That command isn’t running.'
+  'unknown-run': 'That command isn’t running.',
+  'background-only':
+    'That command keeps running (a dev server, a watcher), so Bridge starts it with @@START, not @@RUN.',
+  'not-background':
+    'That command isn’t marked as a background process in the Bridge app. Run it with @@RUN.',
+  'too-many': 'Three background processes are running already. Stop one first.',
+  'unknown-process': 'That background process isn’t running.',
+  upload: 'The file didn’t arrive whole. Try again.',
+  'not-https': 'Bridge downloads only https:// links.',
+  'private-address': 'Bridge doesn’t download from this computer or the local network.',
+  'download-failed': 'The download didn’t finish. Check the link and try again.',
+  'unsupported-type':
+    'That file isn’t a type Bridge downloads, or isn’t the type its name says (images, fonts, audio, video, JSON and text only).',
+  'unsafe-svg': 'That SVG has scripts or event handlers in it, so Bridge won’t save it.'
 };
 
 /** A few words for each code, for activity rows and card meta lines. */
@@ -303,5 +502,15 @@ export const FILE_ERROR_LABELS: Record<FileErrorCode, string> = {
   'command-not-found': 'not found',
   'project-binary': 'project program',
   busy: 'busy',
-  'unknown-run': 'not running'
+  'unknown-run': 'not running',
+  'background-only': 'use @@START',
+  'not-background': 'not a background command',
+  'too-many': 'three already running',
+  'unknown-process': 'not running',
+  upload: 'incomplete upload',
+  'not-https': 'not https',
+  'private-address': 'local address',
+  'download-failed': 'download failed',
+  'unsupported-type': 'file type not allowed',
+  'unsafe-svg': 'SVG with scripts'
 };

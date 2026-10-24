@@ -1,15 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import {
   FORMAT_REMINDER,
+  LOOP_GUARD_REPEATS,
   LOOP_MIN_SEND_GAP_MS,
   STALL_MS,
   type BridgeConfig,
+  type FollowUpProcess,
   type LoopReport,
+  type ProcessLines,
   type RunResult
 } from '@bridge/shared';
 import {
+  ATTACH_SEND_WAIT_MS,
   FullAutoLoop,
   INTERRUPT_GRACE_MS,
+  PROCESS_SETTLE_MS,
   MAX_FORMAT_REMINDERS,
   SEND_CONFIRM_MS,
   WAKE_WINDOW_MS,
@@ -28,6 +33,9 @@ const CONFIG: BridgeConfig = {
   pauseOnFailure: false,
   catchUpAfterSleep: true,
   running: null,
+  background: [],
+  processes: [],
+  autoApprove: { changes: false, gated: false, partial: false },
   instance: 'launch-1'
 };
 
@@ -65,7 +73,10 @@ function fakePage() {
     continues: 0,
     canStop: true,
     canContinue: false,
-    online: true
+    online: true,
+    /** Images attached with each message, and whether attaching works. */
+    attached: [] as string[][],
+    attachWorks: true
   };
   const api: LoopPage = {
     conversationId: () => page.conversation,
@@ -75,6 +86,11 @@ function fakePage() {
       if (!page.insertWorks) return { ok: false, error: 'not-inserted' };
       page.composer += text;
       return { ok: true, method: 'paste', chars: text.length };
+    },
+    attach: (images) => {
+      if (!page.attachWorks) return false;
+      page.attached.push(images.map((image) => image.name));
+      return true;
     },
     submit: () => {
       if (!page.hasButton) return false;
@@ -124,6 +140,23 @@ interface FakeReply {
   formatIssues?: boolean;
   /** The reply was cut off. */
   interruption?: Partial<ReplyInterruption>;
+  /** Images the reply's READs found, attached to the follow-up. */
+  images?: string[];
+  /** `@@START` / `@@STOP`, each with what it comes to. */
+  processes?: {
+    kind: 'start' | 'stop';
+    command: string;
+    refusal?: string;
+    outcome?: FollowUpProcess | { disconnected: true };
+  }[];
+  /** `@@LOGS`, with the lines each reads (or why not). */
+  logs?: { command: string; lines?: string[]; refused?: string }[];
+  /** Downloads: mutate to stand for a click. */
+  downloads?: { applied: string[]; pending: string[] };
+  /** Each edit's path and content hash, for the loop guard. */
+  fingerprints?: { path: string; hash: string }[];
+  /** Error lines the dev servers print after the edits. */
+  errors?: ProcessLines[];
 }
 
 function reply(spec: FakeReply = {}) {
@@ -137,7 +170,10 @@ function reply(spec: FakeReply = {}) {
         held.length +
         (spec.reads?.length ?? 0) +
         runs.length +
-        (spec.changes ? spec.changes.applied.length + spec.changes.pending.length : 0) >
+        (spec.changes ? spec.changes.applied.length + spec.changes.pending.length : 0) +
+        (spec.processes?.length ?? 0) +
+        (spec.logs?.length ?? 0) +
+        (spec.downloads ? spec.downloads.applied.length + spec.downloads.pending.length : 0) >
       0,
     done: spec.done ?? false,
     formatIssues: spec.formatIssues ?? false,
@@ -157,7 +193,15 @@ function reply(spec: FakeReply = {}) {
     readFiles: async () => {
       log.push('read');
       return {
-        files: (spec.reads ?? []).map((path) => ({ path, content: `// ${path}\n` })),
+        files: (spec.reads ?? [])
+          .filter((path) => !(spec.images ?? []).includes(path))
+          .map((path) => ({ path, content: `// ${path}\n` })),
+        images: (spec.images ?? []).map((path) => ({
+          path,
+          name: path.split('/').pop()!,
+          mime: 'image/png',
+          data: 'iVBORw0K'
+        })),
         refused: [],
         disconnected: false
       };
@@ -174,7 +218,44 @@ function reply(spec: FakeReply = {}) {
     })),
     interruption: spec.interruption
       ? { marker: null, cutOff: null, pageContinue: false, ...spec.interruption }
-      : null
+      : null,
+    ...(spec.processes && {
+      processes: spec.processes.map((p) => ({
+        kind: p.kind,
+        command: p.command,
+        refusal: () => p.refusal ?? null,
+        act: async () => {
+          log.push(`${p.kind}:${p.command}`);
+          return (
+            p.outcome ??
+            (p.kind === 'start'
+              ? { command: p.command, started: true as const, url: 'http://localhost:5173/' }
+              : { command: p.command, stopped: true })
+          );
+        }
+      }))
+    }),
+    ...(spec.logs && {
+      logs: spec.logs.map((l) => ({
+        command: l.command,
+        read: async () => {
+          log.push(`logs:${l.command}`);
+          return l.refused ? { refused: l.refused } : { command: l.command, lines: l.lines ?? [] };
+        }
+      }))
+    }),
+    ...(spec.downloads && { downloads: () => ({ ...spec.downloads! }) }),
+    ...(spec.fingerprints && { fingerprints: spec.fingerprints }),
+    ...(spec.errors && {
+      logCursor: async () => {
+        log.push('cursor');
+        return [{ command: 'npm run dev', next: 10 }];
+      },
+      processErrors: async () => {
+        log.push('errors');
+        return spec.errors!;
+      }
+    })
   };
   return { actions, log, held };
 }
@@ -739,7 +820,7 @@ describe('FullAutoLoop', () => {
       expect(t.events()).toContain('sent: Sent message 1 of 10: a format reminder (1 of 2).');
     });
 
-    it('does not apply, read or run anything from that reply', async () => {
+    it('applies and runs nothing from that reply, but sends the files it asked for', async () => {
       const t = setup();
       const broken = reply({
         formatIssues: true,
@@ -749,8 +830,12 @@ describe('FullAutoLoop', () => {
       });
       t.loop.onReply(broken.actions);
       await settle();
-      expect(broken.log).toEqual(['reminded']);
-      expect(t.page.sent).toEqual([FORMAT_REMINDER]);
+      // Read, then the reminder with the file: its READ card is answered either way.
+      expect(broken.log).toEqual(['read', 'reminded', 'reads-sent']);
+      expect(t.page.sent).toHaveLength(1);
+      expect(t.page.sent[0]!.startsWith(FORMAT_REMINDER)).toBe(true);
+      expect(t.page.sent[0]).toContain('@@CONTEXT b.ts@@');
+      expect(t.page.sent[0]).not.toContain('Applied');
     });
 
     it('carries on normally once the chat gets the format right', async () => {
@@ -1175,5 +1260,283 @@ describe('FullAutoLoop after sleep', () => {
     expect(t.loop.reason).toBe('disconnected');
     t.setConfig({ ...CONFIG, catchUpAfterSleep: false });
     expect(t.loop.state).toBe('paused');
+  });
+});
+
+describe('FullAutoLoop 1.3.0', () => {
+  /** Sends `n` replies in a row, each answered; returns the loop. */
+  async function steps(t: ReturnType<typeof setup>, make: (i: number) => ReplyActions, n: number) {
+    for (let i = 0; i < n; i += 1) {
+      t.loop.onReply(make(i));
+      await settle();
+      t.advance(LOOP_MIN_SEND_GAP_MS);
+    }
+  }
+
+  describe('requested files always go out', () => {
+    it('reads them before a held edit pauses the step, and sends them on Resume', async () => {
+      const t = setup();
+      const r = reply({
+        edits: { held: [{ path: 'package.json', hold: 'gated' }] },
+        reads: ['src/a.ts']
+      });
+      t.loop.onReply(r.actions);
+      await settle();
+      expect(t.loop.reason).toBe('gated');
+      // Read already, before the pause.
+      expect(r.log).toEqual(['apply:loop-1', 'read']);
+      t.loop.resume();
+      await settle();
+      expect(t.page.sent[0]).toContain('@@CONTEXT src/a.ts@@');
+      expect(t.page.sent[0]).toContain('Not applied: package.json (gated)');
+      expect(r.log.at(-1)).toBe('reads-sent');
+    });
+
+    it('sends refused files as refused without pausing', async () => {
+      const t = setup();
+      const r = reply({ reads: ['.env'] });
+      r.actions.readFiles = async () => ({
+        files: [],
+        refused: [{ path: '.env', reason: 'protected file' }],
+        disconnected: false
+      });
+      t.loop.onReply(r.actions);
+      await settle();
+      expect(t.page.sent[0]).toContain('Bridge could not send: .env (protected file).');
+      expect(t.loop.state).toBe('waiting-reply');
+    });
+
+    it('attaches the images the chat asked for, then waits longer for the send button', async () => {
+      const t = setup();
+      t.page.buttonLate = 25; // uploading: the button stays off for a while
+      const r = reply({ reads: ['shot.png', 'src/a.ts'], images: ['shot.png'] });
+      t.loop.onReply(r.actions);
+      await settle();
+      expect(t.page.attached).toEqual([['shot.png']]);
+      expect(t.page.sent[0]).toContain('Attached image: shot.png.');
+      expect(t.page.sent[0]).toContain('@@CONTEXT src/a.ts@@');
+      expect(t.loop.state).toBe('waiting-reply');
+      expect(ATTACH_SEND_WAIT_MS).toBeGreaterThan(25 * 250);
+    });
+
+    it('pauses with send-failed when the images can’t be attached', async () => {
+      const t = setup();
+      t.page.attachWorks = false;
+      t.loop.onReply(reply({ reads: ['shot.png'], images: ['shot.png'] }).actions);
+      await settle();
+      expect(t.loop.reason).toBe('send-failed');
+      expect(t.page.sent).toEqual([]);
+    });
+  });
+
+  describe('Unlimited', () => {
+    it('never pauses for a step limit', async () => {
+      const t = setup({ stepLimit: null });
+      await steps(t, () => reply({ edits: { applied: ['a.ts'] } }).actions, 40);
+      expect(t.page.sent).toHaveLength(40);
+      expect(t.loop.state).toBe('waiting-reply');
+      expect(t.reports.at(-1)).toMatchObject({ step: 40, limit: null });
+      expect(t.events()).toContain('sent: Sent message 40.');
+    });
+
+    it('a limit still pauses, and Continue adds no limit once it’s Unlimited', async () => {
+      const t = setup({ stepLimit: 2 });
+      await steps(t, () => reply({ edits: { applied: ['a.ts'] } }).actions, 3);
+      expect(t.loop.reason).toBe('step-limit');
+      t.setConfig({ ...CONFIG, stepLimit: null });
+      t.loop.continueFor();
+      await settle();
+      expect(t.loop.limit).toBeNull();
+      expect(t.page.sent).toHaveLength(3);
+    });
+  });
+
+  describe('loop guard', () => {
+    const failing = (output: string) => ({
+      command: 'pnpm test',
+      outcome: { ok: true as const, result: { ...result(1), output } }
+    });
+
+    it(`pauses when the same command fails the same way ${LOOP_GUARD_REPEATS} times in a row`, async () => {
+      const t = setup({ stepLimit: null });
+      await steps(
+        t,
+        (i) => reply({ runs: [failing(`FAIL x.test.ts\nDuration ${i}.2s`)] }).actions,
+        3
+      );
+      expect(t.loop.reason).toBe('stuck');
+      expect(t.reports.at(-1)).toMatchObject({ reason: 'stuck', detail: 'pnpm test' });
+      expect(t.events()).toContain('paused: Looks stuck: the same failure repeated (pnpm test).');
+      expect(t.page.sent).toHaveLength(2);
+    });
+
+    it('starts counting again after a different failure or a pass', async () => {
+      const t = setup({ stepLimit: null });
+      const outputs = ['FAIL a', 'FAIL a', 'FAIL b', 'FAIL b', 'ok', 'FAIL b', 'FAIL b'];
+      await steps(
+        t,
+        (i) =>
+          reply({
+            runs: [outputs[i] === 'ok' ? { command: 'pnpm test' } : failing(outputs[i]!)]
+          }).actions,
+        outputs.length
+      );
+      expect(t.loop.state).toBe('waiting-reply');
+      expect(t.page.sent).toHaveLength(outputs.length);
+    });
+
+    it(`pauses when a file is written with the same content ${LOOP_GUARD_REPEATS} times`, async () => {
+      const t = setup({ stepLimit: null });
+      const same = [{ path: 'src/app.ts', hash: 'aaaa' }];
+      await steps(
+        t,
+        () => reply({ edits: { applied: ['src/app.ts'] }, fingerprints: same }).actions,
+        3
+      );
+      expect(t.loop.reason).toBe('stuck');
+      expect(t.reports.at(-1)).toMatchObject({ detail: 'src/app.ts' });
+      // Resume: the user looked, so it counts from zero again.
+      t.loop.resume();
+      await settle();
+      expect(t.page.sent).toHaveLength(3);
+      t.advance(LOOP_MIN_SEND_GAP_MS);
+      t.loop.onReply(reply({ edits: { applied: ['src/app.ts'] }, fingerprints: same }).actions);
+      await settle();
+      expect(t.loop.state).toBe('waiting-reply');
+    });
+
+    it('lets different content to the same file through', async () => {
+      const t = setup({ stepLimit: null });
+      await steps(
+        t,
+        (i) =>
+          reply({ edits: { applied: ['a.ts'] }, fingerprints: [{ path: 'a.ts', hash: `h${i}` }] })
+            .actions,
+        5
+      );
+      expect(t.loop.state).toBe('waiting-reply');
+    });
+  });
+
+  describe('things that always wait for the user', () => {
+    it('pauses for a download, and says it wasn’t downloaded if the user goes on without it', async () => {
+      const t = setup({ autoApprove: { changes: true, gated: true, partial: true } });
+      const downloads = { applied: [] as string[], pending: ['public/logo.svg'] };
+      t.loop.onReply(reply({ downloads }).actions);
+      await settle();
+      expect(t.loop.reason).toBe('download');
+      t.loop.resume();
+      await settle();
+      expect(t.page.sent[0]).toContain('Not applied: public/logo.svg (not downloaded).');
+    });
+
+    it('lists a download the user clicked as applied', async () => {
+      const t = setup();
+      const r = reply({ downloads: { applied: [], pending: ['logo.svg'] } });
+      const downloads = { applied: [] as string[], pending: ['logo.svg'] };
+      r.actions.downloads = () => downloads;
+      t.loop.onReply(r.actions);
+      await settle();
+      downloads.pending = [];
+      downloads.applied = ['logo.svg (downloaded)'];
+      t.loop.resume();
+      await settle();
+      expect(t.page.sent[0]).toContain('Applied: logo.svg (downloaded).');
+    });
+
+    it('pauses once for a START that isn’t allowed, then tells the chat', async () => {
+      const t = setup();
+      t.loop.onReply(
+        reply({
+          processes: [{ kind: 'start', command: 'npm run dev', refusal: 'not on the allowlist' }]
+        }).actions
+      );
+      await settle();
+      expect(t.loop.reason).toBe('not-allowed');
+      t.loop.resume();
+      await settle();
+      expect(t.page.sent[0]).toContain("Bridge didn't start `npm run dev`: not on the allowlist");
+    });
+  });
+
+  describe('background processes', () => {
+    it('stops and starts in order, before commands, and says where it runs', async () => {
+      const t = setup();
+      const r = reply({
+        processes: [
+          { kind: 'stop', command: 'npm run api' },
+          { kind: 'start', command: 'npm run dev' }
+        ],
+        runs: [{ command: 'pnpm test' }]
+      });
+      t.loop.onReply(r.actions);
+      await settle();
+      expect(r.log).toEqual([
+        'apply:loop-1',
+        'stop:npm run api',
+        'start:npm run dev',
+        'run:pnpm test',
+        'reads-sent'
+      ]);
+      expect(t.page.sent[0]).toContain('Stopped `npm run api`.');
+      expect(t.page.sent[0]).toContain(
+        'Started `npm run dev` in the background, running at http://localhost:5173/.'
+      );
+    });
+
+    it('pauses when the app goes away mid-start', async () => {
+      const t = setup();
+      t.loop.onReply(
+        reply({
+          processes: [{ kind: 'start', command: 'npm run dev', outcome: { disconnected: true } }]
+        }).actions
+      );
+      await settle();
+      expect(t.loop.reason).toBe('disconnected');
+    });
+
+    it('sends the logs the chat asked for, and says when there are none', async () => {
+      const t = setup();
+      t.loop.onReply(
+        reply({
+          logs: [
+            { command: 'npm run dev', lines: ['VITE ready', 'GET / 200'] },
+            { command: 'npm run api', refused: 'not running' }
+          ]
+        }).actions
+      );
+      await settle();
+      expect(t.page.sent[0]).toContain('Last 2 lines of `npm run dev`:');
+      expect(t.page.sent[0]).toContain('GET / 200');
+      expect(t.page.sent[0]).toContain("`npm run api` wasn't running.");
+    });
+
+    it('waits for the dev server to rebuild after edits, then sends the errors it printed', async () => {
+      const t = setup();
+      const r = reply({
+        edits: { applied: ['src/App.tsx'] },
+        errors: [
+          { command: 'npm run dev', lines: ['[vite] Internal server error: Unexpected "}"'] }
+        ]
+      });
+      t.loop.onReply(r.actions);
+      await settle();
+      expect(r.log).toEqual(['cursor', 'apply:loop-1', 'errors', 'reads-sent']);
+      expect(t.sleeps).toContain(PROCESS_SETTLE_MS);
+      expect(t.page.sent[0]).toContain('`npm run dev` printed errors after these edits:');
+      expect(t.page.sent[0]).toContain('Unexpected "}"');
+    });
+
+    it('doesn’t look for errors when nothing was edited', async () => {
+      const t = setup();
+      const r = reply({
+        runs: [{ command: 'pnpm test' }],
+        errors: [{ command: 'x', lines: ['Error'] }]
+      });
+      t.loop.onReply(r.actions);
+      await settle();
+      expect(r.log).not.toContain('errors');
+      expect(t.sleeps).not.toContain(PROCESS_SETTLE_MS);
+    });
   });
 });

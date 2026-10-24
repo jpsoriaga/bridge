@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { TreeEntry } from './files';
 import { parseChat } from './parser';
+import { failureSignature, stepText } from './loop';
 import {
   buildContextMessage,
   buildContinuation,
   buildFollowUp,
+  buildLogsMessage,
+  LOGS_LINES,
   buildRunMessage,
   buildSessionPrompt,
   FORMAT_FOOTER,
@@ -365,5 +368,111 @@ describe('buildFollowUp', () => {
 
   it('gives up when even the trimmed message is over budget', () => {
     expect(buildFollowUp(base, 50)).toBeNull();
+  });
+});
+
+describe('1.3.0: background processes, logs, attachments', () => {
+  const token = 'ghp_' + 'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8';
+  const empty = { applied: [], skipped: [], files: [], refused: [], runs: [] };
+
+  it('puts the dev servers in their own rule, out of the @@RUN list', () => {
+    const prompt = buildSessionPrompt({
+      projectName: 'demo',
+      tree: [],
+      allowlist: ['npm test', 'npm install', 'npm run dev'],
+      background: ['npm run dev']
+    });
+    expect(prompt).toContain('Only these are allowed: `npm test`, `npm install`');
+    expect(prompt).toContain('`@@START npm run dev@@`, `@@STOP npm run dev@@`');
+    expect(prompt).toContain('`@@LOGS npm run dev@@`');
+    expect(prompt).toContain('`@@ASSET public/hero.png@@`');
+    expect(prompt).toContain('@@DOWNLOAD');
+    const before = prompt.slice(0, prompt.indexOf('PROJECT FILES'));
+    expect(before.length).toBeLessThan(1_600);
+  });
+
+  it('says how each START and STOP went, with the URL', () => {
+    const built = buildFollowUp({
+      ...empty,
+      processes: [
+        { command: 'npm run dev', started: true, url: 'http://localhost:5173/' },
+        { command: 'npm run dev', started: true, restarted: true, url: null },
+        { command: 'npm run api', stopped: true },
+        { command: 'npm run docs', stopped: false },
+        { command: 'npm run web', exited: 'exited with code 1', lines: ['Error: port in use'] },
+        { command: 'npm run x', refused: 'it isn’t on the allowlist' }
+      ]
+    })!;
+    expect(built.text).toContain(
+      'Started `npm run dev` in the background, running at http://localhost:5173/.'
+    );
+    expect(built.text).toContain('Restarted `npm run dev` in the background.');
+    expect(built.text).toContain('Stopped `npm run api`.');
+    expect(built.text).toContain("`npm run docs` wasn't running.");
+    expect(built.text).toContain('`npm run web` exited with code 1 right after starting:');
+    expect(built.text).toContain('Error: port in use');
+    expect(built.text).toContain("Bridge didn't start `npm run x`: it isn’t on the allowlist");
+  });
+
+  it('sends logs and errors redacted, and counts what it replaced', () => {
+    const built = buildFollowUp({
+      ...empty,
+      logs: [
+        { command: 'npm run dev', lines: ['ready', `token=${token}`], url: 'http://localhost:3000' }
+      ],
+      errors: [{ command: 'npm run dev', lines: [`Error: bad key ${token}`] }]
+    })!;
+    expect(built.text).toContain(
+      'Last 2 lines of `npm run dev`, running at http://localhost:3000:'
+    );
+    expect(built.text).toContain('`npm run dev` printed errors after these edits:');
+    expect(built.text).not.toContain(token);
+    expect(built.redacted).toBe(2);
+    expect(built.text.endsWith(FORMAT_FOOTER)).toBe(true);
+  });
+
+  it(`sends at most the last ${LOGS_LINES} lines of a log`, () => {
+    const lines = Array.from({ length: 200 }, (_, i) => `line ${i}`);
+    const { text } = buildLogsMessage({ command: 'npm run dev', lines });
+    expect(text).toContain(`Last ${LOGS_LINES} lines of \`npm run dev\``);
+    expect(text).toContain('line 199');
+    expect(text).not.toContain('line 119\n');
+    expect(text.endsWith(FORMAT_FOOTER)).toBe(true);
+    expect(buildLogsMessage({ command: 'x', lines: [token] }).redacted).toBe(1);
+  });
+
+  it('names the images that went with the message', () => {
+    expect(buildFollowUp({ ...empty, attached: ['public/hero.png'] })!.text).toContain(
+      'Attached image: public/hero.png.'
+    );
+    expect(buildContextMessage([], [], ['a.png', 'b.png']).text).toContain(
+      'Attached images: a.png, b.png.'
+    );
+  });
+
+  it('puts a format reminder first, with the files the reply asked for', () => {
+    const built = buildFollowUp({
+      ...empty,
+      reminder: FORMAT_REMINDER,
+      files: [{ path: 'a.ts', content: 'x\n' }]
+    })!;
+    expect(built.text.startsWith(FORMAT_REMINDER)).toBe(true);
+    expect(built.text).toContain('@@CONTEXT a.ts@@');
+  });
+});
+
+describe('loop words', () => {
+  it('reads a step with or without a limit', () => {
+    expect(stepText(3, 25)).toBe('Step 3 of 25');
+    expect(stepText(3, null)).toBe('Step 3');
+  });
+
+  it('compares failures without their timings', () => {
+    const a = failureSignature('exit 1', 'FAIL a.test.ts\n  expected 1 to be 2\nDuration 1.21s');
+    const b = failureSignature('exit 1', 'FAIL a.test.ts\n  expected 1 to be 2\nDuration 3.07s');
+    const c = failureSignature('exit 1', 'FAIL b.test.ts\n  expected 1 to be 2\nDuration 3.07s');
+    expect(a).toBe(b);
+    expect(a).not.toBe(c);
+    expect(failureSignature('exit 2', 'x')).not.toBe(failureSignature('exit 1', 'x'));
   });
 });

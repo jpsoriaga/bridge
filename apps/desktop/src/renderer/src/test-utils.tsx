@@ -1,6 +1,8 @@
 import { vi } from 'vitest';
+import type { BackgroundLogs } from '@bridge/shared';
 import type {
   ActivityEntry,
+  AutoApproveSettings,
   BridgeApi,
   DesktopState,
   MenuAction,
@@ -25,6 +27,10 @@ export function makeState(overrides: Partial<DesktopState> = {}): DesktopState {
     mode: 'manual',
     allowlist: ['pnpm test'],
     allowlistSuggestions: [],
+    background: [],
+    processes: [],
+    autoApprove: { changes: false, gated: false, partial: false },
+    unlimitedNoteSeen: false,
     sessionResets: 0,
     allowlistNote: false,
     installNote: null,
@@ -102,6 +108,12 @@ export function installBridge(initial: DesktopState = makeState(), activity: Act
     setDenyPatterns: vi.fn(async () => true),
     setMode: vi.fn(async (mode) => mode),
     setAllowlist: vi.fn(async () => ({ ok: true as const })),
+    setBackgroundEntries: vi.fn(async () => ({ ok: true as const })),
+    setAutoApprove: vi.fn(async (value: AutoApproveSettings) => value),
+    dismissUnlimitedNote: vi.fn(async () => undefined),
+    stopProcess: vi.fn(async () => true),
+    getProcessLogs: vi.fn(async (): Promise<BackgroundLogs | null> => null),
+    openProcessUrl: vi.fn(async () => true),
     setGatedPatterns: vi.fn(async () => ({ ok: true as const })),
     setEnvPatterns: vi.fn(async () => ({ ok: true as const })),
     setRunSettings: vi.fn(async () => true),

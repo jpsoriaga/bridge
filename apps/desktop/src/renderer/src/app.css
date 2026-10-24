@@ -840,3 +840,75 @@
   font-size: var(--text-xs);
   color: var(--fg-muted);
 }
+
+/* Background processes and their allowlist entries */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 var(--space-2);
+  margin-left: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+}
+.check-inline {
+  margin-left: auto;
+  margin-right: var(--space-3);
+  color: var(--fg-muted);
+}
+fieldset.run-settings {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+}
+fieldset.run-settings legend {
+  padding: 0;
+  margin-bottom: var(--space-2);
+}
+.processes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: var(--space-3) 0;
+  padding: 0;
+  list-style: none;
+}
+.process-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.process-command {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+}
+.process-meta {
+  margin: 0;
+  white-space: nowrap;
+}
+.process-url {
+  margin-top: var(--space-1);
+  margin-left: var(--space-4);
+}
+.thumbnails {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-top: var(--space-3);
+}
+.thumbnail {
+  margin: 0;
+}
+.thumbnail img {
+  display: block;
+  max-width: 240px;
+  max-height: 240px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-muted);
+}

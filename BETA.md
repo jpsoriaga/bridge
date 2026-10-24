@@ -159,6 +159,9 @@ Tick these off as you go, and note anything that surprised you, even small thing
   3. Ask: _"Create a file notes.txt with one line in it, then run git status, then finish."_ (use a command you allowed). Bridge applies the change, runs the command and sends the next message itself.
   4. It should stop on its own when the chat says it's done, or at 3 steps. Try **Stop** too (in the side panel, on the page, or in the app).
   5. Switch back to **Manual** when you're done.
+- [ ] **New in 1.3.0: a dev server.** In a project with a `dev` script (a Vite or Next.js app is ideal), open **Settings → Commands** and make sure `npm run dev` (or your manager's version) is allowed with **Background** ticked. Ask the chat: _"Start the dev server."_ Click **Start** on the card. It should say **running** with an address; click the address to open it. The app's Session page and the side panel list it too. Then ask the chat to stop it, or click **Stop**.
+- [ ] **New in 1.3.0: images.** Ask the chat to make an image for the project, saved as `public/hero.png`. Under the image, a **Save to project** card should show that path; click **Save**, check the file, then **Undo**. In the side panel, under **Send files**, click **Attach** next to a png or jpg in your project: it should appear on the chat's message as an attachment (don't send it if you don't want to).
+- [ ] **New in 1.3.0: a download.** Ask the chat to download an icon into your project from an https address. Nothing happens until you click **Download** on its card, even in Full auto.
 - [ ] **Sleep and wake.** With everything connected, put your computer to sleep for a minute or two (close the lid, or Sleep from the menu), then wake it. Within about a minute the side panel should say **Connected** again without you doing anything. For extra credit, do this in the middle of a Full auto run and see whether it carries on.
 
 When you're done, send us a quick note even if everything worked: which computer you used, and which steps went fine.
@@ -168,7 +171,7 @@ When you're done, send us a quick note even if everything worked: which computer
 The chat's Free and Go plans limit how many messages you can send in a few hours. Full auto sends a message for every step, so it uses up that allowance quickly, and the chat may switch to a smaller model or pause you partway through.
 
 - Use **Manual** or **Auto-apply** for most of your testing. You decide when each message goes.
-- For the Full auto test, keep the step limit low (3 is plenty) and ask for something small.
+- For the Full auto test, keep the step limit low (3 is plenty) and ask for something small. Avoid **Unlimited** on these plans: every step is one of your messages.
 - If the chat says you've reached a limit, Full auto pauses and says so. That's a fine thing to report too.
 
 ## Known issues
@@ -179,6 +182,8 @@ The chat's Free and Go plans limit how many messages you can send in a few hours
 - **Linux:** Ubuntu 24.04's AppArmor setting needs the workaround above.
 - **After sleep** it can take up to a minute to reconnect.
 - **If the chat page changes** its layout, cards may stop appearing and the side panel says "Bridge can't read this page layout". Please report it with the diagnostics.
+- **Images the chat makes** are read from the chat page. If the page serves an image in a way Bridge can't read, the Save card says so; download it from the chat and add it yourself.
+- **Dev servers stop** when the session ends, you switch projects, quit Bridge, or the computer sleeps for more than 30 minutes. Start them again from the chat.
 - **Full auto** clicks the chat's send button for you. Automating the chat this way may break its provider's terms of use, and the commands it runs execute code the chat may have written. It's opt-in, and the app asks every time you turn it on.
 
 ## How to report a problem

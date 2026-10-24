@@ -11,7 +11,12 @@ import {
   parseCommand,
   programName
 } from '@bridge/shared';
-import type { CommandPath, DesktopState, RunSettings } from '../../preload/api';
+import type {
+  AutoApproveSettings,
+  CommandPath,
+  DesktopState,
+  RunSettings
+} from '../../preload/api';
 
 /** The last lines of the running command's output, kept here as it streams. */
 const OUTPUT_LINES = 300;
@@ -56,8 +61,23 @@ export function commandError(entry: string): string | null {
   return null;
 }
 
+/** Marks a command the app runs in the background (`@@START`) rather than to completion. */
+function BackgroundTag() {
+  return (
+    <span className="badge" title="Started with @@START and kept running">
+      background
+    </span>
+  );
+}
+
 /** First open: the suggested commands, each with a checkbox, and Allow. */
-function Suggestions({ suggestions }: { suggestions: string[] }) {
+function Suggestions({
+  suggestions,
+  background
+}: {
+  suggestions: string[];
+  background: readonly string[];
+}) {
   const [picked, setPicked] = useState<string[]>(suggestions);
   const [busy, setBusy] = useState(false);
   const toggle = (entry: string) =>
@@ -85,11 +105,13 @@ function Suggestions({ suggestions }: { suggestions: string[] }) {
                 onChange={() => toggle(entry)}
               />
               <span className="mono">{entry}</span>
+              {background.includes(entry) && <BackgroundTag />}
             </label>
           </li>
         ))}
       </ul>
       {suggestions.some((entry) => isInstallCommand(entry.split(' '))) && <InstallHint />}
+      {background.length > 0 && <BackgroundHint />}
       <div className="actions">
         <button
           type="button"
@@ -101,6 +123,18 @@ function Suggestions({ suggestions }: { suggestions: string[] }) {
         </button>
       </div>
     </>
+  );
+}
+
+/** What a background entry is. */
+function BackgroundHint() {
+  return (
+    <p className="hint">
+      Background commands (dev servers, watchers) keep running between messages. The chat starts
+      them with <span className="mono">@@START</span> and stops them with{' '}
+      <span className="mono">@@STOP</span>; at most three run at once, and all of them stop when the
+      session ends, you switch projects or quit.
+    </p>
   );
 }
 
@@ -150,10 +184,12 @@ function InstallNote({ command }: { command: string }) {
 /** The project's allowlist. Only the app edits it; the chat and the extension can't. */
 function Allowlist({
   entries,
+  background,
   note,
   installNote
 }: {
   entries: string[];
+  background: readonly string[];
   note: boolean;
   installNote: string | null;
 }) {
@@ -182,6 +218,11 @@ function Allowlist({
     void save([...entries, entry]).then((ok) => ok && setDraft(''));
   };
 
+  const setBackground = (entry: string, on: boolean) =>
+    void window.bridge
+      .setBackgroundEntries(on ? [...background, entry] : background.filter((e) => e !== entry))
+      .then((result) => setError(result.ok ? null : 'Bridge couldn’t save that.'));
+
   return (
     <>
       <p className="hint">
@@ -191,6 +232,7 @@ function Allowlist({
         <span className="mono">node -e</span> or <span className="mono">git -C</span>), even with{' '}
         <span className="mono">*</span>.
       </p>
+      <BackgroundHint />
       {note && (
         <div className="notice" role="status">
           <p>
@@ -215,6 +257,15 @@ function Allowlist({
           {entries.map((entry) => (
             <li key={entry}>
               <span className="mono">{entry}</span>
+              <label className="check check-inline">
+                <input
+                  type="checkbox"
+                  checked={background.includes(entry)}
+                  aria-label={`Run ${entry} in the background`}
+                  onChange={(e) => setBackground(entry, e.target.checked)}
+                />
+                <span>Background</span>
+              </label>
               <button
                 type="button"
                 className="btn"
@@ -260,7 +311,7 @@ function useRunSettings(settings: RunSettings) {
       setError(
         ok
           ? null
-          : `Use timeouts of ${MIN_RUN_TIMEOUT_MS / 1000}–${MAX_RUN_TIMEOUT_MS / 1000} seconds and a step limit of 1–${MAX_STEP_LIMIT}.`
+          : `Use timeouts of ${MIN_RUN_TIMEOUT_MS / 1000}–${MAX_RUN_TIMEOUT_MS / 1000} seconds and a step limit of 1–${MAX_STEP_LIMIT}, or Unlimited.`
       );
     });
   };
@@ -321,9 +372,16 @@ export function TimeoutField({ settings }: { settings: RunSettings }) {
   );
 }
 
-/** Full auto's step limit and whether a failing command pauses it. */
-export function FullAutoFields({ settings }: { settings: RunSettings }) {
-  const [steps, setSteps] = useState(String(settings.stepLimit));
+/** Full auto's step limit (or Unlimited), whether a failing command pauses it, and sleep. */
+export function FullAutoFields({
+  settings,
+  noteSeen
+}: {
+  settings: RunSettings;
+  noteSeen: boolean;
+}) {
+  const unlimited = settings.stepLimit === null;
+  const [steps, setSteps] = useState(String(settings.stepLimit ?? DEFAULT_STEP_LIMIT));
   const { save, error } = useRunSettings(settings);
   return (
     <div className="run-settings">
@@ -337,6 +395,7 @@ export function FullAutoFields({ settings }: { settings: RunSettings }) {
             max={MAX_STEP_LIMIT}
             placeholder={String(DEFAULT_STEP_LIMIT)}
             aria-invalid={error !== null}
+            disabled={unlimited}
             value={steps}
             onChange={(e) => setSteps(e.target.value)}
             onBlur={() => save({ stepLimit: Math.round(Number(steps)) })}
@@ -344,9 +403,40 @@ export function FullAutoFields({ settings }: { settings: RunSettings }) {
           <span className="unit">messages</span>
         </span>
       </label>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={unlimited}
+          onChange={(e) =>
+            save({
+              stepLimit: e.target.checked ? null : Math.round(Number(steps)) || DEFAULT_STEP_LIMIT
+            })
+          }
+        />
+        <span>Unlimited</span>
+      </label>
       <p className="hint">
-        The most messages Full auto sends on its own in one run before it pauses for you.
+        {unlimited
+          ? 'Full auto keeps going until the chat says it’s done or you press Stop.'
+          : 'The most messages Full auto sends on its own in one run before it pauses for you.'}{' '}
+        Either way it pauses when the same failure repeats three times.
       </p>
+      {unlimited && !noteSeen && (
+        <div className="notice" role="status">
+          <p>
+            On the Free and Go plans, each step uses one of your messages, so a long run can use up
+            your limit. Full auto still pauses on repeated failures (the same command failing the
+            same way, or the same file written the same way, three times).
+          </p>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => void window.bridge.dismissUnlimitedNote()}
+          >
+            Got it
+          </button>
+        </div>
+      )}
       <label className="check">
         <input
           type="checkbox"
@@ -377,6 +467,71 @@ export function FullAutoFields({ settings }: { settings: RunSettings }) {
         </p>
       )}
     </div>
+  );
+}
+
+const AUTO_APPROVE: { key: keyof AutoApproveSettings; label: string; risk: string }[] = [
+  {
+    key: 'changes',
+    label: 'Deletes and renames',
+    risk: 'Full auto deletes and moves files the chat names without asking.'
+  },
+  {
+    key: 'gated',
+    label: 'Gated files (package.json, lockfiles, configs)',
+    risk: 'Full auto changes the files that decide what install, build and test commands run, then may run them.'
+  },
+  {
+    key: 'partial',
+    label: 'Partial-looking files',
+    risk: 'Full auto writes files that look cut short (“…rest unchanged”), which can replace a whole file with part of it.'
+  }
+];
+
+/**
+ * Full auto → "Also approve automatically": what it may do without a click that otherwise
+ * waits for one. Turning one on asks in a native dialog first.
+ */
+export function AutoApproveFields({ value }: { value: AutoApproveSettings }) {
+  const [busy, setBusy] = useState(false);
+  const toggle = (key: keyof AutoApproveSettings, on: boolean) => {
+    setBusy(true);
+    void window.bridge.setAutoApprove({ ...value, [key]: on }).finally(() => setBusy(false));
+  };
+  const any = AUTO_APPROVE.some(({ key }) => value[key]);
+  return (
+    <fieldset className="run-settings">
+      <legend className="subsection-title">Also approve automatically</legend>
+      <p className="hint">
+        Off by default. Each change is backed up, so you can undo it. Commands off the allowlist,
+        downloads, protected files (<span className="mono">.env</span>,{' '}
+        <span className="mono">.git</span>, keys) and files that changed on disk always wait for
+        you.
+      </p>
+      {AUTO_APPROVE.map(({ key, label, risk }) => (
+        <div key={key}>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={value[key]}
+              disabled={busy}
+              onChange={(e) => toggle(key, e.target.checked)}
+            />
+            <span>{label}</span>
+          </label>
+          {value[key] && (
+            <p className="hint" data-tone="warning">
+              {risk}
+            </p>
+          )}
+        </div>
+      ))}
+      {any && (
+        <p className="hint">
+          Activity marks everything Full auto approved this way “auto-approved”.
+        </p>
+      )}
+    </fieldset>
   );
 }
 
@@ -485,10 +640,12 @@ export function AllowlistEditor({ state }: { state: DesktopState }) {
     <Suggestions
       key={`${state.project.path}:${state.allowlistSuggestions.join('|')}`}
       suggestions={state.allowlistSuggestions}
+      background={state.background}
     />
   ) : (
     <Allowlist
       entries={state.allowlist}
+      background={state.background}
       note={state.allowlistNote}
       installNote={state.installNote}
     />

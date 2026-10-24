@@ -23,6 +23,15 @@ const CALLS: Record<IpcChannel, { good: unknown[]; bad: unknown[][] }> = {
   setDenyPatterns: { good: [['*.log']], bad: [[], ['*.log'], [[1]], [Array(1001).fill('a')]] },
   setMode: { good: ['auto-apply'], bad: [['root'], [], [1]] },
   setAllowlist: { good: [['pnpm test *']], bad: [['pnpm test'], [{ 0: 'x' }]] },
+  setBackgroundEntries: { good: [['npm run dev']], bad: [['npm run dev'], [[1]]] },
+  setAutoApprove: {
+    good: [{ changes: true, gated: false, partial: false }],
+    bad: [[{ changes: true }], [{ changes: 1, gated: false, partial: false }], [true]]
+  },
+  dismissUnlimitedNote: { good: [], bad: [[true]] },
+  stopProcess: { good: ['proc-1'], bad: [[], [1]] },
+  getProcessLogs: { good: ['proc-1'], bad: [[{}]] },
+  openProcessUrl: { good: ['proc-1'], bad: [['http://localhost:5173', 'x'], [1]] },
   setGatedPatterns: { good: [[]], bad: [[null]] },
   setEnvPatterns: { good: [['MY_*']], bad: [['MY_*']] },
   setRunSettings: {

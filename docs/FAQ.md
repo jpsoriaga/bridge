@@ -25,7 +25,7 @@ Only commands you allowlist in the app, matched exactly (or with extra arguments
 Click **Undo** on the card, or find it on the app's **Activity** page. Bridge backs up every file before it changes, deletes or renames it, for 7 days by default.
 
 **What's the difference between the modes?**
-**Manual**: you click Apply on each edit. **Auto-apply**: edits apply as soon as a reply finishes, each with Undo. **Full auto**: Bridge also runs allowlisted commands and sends the results back to the chat on its own, up to a step limit. Deletes, renames and a few risky files always wait for a click.
+**Manual**: you click Apply on each edit. **Auto-apply**: edits apply as soon as a reply finishes, each with Undo. **Full auto**: Bridge also runs allowlisted commands and sends the results back to the chat on its own, up to a step limit. Deletes, renames and a few risky files wait for a click, unless you let Full auto approve them (Settings → Full auto → Also approve automatically). Downloads and commands off the allowlist always do.
 
 **Is Full auto safe to use?**
 It's opt-in and comes with a warning. Automating the chat may break its provider's terms of use and risk your account, and the commands it runs (like your tests) execute code the model may have written. Use it on projects where you'd be fine with that, and keep the step limit low.

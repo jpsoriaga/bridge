@@ -8,6 +8,7 @@ import {
   browserFromUserAgent,
   ClientMessage,
   CloseCode,
+  DEFAULT_STEP_LIMIT,
   FILE_ERROR_MESSAGES,
   helloProtocol,
   mismatchReason,
@@ -56,7 +57,7 @@ export interface BridgeServerOptions {
   onChange?: () => void;
   /** Answers file requests (tree, read, write…). Without it every one gets `no-project`. */
   files?: (request: FileRequest) => Promise<FileOutcome<unknown>>;
-  /** Answers run/run_cancel. Without it every command gets `no-project`. */
+  /** Answers run, run_cancel and the bg_* requests. Without it every command gets `no-project`. */
   commands?: (request: CommandRequest) => Promise<FileOutcome<unknown>>;
   /** The open project, sent in every `status`. */
   project?: () => ProjectInfo | null;
@@ -120,10 +121,13 @@ export function createBridgeServer(options: BridgeServerOptions) {
     config = () => ({
       mode: 'manual',
       allowlist: [],
-      stepLimit: 10,
+      stepLimit: DEFAULT_STEP_LIMIT,
       pauseOnFailure: false,
       catchUpAfterSleep: true,
       running: null,
+      background: [],
+      processes: [],
+      autoApprove: { changes: false, gated: false, partial: false },
       instance: 'default'
     }),
     onLoopReport = () => {},
@@ -433,8 +437,15 @@ export function createBridgeServer(options: BridgeServerOptions) {
             case 'rename':
             case 'undo':
             case 'watch':
+            case 'upload':
+            case 'write_binary':
+            case 'read_binary':
+            case 'download':
             case 'run':
             case 'run_cancel':
+            case 'bg_start':
+            case 'bg_stop':
+            case 'bg_logs':
               if (overOpLimit(message.type)) {
                 send(
                   serverMessage(message.id, 'response', {
@@ -446,7 +457,11 @@ export function createBridgeServer(options: BridgeServerOptions) {
               }
               // The reply carries the request's id.
               void (
-                message.type === 'run' || message.type === 'run_cancel'
+                message.type === 'run' ||
+                message.type === 'run_cancel' ||
+                message.type === 'bg_start' ||
+                message.type === 'bg_stop' ||
+                message.type === 'bg_logs'
                   ? commands(message)
                   : files(message)
               )

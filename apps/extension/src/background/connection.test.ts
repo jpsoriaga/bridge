@@ -32,6 +32,9 @@ const CONFIG: BridgeConfig = {
   pauseOnFailure: false,
   catchUpAfterSleep: true,
   running: null,
+  background: [],
+  processes: [],
+  autoApprove: { changes: false, gated: false, partial: false },
   instance: 'launch-1'
 };
 

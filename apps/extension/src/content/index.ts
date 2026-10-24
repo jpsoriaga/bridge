@@ -1,5 +1,6 @@
-import { TabMessage, type InsertResult } from '../messages';
-import { insertIntoComposer } from './chat/composer';
+import { base64ToBytes } from '../binary';
+import { TabMessage, type AttachResult, type InsertResult } from '../messages';
+import { attachToComposer, insertIntoComposer } from './chat/composer';
 import { ChatController, createAskWorker } from './chat/controller';
 
 // The content script holds no secrets and never talks to the desktop. File reads and
@@ -49,6 +50,13 @@ chrome.runtime.onMessage.addListener((raw: unknown, sender, sendResponse) => {
     case 'diagnose':
       sendResponse(controller.diagnose());
       return false;
+    case 'attach-files': {
+      const files = message.files.map(
+        ({ name, mime, data }) => new File([base64ToBytes(data)], name, { type: mime })
+      );
+      sendResponse(attachToComposer(files) satisfies AttachResult);
+      return false;
+    }
     default:
       return false;
   }

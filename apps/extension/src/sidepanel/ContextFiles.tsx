@@ -3,6 +3,13 @@ import { FILE_ERROR_LABELS } from '@bridge/shared';
 import type { ContextEntry, ContextResendResult, PendingRequest } from '../messages';
 import { formatCount, panelWindowId, redactedText, request, sessionErrorText } from './request';
 
+const REQUEST_KINDS: Record<PendingRequest['kind'], string> = {
+  read: 'Files',
+  run: 'Run',
+  start: 'Start',
+  download: 'Download'
+};
+
 /**
  * Files sent to the chat this session, newest first, with how much of the message each
  * took. A file that changed on disk since it was sent is marked stale (the app's watcher
@@ -134,13 +141,13 @@ export function Requests({ requests }: { requests: PendingRequest[] }) {
         <ul className="request-list">
           {requests.map((item) => (
             <li key={item.id} className="request-row">
-              <span className="request-kind">{item.kind === 'read' ? 'Files' : 'Run'}</span>
+              <span className="request-kind">{REQUEST_KINDS[item.kind]}</span>
               <span className="request-text mono" title={item.text}>
-                {item.kind === 'run' ? `$ ${item.text}` : item.text}
+                {item.kind === 'run' || item.kind === 'start' ? `$ ${item.text}` : item.text}
               </span>
               {!item.allowed && (
                 <span className="tag" data-tone="danger">
-                  {item.kind === 'run' ? 'not allowed' : 'blocked'}
+                  {item.kind === 'read' ? 'blocked' : 'not allowed'}
                 </span>
               )}
               <button type="button" className="btn" onClick={() => reveal(item.id)}>

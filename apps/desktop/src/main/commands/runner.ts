@@ -7,6 +7,39 @@ import { RUN_OUTPUT_CAP_BYTES, RUN_OUTPUT_CHUNK_CHARS, type RunResult } from '@b
 
 /** After SIGTERM, a process group gets this long before SIGKILL. */
 export const KILL_GRACE_MS = 2_000;
+
+/**
+ * Ends a child and everything it started: its process group on POSIX (SIGTERM, then
+ * SIGKILL after `KILL_GRACE_MS`; it was spawned `detached`, so it leads one), `taskkill /T
+ * /F` on Windows.
+ */
+export function killTree(child: ChildProcess, platform: NodeJS.Platform = process.platform): void {
+  const pid = child.pid;
+  if (pid === undefined) return;
+  if (platform === 'win32') {
+    const taskkill = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe');
+    try {
+      nodeSpawn(taskkill, ['/pid', String(pid), '/T', '/F'], {
+        stdio: 'ignore',
+        windowsHide: true
+      }).on('error', () => undefined);
+    } catch {
+      // Already gone.
+    }
+    return;
+  }
+  const signalGroup = (sig: NodeJS.Signals) => {
+    try {
+      process.kill(-pid, sig);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (signalGroup('SIGTERM')) {
+    setTimeout(() => signalGroup('SIGKILL'), KILL_GRACE_MS).unref();
+  }
+}
 /** After the command exits, its output pipes get this long to drain (a grandchild may hold them). */
 export const DRAIN_MS = 1_000;
 /** Live output is batched this long before it's sent. */
@@ -282,32 +315,7 @@ export class CommandRunner {
     this.events.onChange?.();
   }
 
-  /** The whole tree: the process group on POSIX, `taskkill /T` on Windows. */
   private killTree(child: ChildProcess): void {
-    const pid = child.pid;
-    if (pid === undefined) return;
-    if (this.platform === 'win32') {
-      const taskkill = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe');
-      try {
-        nodeSpawn(taskkill, ['/pid', String(pid), '/T', '/F'], {
-          stdio: 'ignore',
-          windowsHide: true
-        }).on('error', () => undefined);
-      } catch {
-        // Already gone.
-      }
-      return;
-    }
-    const signalGroup = (sig: NodeJS.Signals) => {
-      try {
-        process.kill(-pid, sig);
-        return true;
-      } catch {
-        return false;
-      }
-    };
-    if (signalGroup('SIGTERM')) {
-      setTimeout(() => signalGroup('SIGKILL'), KILL_GRACE_MS).unref();
-    }
+    killTree(child, this.platform);
   }
 }

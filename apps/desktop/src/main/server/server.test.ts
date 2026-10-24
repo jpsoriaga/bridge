@@ -841,10 +841,11 @@ describe('modes, commands and the loop (real project, real runner)', () => {
         () => modes.mode,
         () => new GatedFiles()
       ),
-      commands: (request) =>
-        request.type === 'run'
-          ? commands.run(request.payload)
-          : Promise.resolve(commands.cancel(request.payload.runId)),
+      commands: async (request) => {
+        if (request.type === 'run') return commands.run(request.payload);
+        if (request.type === 'run_cancel') return commands.cancel(request.payload.runId);
+        return { ok: false, error: { code: 'unknown-process', message: 'none' } };
+      },
       config: () => ({
         mode: modes.mode,
         allowlist: ['node *'],
@@ -852,6 +853,9 @@ describe('modes, commands and the loop (real project, real runner)', () => {
         pauseOnFailure: false,
         catchUpAfterSleep: true,
         running: runner.current,
+        background: [],
+        processes: [],
+        autoApprove: { changes: false, gated: false, partial: false },
         instance: 'test'
       }),
       onLoopReport: (report) => loopReports.push(report),

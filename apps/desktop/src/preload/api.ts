@@ -1,4 +1,6 @@
 import type {
+  BackgroundLogs,
+  BackgroundProcess,
   ConnectionStatus,
   FileErrorCode,
   FileRequest,
@@ -60,6 +62,17 @@ export interface DesktopState {
   allowlist: string[] | null;
   /** Suggested entries from the project's package.json, shown until it's confirmed. */
   allowlistSuggestions: string[];
+  /**
+   * The open project's background entries (dev servers, `@@START` only): a subset of
+   * `allowlist`, or of `allowlistSuggestions` before it's confirmed.
+   */
+  background: string[];
+  /** Background processes this session: running, and the last few that ended. */
+  processes: BackgroundProcess[];
+  /** Full auto → "Also approve automatically". */
+  autoApprove: AutoApproveSettings;
+  /** The one-time note about an Unlimited step limit was read. */
+  unlimitedNoteSeen: boolean;
   /** Saved entries were moved to exact matching (`*` added); Settings says so once. */
   allowlistNote: boolean;
   /**
@@ -101,6 +114,16 @@ export interface DesktopState {
 
 export type Theme = 'system' | 'light' | 'dark';
 
+/** What Full auto may do without a click, besides edits and allowlisted commands. */
+export interface AutoApproveSettings {
+  /** Deletes and renames. */
+  changes: boolean;
+  /** Gated files: package.json, lockfiles, CI workflows, hooks. */
+  gated: boolean;
+  /** Files that look partial ("…rest unchanged"). */
+  partial: boolean;
+}
+
 /** One op as the Activity detail view shows it. */
 export interface OpDetail {
   opId: string;
@@ -113,6 +136,8 @@ export interface OpDetail {
   after: string | null;
   /** Why there's no text: binary, too big, or the backup is gone. */
   unavailable?: 'binary' | 'too-large' | 'missing';
+  /** An image Bridge wrote, base64, for a thumbnail: what it wrote and what was there. */
+  image?: { mime: string; after: string | null; before: string | null };
 }
 
 /** A command's full result, for the Activity detail view. */
@@ -131,10 +156,11 @@ export interface ActivityEntry {
   time: number;
   /**
    * A change Bridge made (create, modify, delete, rename), or a request it refused
-   * (`rejected`: the sandbox; `failed`: other), a command that ran (`run`), or a Full auto
-   * step (`loop`).
+   * (`rejected`: the sandbox; `failed`: other), a command that ran (`run`), a background
+   * process starting or ending (`process`), or a Full auto step (`loop`).
    */
-  kind: 'create' | 'modify' | 'delete' | 'rename' | 'rejected' | 'failed' | 'run' | 'loop';
+  kind:
+    'create' | 'modify' | 'delete' | 'rename' | 'rejected' | 'failed' | 'run' | 'process' | 'loop';
   /** Relative path, what the extension sent (sanitised) for a refusal, or the command. */
   path: string;
   /** For a rename: the old path (`path` is the new one). */
@@ -146,15 +172,21 @@ export interface ActivityEntry {
   source?: 'chat';
   /** `auto`: Bridge did it on its own (Auto-apply, Full auto). */
   trigger?: 'auto';
+  /** Full auto did it although it normally waits for a click ("Also approve automatically"). */
+  autoApproved?: true;
+  /** Bytes, not text: an image or a download. */
+  binary?: true;
+  /** `download`: fetched from a URL after a click. */
+  origin?: 'download';
   /** The Full auto run it belongs to. Rows with one are grouped. */
   loopId?: string;
   code?: FileErrorCode;
-  op?: FileRequest['type'] | 'run';
+  op?: FileRequest['type'] | 'run' | 'bg_start';
   /** For `run`: how it ended. */
   run?: Pick<RunResult, 'status' | 'exitCode' | 'durationMs'>;
   /** For `run`: its id, to fetch the full output while the app is open. */
   runId?: string;
-  /** For `loop`: what happened, in a few words. */
+  /** For `loop` and `process`: what happened, in a few words. */
   text?: string;
 }
 
@@ -183,7 +215,8 @@ export interface RunSettings {
   timeoutMs: number;
   /** For `<manager> install` only (`isInstallCommand`); other commands use `timeoutMs`. */
   installTimeoutMs: number;
-  stepLimit: number;
+  /** Null: Unlimited. */
+  stepLimit: number | null;
   pauseOnFailure: boolean;
   /** Full auto waits for the chat after sleep instead of pausing. */
   catchUpAfterSleep: boolean;
@@ -223,8 +256,23 @@ export interface BridgeApi {
   setDenyPatterns(patterns: string[]): Promise<boolean>;
   /** Switching to Full auto asks for confirmation in a native dialog first. Returns the mode now. */
   setMode(mode: Mode): Promise<Mode>;
-  /** Confirms or replaces the open project's allowlist. */
+  /**
+   * Confirms or replaces the open project's allowlist. New entries that look like dev
+   * servers (`npm run dev`) start out as background entries.
+   */
   setAllowlist(entries: string[]): Promise<SaveListResult>;
+  /** Which allowlist entries are background processes (`@@START`), the rest one-off. */
+  setBackgroundEntries(entries: string[]): Promise<SaveListResult>;
+  /** Turning any of these on asks in a native dialog first. Returns what's saved now. */
+  setAutoApprove(settings: AutoApproveSettings): Promise<AutoApproveSettings>;
+  /** The Unlimited note was read. */
+  dismissUnlimitedNote(): Promise<void>;
+  /** Stops a background process and everything it started. */
+  stopProcess(procId: string): Promise<boolean>;
+  /** A background process's recent lines (redacted). */
+  getProcessLogs(procId: string): Promise<BackgroundLogs | null>;
+  /** Opens a background process's local URL in the default browser. */
+  openProcessUrl(procId: string): Promise<boolean>;
   setGatedPatterns(patterns: string[]): Promise<SaveListResult>;
   setEnvPatterns(patterns: string[]): Promise<SaveListResult>;
   setRunSettings(settings: RunSettings): Promise<boolean>;
@@ -283,6 +331,12 @@ export const IPC = {
   setDenyPatterns: 'bridge:set-deny-patterns',
   setMode: 'bridge:set-mode',
   setAllowlist: 'bridge:set-allowlist',
+  setBackgroundEntries: 'bridge:set-background-entries',
+  setAutoApprove: 'bridge:set-auto-approve',
+  dismissUnlimitedNote: 'bridge:dismiss-unlimited-note',
+  stopProcess: 'bridge:stop-process',
+  getProcessLogs: 'bridge:get-process-logs',
+  openProcessUrl: 'bridge:open-process-url',
   setGatedPatterns: 'bridge:set-gated-patterns',
   setEnvPatterns: 'bridge:set-env-patterns',
   setRunSettings: 'bridge:set-run-settings',

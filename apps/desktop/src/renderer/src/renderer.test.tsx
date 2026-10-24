@@ -289,9 +289,9 @@ describe('Settings forms', () => {
     expect(bridge.setRunSettings).toHaveBeenLastCalledWith({ ...base, catchUpAfterSleep: false });
     bridge.setRunSettings.mockResolvedValueOnce(false);
     const steps = screen.getByRole('spinbutton', { name: /Step limit/ });
-    fireEvent.change(steps, { target: { value: '99' } });
+    fireEvent.change(steps, { target: { value: '999' } });
     fireEvent.blur(steps);
-    expect(await screen.findByText(/step limit of 1–25/)).toBeTruthy();
+    expect(await screen.findByText(/step limit of 1–100, or Unlimited/)).toBeTruthy();
   });
 
   it('keeps backups for 1–90 days, and clears or opens them', async () => {
@@ -592,5 +592,200 @@ describe('Settings → About', () => {
     const toasts = toastsFor({ state: before, entries: [] }, { state: after, entries: [] });
     expect(toasts.map((t) => t.text)).toEqual(['Bridge 1.1.0 is available']);
     expect(toastsFor({ state: after, entries: [] }, { state: after, entries: [] })).toEqual([]);
+  });
+});
+
+describe('1.3.0: background processes', () => {
+  it('marks dev-server suggestions as background, and lets each entry be one or the other', () => {
+    const { bridge } = installBridge();
+    const { unmount } = render(
+      <SettingsView
+        state={makeState({
+          allowlist: null,
+          allowlistSuggestions: ['npm test', 'npm run dev'],
+          background: ['npm run dev']
+        })}
+      />
+    );
+    const dev = screen.getByRole('checkbox', { name: /npm run dev/ }).closest('label')!;
+    expect(within(dev).getByText('background')).toBeTruthy();
+    expect(screen.getByText(/keep running between messages/)).toBeTruthy();
+    unmount();
+
+    render(
+      <SettingsView
+        state={makeState({ allowlist: ['npm test', 'npm run dev'], background: ['npm run dev'] })}
+      />
+    );
+    const devBox = screen.getByRole('checkbox', { name: 'Run npm run dev in the background' });
+    expect((devBox as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(devBox);
+    expect(bridge.setBackgroundEntries).toHaveBeenLastCalledWith([]);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Run npm test in the background' }));
+    expect(bridge.setBackgroundEntries).toHaveBeenLastCalledWith(['npm run dev', 'npm test']);
+  });
+
+  it('shows each process with its URL, uptime, Stop and logs', async () => {
+    const { bridge } = installBridge(
+      makeState({
+        processes: [
+          {
+            procId: 'p-1',
+            command: 'npm run dev',
+            state: 'running',
+            url: 'http://localhost:5173/',
+            startedAt: Date.now() - 65_000,
+            endedAt: null,
+            exitCode: null,
+            signal: null
+          },
+          {
+            procId: 'p-2',
+            command: 'npm run api',
+            state: 'exited',
+            url: null,
+            startedAt: Date.now() - 5_000,
+            endedAt: Date.now(),
+            exitCode: 1,
+            signal: null
+          }
+        ]
+      })
+    );
+    bridge.getProcessLogs.mockResolvedValue({
+      procId: 'p-1',
+      command: 'npm run dev',
+      lines: ['VITE v5 ready in 312 ms', '➜  Local: http://localhost:5173/'],
+      first: 0,
+      next: 2
+    });
+    render(<App />);
+    const section = (await screen.findByRole('heading', { name: 'Background processes' })).closest(
+      'section'
+    )!;
+    expect(within(section).getByText(/Running · 1m \d+s/)).toBeTruthy();
+    expect(within(section).getByText('Exited (exit 1)')).toBeTruthy();
+    fireEvent.click(within(section).getByRole('button', { name: 'http://localhost:5173/' }));
+    expect(bridge.openProcessUrl).toHaveBeenCalledWith('p-1');
+    fireEvent.click(within(section).getAllByRole('button', { name: 'View logs' })[0]!);
+    expect(await within(section).findByText(/VITE v5 ready/)).toBeTruthy();
+    fireEvent.click(within(section).getByRole('button', { name: 'Stop' }));
+    expect(bridge.stopProcess).toHaveBeenCalledWith('p-1');
+  });
+});
+
+describe('1.3.0: Full auto settings', () => {
+  it('switches to Unlimited, explains it once, and goes back to a limit', () => {
+    const { bridge } = installBridge();
+    const { rerender } = render(<SettingsView state={makeState()} />);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Unlimited' }));
+    expect(bridge.setRunSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({ stepLimit: null })
+    );
+    const unlimited = makeState({
+      runSettings: { ...makeState().runSettings, stepLimit: null }
+    });
+    rerender(<SettingsView state={unlimited} />);
+    expect(screen.getByText(/each step uses one of your messages/)).toBeTruthy();
+    expect(
+      (screen.getByRole('spinbutton', { name: /Step limit/ }) as HTMLInputElement).disabled
+    ).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Got it' }));
+    expect(bridge.dismissUnlimitedNote).toHaveBeenCalled();
+    rerender(<SettingsView state={{ ...unlimited, unlimitedNoteSeen: true }} />);
+    expect(screen.queryByText(/each step uses one of your messages/)).toBeNull();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Unlimited' }));
+    expect(bridge.setRunSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({ stepLimit: 25 })
+    );
+  });
+
+  it('turns each “Also approve automatically” on through the app, and says the risk when on', () => {
+    const { bridge } = installBridge();
+    const { rerender } = render(<SettingsView state={makeState()} />);
+    const deletes = screen.getByRole('checkbox', { name: 'Deletes and renames' });
+    expect((deletes as HTMLInputElement).checked).toBe(false);
+    expect(screen.queryByText(/deletes and moves files the chat names/)).toBeNull();
+    fireEvent.click(deletes);
+    expect(bridge.setAutoApprove).toHaveBeenLastCalledWith({
+      changes: true,
+      gated: false,
+      partial: false
+    });
+    rerender(
+      <SettingsView
+        state={makeState({ autoApprove: { changes: true, gated: true, partial: false } })}
+      />
+    );
+    expect(screen.getByText(/deletes and moves files the chat names/)).toBeTruthy();
+    expect(screen.getByText(/decide what install, build and test commands run/)).toBeTruthy();
+    expect(screen.getByText(/marks everything Full auto approved this way/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Partial-looking files' }));
+    expect(bridge.setAutoApprove).toHaveBeenLastCalledWith({
+      changes: true,
+      gated: true,
+      partial: true
+    });
+  });
+});
+
+describe('1.3.0: Activity', () => {
+  it('labels automatic approvals, downloads and background processes', () => {
+    installBridge();
+    render(
+      <ActivityView
+        hasProject
+        entries={[
+          entry({
+            id: 'a',
+            kind: 'delete',
+            path: 'old.ts',
+            trigger: 'auto',
+            autoApproved: true,
+            opId: 'op-a'
+          }),
+          entry({
+            id: 'b',
+            kind: 'create',
+            path: 'logo.svg',
+            origin: 'download',
+            binary: true,
+            source: 'chat',
+            opId: 'op-b'
+          }),
+          entry({ id: 'c', kind: 'process', path: 'npm run dev', text: 'started' })
+        ]}
+      />
+    );
+    expect(screen.getByText(/auto-approved/)).toBeTruthy();
+    expect(screen.getByText(/downloaded · via chat/)).toBeTruthy();
+    expect(screen.getByText(/Background · started/)).toBeTruthy();
+    expect(kindsOf(entry({ id: 'd', kind: 'process' }))).toContain('run');
+  });
+
+  it('shows a thumbnail of an image Bridge wrote', async () => {
+    const { bridge } = installBridge();
+    bridge.getOpDetail.mockResolvedValue({
+      opId: 'op-b',
+      kind: 'create',
+      path: 'public/hero.png',
+      time: Date.now(),
+      undone: false,
+      before: null,
+      after: null,
+      unavailable: 'binary',
+      image: { mime: 'image/png', after: 'iVBORw0K', before: null }
+    });
+    render(
+      <ActivityView
+        hasProject
+        entries={[
+          entry({ id: 'b', kind: 'create', path: 'public/hero.png', binary: true, opId: 'op-b' })
+        ]}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: /public\/hero.png/ }));
+    const img = await screen.findByRole('img', { name: 'public/hero.png as Bridge wrote it' });
+    expect(img.getAttribute('src')).toBe('data:image/png;base64,iVBORw0K');
   });
 });

@@ -38,7 +38,7 @@ chatgpt.com ──▶ Bridge extension ──WebSocket on 127.0.0.1──▶ Bri
    ```
    ````
 
-   or asks to see files (`` `@@READ src/app.ts@@` ``), to delete or move one (`` `@@DELETE src/old.ts@@` ``, `` `@@RENAME src/a.ts -> src/b.ts@@` ``), or to run a command (`` `@@RUN pnpm test@@` ``).
+   or asks to see files (`` `@@READ src/app.ts@@` ``), to delete or move one (`` `@@DELETE src/old.ts@@` ``, `` `@@RENAME src/a.ts -> src/b.ts@@` ``), to run a command (`` `@@RUN pnpm test@@` ``) or a dev server (`` `@@START npm run dev@@` ``), or to save an image or a download (`` `@@ASSET public/hero.png@@` ``, `` `@@DOWNLOAD https://… -> public/logo.svg@@` ``).
 
 3. The extension shows a card under each one: a diff against your file, the files asked for, the command. If the chat slips out of the format, the reply gets a card saying so, with **Send format reminder**.
 4. You click **Apply** (or **Send these files**, **Run**…). The app checks the path against the project sandbox, backs up the old file, and writes the new one. Every change can be undone.
@@ -133,9 +133,12 @@ You need the app running with a project open, the extension paired, and a chat o
 2. Ask for a change. When the reply finishes, each file gets a card with a diff, `+N −M` and a badge (`new`, `modified`, `unchanged`, `conflict`, `blocked`, `partial?`).
 3. **Apply** writes the file, **Reject** dismisses the card, **Undo** puts the old file back. Two or more files get **Apply all**. A block that looks partial (`// ...rest unchanged`) needs a second click.
 4. If the file changes on disk after the card appeared, the card shows `conflict` and the new diff before you click.
-5. **Deletes and renames** get their own cards and only ever happen on a click, in every mode.
-6. When the chat asks for files (`@@READ`), **Send these files** puts them in the message box. Or tick files under **Send files** in the side panel. **Files in context** marks files that changed since you sent them; **Resend changed** sends the new versions.
-7. **End session** stops Bridge reading that conversation. Moving the tab to another chat ends it too.
+5. **Deletes and renames** get their own cards and happen on a click (in Full auto, also on their own if you allow it; see [Full auto](#full-auto)).
+6. When the chat asks for files (`@@READ`), **Send these files** puts them in the message box; images (png, jpg, webp, gif) are attached as real attachments so the chat can see them. Or tick files under **Send files** in the side panel, where images also have **Attach**. **Files in context** marks files that changed since you sent them; **Resend changed** sends the new versions.
+7. **Images the chat makes** get a **Save to project** card under them. Its path comes from the reply's `` `@@ASSET public/hero.png@@` `` if it has one; Save writes the image into the project (re-encoded if the name asks for another type), with Undo.
+8. **Downloads** (`` `@@DOWNLOAD https://… -> public/logo.svg@@` ``) get a card and happen only when you click **Download**, in every mode. Bridge downloads https only, never from your computer or local network, at most 20 MB, and only images, fonts, audio, video, JSON and text files that really are what their name says. SVGs with scripts are refused.
+9. **Dev servers** (`` `@@START npm run dev@@` ``, `` `@@STOP …@@` ``, `` `@@LOGS …@@` ``) run in the background: see [Commands and the allowlist](#commands-and-the-allowlist).
+10. **End session** stops Bridge reading that conversation, and any dev servers it started. Moving the tab to another chat ends it too.
 
 Cards keep their state across reloads. A session belongs to one tab; another tab on the same conversation offers **Move here**.
 
@@ -149,7 +152,7 @@ You switch modes in the app; the side panel and every card show the current one.
 | **Auto-apply** | Written as soon as a reply finishes; each card says **Auto-applied** with Undo | As in Manual                                              | You press send                    |
 | **Full auto**  | As in Auto-apply                                                               | Allowlisted commands run on their own                     | Bridge sends the follow-up itself |
 
-In every mode, these wait for your click: deletes and renames, files that look partial, changed on disk, refused by the sandbox or over 1 MB, and **gated files** that can change what a command does (`package.json`, lockfiles, `.npmrc`, CI workflows, git hooks, `Dockerfile`, `Makefile`; add more under **Settings → Gated files**).
+In every mode, these wait for your click: deletes and renames, files that look partial, changed on disk, refused by the sandbox or over 1 MB, downloads, and **gated files** that can change what a command does (`package.json`, lockfiles, `.npmrc`, CI workflows, git hooks, `Dockerfile`, `Makefile`; add more under **Settings → Gated files**). Full auto can approve some of them for you if you turn that on (see [Full auto](#full-auto)).
 
 Auto-apply carries over between sessions. Full auto doesn't: it turns off when you restart Bridge, start or end a session, unpair or switch projects.
 
@@ -165,13 +168,19 @@ The first time you open a project, **Settings → Commands** suggests commands f
 - Commands run in the project folder with your environment minus anything that looks like a secret, one at a time, with a timeout (2 minutes by default, 5 for the install command) that stops everything they started.
 - Likely secrets in command output and file contents are replaced with `[redacted]` before they go into the chat. It's best effort: keep secrets in `.env` files, which Bridge never reads.
 
+**Dev servers and watchers** run in the background. Tick **Background** next to an entry (a `dev`, `start`, `serve`, `preview` or `watch` script starts out ticked): the chat then starts it with `` `@@START npm run dev@@` ``, stops it with `` `@@STOP npm run dev@@` ``, and asks for its last 80 lines with `` `@@LOGS npm run dev@@` ``. It has no timeout and keeps running between messages; at most three run at once, and starting one that's already running restarts it. The app's Session page and the side panel show each one with its address (click to open it in your browser), how long it's run, **Stop** and **View logs**. Its output is redacted like other output. All of them stop when the session ends, you switch projects, quit Bridge, or the computer sleeps for more than 30 minutes, along with anything they started.
+
 The app reads your login shell's `PATH` at startup (macOS, Linux), so `pnpm` from nvm, Volta or Homebrew works even when Bridge is opened from the Dock. **Settings → Commands → PATH for commands** shows where it came from and can override it.
 
 ## Full auto
 
 > **Read this before turning it on.** Full auto clicks the chat's send button for you. Automating the chat this way may break its provider's terms of use and put your account at risk. The commands it runs execute code the model may have written (tests, build scripts), with your user's permissions. It's opt-in and at your own risk, and the app asks you to confirm every time you turn it on.
 
-When a reply finishes, Bridge applies its edits, reads the files it asked for, runs its allowlisted commands, and sends one follow-up with the results, then waits for the next reply. It ends when a reply asks for nothing or says `` `@@DONE@@` ``. A reply that misses Bridge's format gets a short reminder instead (twice per run at most; the third time it pauses). It pauses for you on anything that needs a click, a command that isn't allowed, an error banner, a lost connection, or the step limit (10 messages by default, up to 25). **Stop** is in the side panel, on the page chip and in the app (⌘. / Ctrl+.); it halts at once and reverts nothing.
+When a reply finishes, Bridge applies its edits, saves the images it named, reads the files it asked for (and attaches the images among them), starts or stops its dev servers, runs its allowlisted commands, and sends one follow-up with the results, then waits for the next reply. If a dev server prints errors after the edits, those go with the follow-up too. It ends when a reply asks for nothing or says `` `@@DONE@@` ``. A reply that misses Bridge's format gets a short reminder instead, with the files it asked for (twice per run at most; the third time it pauses). Files the chat asks for always go out on their own; a protected one is reported as refused. It pauses for you on anything that needs a click, a command that isn't allowed, a download, an error banner, a lost connection, or the step limit (25 messages by default, 1–100, or **Unlimited**). **Stop** is in the side panel, on the page chip and in the app (⌘. / Ctrl+.); it halts at once and reverts nothing.
+
+**Unlimited and the loop guard.** With **Settings → Full auto → Unlimited**, Full auto keeps going until the chat says it's done or you press Stop. On the Free and Go plans each step uses one of your messages. Either way, it pauses with "Looks stuck: the same failure repeated" when the same command fails the same way three times in a row, or the same file is written with the same content three times.
+
+**Also approve automatically** (Settings → Full auto, each off by default): **deletes and renames**, **gated files** (`package.json`, lockfiles, configs) and **partial-looking files**. Turning one on asks you to confirm what it means. Everything approved this way is backed up, can be undone, and is marked "auto-approved" in Activity. Commands off the allowlist, downloads, protected files (`.env`, `.git`, keys) and files that changed on disk always wait for you, whatever you tick.
 
 **Sleep and cut-off replies.** When your computer sleeps, Chrome freezes the chat tab mid-reply. On waking, Full auto reconnects and checks the reply: if it's still streaming, it waits ("Waiting for the chat to finish (resumed after sleep)") and carries on when it's done; if it finished meanwhile, it acts on it. A reply that shows as streaming but gets no new text for 60 seconds is stuck: Full auto presses the chat's stop button once on its own, applies what came through whole and asks the chat to continue; if it sticks again, it pauses with **Stop & continue**. A reply cut off by an error or the network has its finished blocks applied (never the file it was writing) and gets one request to continue from the last marker that came through, or the page's own **Continue generating** when it offers one; a second cut in a row pauses with **Resume**. A command running when the computer slept asks **Re-run** or **Skip**. If the conversation, session or project changed meanwhile, Full auto stays paused and says why. Turn **Settings → Full auto → Catch up automatically after sleep** off to pause after sleep and wait for Resume instead. In any mode, a cut-off reply gets a card with **Insert continuation** (and **Continue generating** when the page has it).
 

@@ -54,7 +54,19 @@ const ICONS = {
     'M10 8h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2Z',
     'M4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2'
   ],
-  terminal: ['m4 17 6-6-6-6', 'M12 19h8']
+  terminal: ['m4 17 6-6-6-6', 'M12 19h8'],
+  image: [
+    'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z',
+    'M9 11a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z',
+    'm21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21'
+  ],
+  download: ['M12 15V3', 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4', 'm7 10 5 5 5-5'],
+  server: [
+    'M4 3h16a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z',
+    'M4 13h16a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1Z',
+    'M7 7h.01',
+    'M7 17h.01'
+  ]
 } as const;
 
 export function icon(name: keyof typeof ICONS, className = 'icon'): SVGSVGElement {

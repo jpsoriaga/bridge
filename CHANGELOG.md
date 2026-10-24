@@ -4,9 +4,32 @@ All notable changes to Bridge are listed here. The format follows [Keep a Change
 
 ## [Unreleased]
 
+## [1.3.0-beta.1] - 2026-10-24
+
+Dev servers that keep running, images and other binary files, and a Full auto that needs fewer clicks. The app and the extension must both be 1.3.0-beta.1: if one is older, both say which to update. Pairings carry over.
+
 ### Added
 
+- **Dev servers in the background.** Mark an allowed command as **Background** in Settings → Commands (`dev`, `start`, `serve`, `preview` and `watch` scripts start out marked). The chat starts it with `@@START npm run dev@@`, stops it with `@@STOP npm run dev@@`, and asks for its last 80 lines with `@@LOGS npm run dev@@`. It has no timeout and keeps running between messages; at most three run at once, and starting one again restarts it instead of starting a second. The app and the side panel show each one with its address (click to open it), how long it's been running, **Stop** and **View logs**. Logs keep the last 2,000 lines, with likely secrets redacted. Everything stops, with whatever it started, when the session ends, you switch projects, quit Bridge or the computer sleeps for more than 30 minutes.
+- **Dev server errors in Full auto.** After applying edits, Full auto gives running dev servers a moment to rebuild and sends the errors they printed with the next message.
+- **Save images the chat makes.** Each image the chat generates gets a **Save to project** card, its path filled in from `@@ASSET public/hero.png@@` in the reply. Save writes it into the project (re-encoded if the name asks for another format), backed up, with Undo; Auto-apply and Full auto save it on their own when the chat named the path.
+- **Downloads.** `@@DOWNLOAD https://… -> public/logo.svg@@` gets a card that downloads only when you click, in every mode. https only, never from your computer or local network, 20 MB at most, and only images, fonts, audio, video, JSON and text that really are what their name says (checked from the file itself). SVGs with scripts or event handlers are refused.
+- **Binary files with backups and undo.** Images and downloads go through the same protected-path checks, gated files, backups and undo as text, up to 20 MB. The app's Activity shows a thumbnail of an image Bridge wrote.
+- **Attach images to the chat.** In the side panel's **Send files**, images have **Attach**, which adds the file to the message as a real attachment. When the chat asks for an image with `@@READ`, Bridge attaches it instead of pasting text, on its own in Full auto.
+- **Unlimited step limit.** Settings → Full auto → **Unlimited**, with a one-time note: on the Free and Go plans every step uses a message.
+- **Loop guard.** With or without a limit, Full auto pauses with "Looks stuck: the same failure repeated" when the same command fails the same way three times in a row, or the same file is written with the same content three times.
+- **Also approve automatically** (Settings → Full auto, each off by default): deletes and renames, gated files (`package.json`, lockfiles, configs) and partial-looking files. Turning one on asks you to confirm what it lets Full auto do. Everything approved this way is backed up and marked "auto-approved" in Activity. Commands off the allowlist, downloads, protected files and files changed on disk always wait for you.
 - **Install steps on every release page.** Release notes now open with **How to install**: which file to download for each computer, how to open the unsigned app, how to add the extension and pair, and which files to ignore. Each release also has a `Bridge-<version>-INSTALL.md` with troubleshooting and uninstall steps, and the extension zip has a `README.txt` with the Load unpacked steps.
+
+### Changed
+
+- **Step limit 25 by default**, from 1 to 100 (was 10, up to 25). A limit of 10 saved by an earlier version, which was the old default, moves to 25.
+- **Session prompt** teaches the new markers: dev servers (only when the project has a background command), `@@ASSET`, `@@DOWNLOAD`, and that binary files can't be written as text.
+- **Protocol 8.** New messages for binary files, downloads and background processes.
+
+### Fixed
+
+- **Files the chat asked for no longer wait for a click in Full auto.** A reply that finished while the app was briefly out of reach (reconnecting, or after sleep) was skipped, leaving its READ card on **Send these files**. It's now acted on once the app is back. Requested files are also read before anything else can pause the step, so they go out with the next message; protected ones are reported as refused. A format reminder now carries the files the reply asked for, and a reply whose text changed after it finished no longer leaves a second READ card waiting.
 
 ### Removed
 
@@ -99,7 +122,8 @@ The first release: a desktop app for macOS, Windows and Linux, and a Chrome exte
 - **Update check, notify only.** Settings → About shows the version and can ask GitHub Releases whether a newer one exists, on a click or (if you turn it on) at launch. It never downloads or installs anything, and it's off in unsigned macOS builds.
 - **Version handshake.** If the app and the extension speak different protocol versions, both say which one to update instead of failing to connect.
 
-[Unreleased]: https://github.com/jpsoriaga/bridge/compare/v1.2.0-beta.3...HEAD
+[Unreleased]: https://github.com/jpsoriaga/bridge/compare/v1.3.0-beta.1...HEAD
+[1.3.0-beta.1]: https://github.com/jpsoriaga/bridge/compare/v1.2.0-beta.3...v1.3.0-beta.1
 [1.2.0-beta.3]: https://github.com/jpsoriaga/bridge/compare/v1.2.0-beta.2...v1.2.0-beta.3
 [1.2.0-beta.2]: https://github.com/jpsoriaga/bridge/compare/v1.2.0-beta.1...v1.2.0-beta.2
 [1.2.0-beta.1]: https://github.com/jpsoriaga/bridge/compare/v1.1.0...v1.2.0-beta.1

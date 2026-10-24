@@ -184,7 +184,7 @@ Pending diff cards and RUN cards start their footer hint with the app's mode ("M
 
 ### RUN card (command)
 
-One per `@@RUN`, after the READ card. A **dashed** `--border-strong` edge (the only dashed line in the system), 12px radius. Header: `$` in `--fg-subtle` mono, the command in mono 13px `--fg` (truncated, full text in the tooltip), a badge, the duration (12px muted) after a run, and **Hide output / Show output** on the right.
+One per `@@RUN`, after the READ card. A **dashed** `--border-strong` edge (the system's only dashed lines are command cards: this one and the process card), 12px radius. Header: `$` in `--fg-subtle` mono, the command in mono 13px `--fg` (truncated, full text in the tooltip), a badge, the duration (12px muted) after a run, and **Hide output / Show output** on the right.
 
 | Badge         | Tone      | When                                       |
 | ------------- | --------- | ------------------------------------------ |
@@ -201,7 +201,7 @@ Body: the output, mono 13px/21px, wrapping, scrolling past 480px, the last 400 l
 
 ### Page chip
 
-In a corner of the page (default bottom-right, 16px in; top corners sit 72px down), in its own closed shadow root. A pill: 1px `--border`, `--bg`, `--radius-full`, no shadow. Inside: the handle (an 8px dot, `success` while a run goes, `warning` paused, idle otherwise, and the mode, 12px/600), then in Full auto the counter `3 / 10` (tabular), the state in `--fg-muted` ("Waiting for the reply", "Waiting for the chat to finish (resumed after sleep)", "Caught up after sleep", "Paused · step limit", "Paused · reply cut off", "On") and a 28px pill **Stop** (`.btn-danger`). Shown while the tab's session is active, or while a run isn't idle. Drag the handle to another corner (it snaps to the nearest), or focus it and use the arrow keys; the corner is remembered.
+In a corner of the page (default bottom-right, 16px in; top corners sit 72px down), in its own closed shadow root. A pill: 1px `--border`, `--bg`, `--radius-full`, no shadow. Inside: the handle (an 8px dot, `success` while a run goes, `warning` paused, idle otherwise, and the mode, 12px/600), then in Full auto the counter `3 / 25` (tabular; just `3` with Unlimited), the state in `--fg-muted` ("Waiting for the reply", "Waiting for the chat to finish (resumed after sleep)", "Caught up after sleep", "Paused · step limit", "Paused · reply cut off", "On") and a 28px pill **Stop** (`.btn-danger`). Shown while the tab's session is active, or while a run isn't idle. Drag the handle to another corner (it snaps to the nearest), or focus it and use the arrow keys; the corner is remembered.
 
 - **Collapsed outside Full auto**: just the dot in an 8px-padded circle. Hover or keyboard focus opens it to show the mode. In Full auto it's always fully open.
 - **Clear of the composer**: a bottom corner sits at least 96px up, and higher if the composer, or a banner over it, shares the chip's column: 12px above the topmost of them (`chipBottom`). It measures on every render, on resize and on each 1s poll, so a banner appearing moves it.
@@ -218,6 +218,34 @@ After the message bar, before the READ card, one per marker. The same frame and 
 - **RENAME, pending**: an arrow icon, `old → new` in mono (old in `--fg-muted`, the arrow in `--fg-subtle`), a neutral `rename` badge, the size. **Reject** and **Rename** (primary `.btn-lg`).
 - Other badges: `missing` (`warning`, no file there; nothing to do), `exists` (`warning`, the new path is taken), `conflict` (`warning`, changed on disk since the card checked), `blocked` (`danger`).
 - **Applied**: like a diff card's applied row (see "Result rows"): trash icon, struck path and "Deleted" in `--danger`, or arrow icon and "Renamed" neutral; the time, and **Undo**. Rejected and undone rows are struck through.
+
+### Process card (START, STOP, LOGS)
+
+One per `@@START`, `@@STOP` and `@@LOGS`, after the RUN cards (stops, then starts, then logs). The RUN card's dashed frame. Header: a server icon (a terminal icon for LOGS), a muted title ("Start in the background", "Stop", "Recent output of"), the command in mono, **Copy command**, a badge, and the process's URL on the right in mono 12px (a link, opening in a new tab; only a local address the process printed).
+
+| Badge         | Tone      | When                                                   |
+| ------------- | --------- | ------------------------------------------------------ |
+| `background`  | neutral   | A START that's allowed and not running                 |
+| `not allowed` | `danger`  | Off the allowlist, or not marked Background in the app |
+| `starting`    | `warning` | Running, no URL yet                                    |
+| `running`     | `success` | Running at its URL                                     |
+| `exit N`      | `danger`  | Ended on its own                                       |
+| `stopped`     | neutral   | Stopped                                                |
+| `not running` | neutral   | A STOP or LOGS for a process that isn't there          |
+
+Footer: the mode tag and a hint ("Running for 2m 5s. It keeps running until it's stopped or the session ends."), then **Stop** (`.btn-danger`) while running and **Start** (primary) or **Restart** (secondary). LOGS: **Send logs** (primary; "Send again" after), and **Show output** in the header once it has some, the body like a RUN card's output.
+
+### Save to project card
+
+Under each image the chat made (right after the image, or its `<figure>`). The diff card's frame. Header: an image icon and "Save image to project". Below it, a row with a 56px thumbnail (`.thumb`: the page's own image, 1px `--border`, `--radius-sm`, cover) and a mono path field (`.input`, 32px, `--border-strong`, `--focus-ring` on focus), prefilled from the reply's `@@ASSET`. Footer: the mode tag, a hint ("Saves the image into the project. You can undo it."; with a path from the chat in Auto-apply or Full auto, "The chat named this path, so Bridge saves it on its own in this mode."; on an existing file, in `--warning`, "… already exists. Replace it? Bridge keeps a backup, so you can undo."), and **Save** (primary `.btn-lg`, "Replace" on the second click, "Saving…"). Applied: a result row with a 32px thumbnail, the path, the size, "Created"/"Modified" (and the muted "auto"), the time and **Undo**.
+
+### DOWNLOAD card
+
+After the DELETE and RENAME cards. The diff card's frame, a download icon, the URL (without its query string, in `--fg-muted`) `→` the path, **Copy path**, and a badge: `download` (neutral), `replaces` (`warning`, a file is there; the hint says its size is backed up) or `blocked` (`danger`: not https, a name Bridge doesn't save, a protected path, a local address). Footer hint: "Downloads always need your click, in every mode. Bridge checks it's really a PNG file." Buttons: **Reject** and **Download** (primary `.btn-lg`, "Downloading…"). Applied: a result row, with a 32px thumbnail when it's an image.
+
+### READ card images
+
+A png, jpg, webp or gif the chat asks for is listed with "image · 12.4 KB · attached" instead of a character count: **Send these files** attaches it to the message and inserts the text files, ending with "Attached image: …".
 
 ### Card conventions
 
@@ -349,6 +377,10 @@ The first-run checklist (when not dismissed), then Project, Extension, Mode, Run
 
 **Checklist**: a card (1px `--border-strong`, `--radius-lg`, 20px padding) titled "Get started" (14px/600), a close icon button, "N of 4 done" (12px muted), then an ordered list: a 16px check (`--success`) or circle (`--fg-subtle`), the step (13px; done ones `--fg-muted`) and, for the next step only, its hint (12px muted) and a secondary button that does it. When all are done the title reads "You're set up" with **Done**.
 
+### Desktop: Background processes
+
+On the Session page, under the running command, while any process is known: a section title, then one row each: a dot (`success` running at its URL, `warning` starting, `danger` exited, idle stopped), the command in mono 14px (truncated), "Running · 2m 5s" or how it ended (12px muted), **View logs / Hide logs** (link button) and **Stop** (`.btn-danger`). The URL sits under the command as a mono link button that opens it in the browser. View logs opens the last 300 lines in a `.command-output` box, refreshed every 2s while it runs. A hint under the list says when they stop. The side panel has the same rows, with the URL and View logs in the hint line.
+
 ### Desktop: Activity page
 
 Label row "Activity" with **Undo last**. A 32px search field with a search icon, then filter chips (28px pills, 1px `--border`, 12px/500 muted; pressed: `--inverse-bg` with `--inverse-fg`, `aria-pressed`): Writes, Deletes, Renames, Commands, Blocked, Automatic. Rows are full-width buttons (40px min, `--radius-md`, hover `--bg-hover`) with the dot, the two-line text and a chevron; Full auto runs are grouped as before. Nothing matches: the empty box with **Clear filters**.
@@ -358,6 +390,12 @@ Label row "Activity" with **Undo last**. A 32px search field with a search icon,
 ### Toasts (desktop)
 
 Bottom-right, 20px in, up to three stacked, 4s each, `aria-live="polite"`: a dot, the message (13px) with an optional mono detail, and a 12px muted hint on the next line. 1px `--border-strong`, `--radius-md`, `--bg`, no shadow. For: auto-applied edits, Full auto pausing or finishing, Full auto turning off because a session started or ended ("Full auto turned off: it’s per session."), the project going missing, the extension disconnecting.
+
+### Desktop: Settings for 1.3.0
+
+- **Commands**: each allowed command has a **Background** checkbox (muted 13px, before Remove); suggestions that are background show a small `background` badge (1px `--border`, `--radius-full`, 12px muted). A hint explains background commands under the list.
+- **Full auto**: the step limit field is followed by an **Unlimited** checkbox (the field is disabled while it's on), and a one-time `.notice` with **Got it** about Free/Go plans and the loop guard. Below, a fieldset "Also approve automatically" (a `.subsection-title` legend): a hint, then three checkboxes. While one is on, its risk is written under it in `--warning`, and a last line says Activity marks these "auto-approved".
+- **Activity**: rows say "auto-approved" in place of "auto" for what those settings let through, "downloaded" or "binary" for binary files, and background processes show as "Background · started / stopped / exited (exit 1)" rows (not openable). The detail view of an image Bridge wrote shows thumbnails (max 240px, 1px `--border`, `--radius-md`), "Before" and "After".
 
 ### Desktop: Mode, Commands, loop bar, toast
 

@@ -21,18 +21,28 @@ const CONFIG: BridgeConfig = {
   pauseOnFailure: false,
   catchUpAfterSleep: true,
   running: null,
+  background: [],
+  processes: [],
+  autoApprove: { changes: false, gated: false, partial: false },
   instance: 'launch-1'
 };
 
 let calls: WorkerRequest[];
 let session: 'active' | 'elsewhere';
 let controller: ChatController | null;
+/** What `chat-sync` says the app's config is: null while it's out of reach. */
+let syncConfig: BridgeConfig | null;
 
 const ask = vi.fn(async (request: WorkerRequest) => {
   calls.push(request);
   switch (request.type) {
     case 'chat-sync':
-      return { connected: true, session, config: CONFIG, chipCorner: 'bottom-right' };
+      return {
+        connected: syncConfig !== null,
+        session,
+        config: syncConfig,
+        chipCorner: 'bottom-right'
+      };
     case 'card-get':
       return {};
     case 'chat-read':
@@ -54,6 +64,7 @@ const count = (type: WorkerRequest['type']) => calls.filter((c) => c.type === ty
 beforeEach(() => {
   calls = [];
   session = 'active';
+  syncConfig = CONFIG;
   controller = null;
   vi.stubGlobal('chrome', { runtime: { id: 'bridge-test', getURL: (p: string) => p } });
   history.replaceState(null, '', '/c/conv-1234abcd');
@@ -179,5 +190,31 @@ describe('ChatController after sleep', () => {
     vi.setSystemTime(Date.now() + 3 * 60_000);
     await vi.advanceTimersByTimeAsync(1_000);
     expect(calls.filter((c) => c.type === 'chat-sync').at(-1)).toMatchObject({ wake: true });
+  });
+});
+
+describe('ChatController and the app’s config', () => {
+  it('acts on a reply that finished while the app was out of reach, once it’s back', async () => {
+    // The cause of files and edits left waiting for a click in Full auto: a reply that
+    // finished while the connection was down (a reconnect, after sleep) was dropped.
+    syncConfig = null;
+    const ctl = await startWithNewReply();
+    expect(hosts('diff-card')).toHaveLength(1);
+    expect(count('chat-write')).toBe(0);
+    ctl.setConfig(CONFIG);
+    await wait();
+    expect(count('chat-write')).toBe(1);
+    // Once only: another config push doesn't act again.
+    ctl.setConfig({ ...CONFIG, instance: 'launch-1' });
+    await wait();
+    expect(count('chat-write')).toBe(1);
+  });
+
+  it('does nothing with such a reply when the app comes back in Manual', async () => {
+    syncConfig = null;
+    const ctl = await startWithNewReply();
+    ctl.setConfig({ ...CONFIG, mode: 'manual' });
+    await wait();
+    expect(count('chat-write')).toBe(0);
   });
 });

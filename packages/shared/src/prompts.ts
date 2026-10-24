@@ -74,16 +74,22 @@ export interface RefusedFile {
  */
 export function buildContextMessage(
   files: ContextFile[],
-  refused: RefusedFile[] = []
+  refused: RefusedFile[] = [],
+  attached: readonly string[] = []
 ): { text: string; redacted: number } {
-  const context = contextMessage(files, refused);
+  const context = contextMessage(files, refused, attached);
   return { text: withFooter(context.text), redacted: context.redacted };
 }
+
+/** The line that says which images went with a message as attachments. */
+const attachedLine = (paths: readonly string[]) =>
+  `Attached ${paths.length === 1 ? 'image' : 'images'}: ${paths.join(', ')}.`;
 
 /** `buildContextMessage` without the footer, for messages that hold more than files. */
 function contextMessage(
   files: readonly ContextFile[],
-  refused: readonly RefusedFile[]
+  refused: readonly RefusedFile[],
+  attached: readonly string[] = []
 ): { text: string; redacted: number } {
   const parts: string[] = [];
   let redacted = 0;
@@ -99,6 +105,7 @@ function contextMessage(
       redacted += block.redacted;
     }
   }
+  if (attached.length > 0) parts.push(attachedLine(attached));
   if (refused.length > 0) {
     parts.push(
       `Bridge could not send: ${refused.map((f) => `${f.path} (${f.reason})`).join(', ')}.`
@@ -201,21 +208,33 @@ export interface SessionPromptInput {
   truncated?: boolean;
   /** The commands the user allowed in the app. Empty: the chat is told not to ask for any. */
   allowlist?: readonly string[];
+  /** The allowlist entries that are background processes (dev servers): `@@START` only. */
+  background?: readonly string[];
 }
 
-function commandRule(allowlist: readonly string[]): string {
+function commandRule(allowlist: readonly string[], background: readonly string[]): string {
+  const tasks = allowlist.filter((entry) => !background.includes(entry));
+  const servers = allowlist.filter((entry) => background.includes(entry));
   if (allowlist.length === 0) {
     return "3. Bridge can't run commands in this project. Tell me what to run instead.";
   }
-  const listed = allowlist.map((entry) => `\`${entry}\``).join(', ');
+  const list = (entries: readonly string[]) => entries.map((entry) => `\`${entry}\``).join(', ');
   const star = allowlist.some((entry) => entry.endsWith('*'))
     ? ' (`*`: you may add arguments there)'
     : '';
-  const install = allowlist.find((entry) => isInstallCommand(entry.split(' ')));
+  const install = tasks.find((entry) => isInstallCommand(entry.split(' ')));
   const after = install
     ? `\n   After changing package.json, run the install command: \`@@RUN ${install}@@\``
     : '';
-  return `3. Run a command: \`@@RUN npm test@@\`. Only these are allowed: ${listed}${star}${after}`;
+  const run =
+    tasks.length > 0
+      ? `3. Run a command: \`@@RUN npm test@@\`. Only these are allowed: ${list(tasks)}${star}${after}`
+      : '3. Bridge runs no one-off commands here.';
+  const first = servers[0];
+  const start = first
+    ? `\n   Dev servers keep running: \`@@START ${first}@@\`, \`@@STOP ${first}@@\`, and \`@@LOGS ${first}@@\` for their recent output. Only these: ${list(servers)}`
+    : '';
+  return `${run}${start}`;
 }
 
 /** The instructions "Start session" puts in the composer: the rules first, then the tree. */
@@ -223,7 +242,8 @@ export function buildSessionPrompt({
   projectName,
   tree,
   truncated,
-  allowlist = []
+  allowlist = [],
+  background = []
 }: SessionPromptInput): string {
   const summary = summarizeTree(tree);
   const listing = summary.lines.join('\n');
@@ -243,11 +263,11 @@ export function buildSessionPrompt({
       '   ```',
       '   Never send partial files, diffs, or "rest unchanged" comments.',
       "2. See a file: `@@READ path@@` on its own line. Never guess what's in a file.",
-      commandRule(allowlist),
+      commandRule(allowlist, background),
       '4. Delete: `@@DELETE path@@`. Rename: `@@RENAME old/path -> new/path@@`',
-      '5. When the task is finished: `@@DONE@@`',
-      '6. Every marker starts AND ends with @@ and is wrapped in single backticks.',
-      '7. Paths are relative to the project root. One code block per file.',
+      '5. Binary files (images, fonts) can never be written as text. To save an image you generate, put `@@ASSET public/hero.png@@` on the line before it. To fetch one: `@@DOWNLOAD https://example.com/logo.svg -> public/logo.svg@@` (I approve each). `@@READ` on an image attaches it.',
+      '6. When the task is finished: `@@DONE@@`',
+      '7. Every marker starts AND ends with @@ and is wrapped in single backticks. Paths are relative to the project root. One code block per file.',
       "8. Files I send as `@@CONTEXT path@@` are for reference only. Don't edit them unless I ask."
     ].join('\n'),
     'Before every reply, check that each marker matches these formats exactly.',
@@ -292,6 +312,54 @@ export function buildRunMessage(
   return { text: withFooter(run.text), redacted: run.redacted };
 }
 
+/** Lines of a background process's log that `@@LOGS` sends. */
+export const LOGS_LINES = 80;
+
+/** One background process's lines, for the chat: its log, or its errors after an edit. */
+export interface ProcessLines {
+  command: string;
+  lines: readonly string[];
+  /** Where it's serving, if it said. */
+  url?: string | null;
+}
+
+/** A process's lines as the chat reads them, redacted and cut to `maxChars`. */
+function processBlock(
+  heading: string,
+  lines: readonly string[],
+  maxChars: number
+): { text: string; redacted: number } {
+  const clean = redactSecrets(lines.join('\n').trimEnd());
+  const output = truncateMiddle(clean.text, maxChars);
+  const fence = pickFence(output);
+  return {
+    text: `${heading}\n${fence}text\n${output || '(no output yet)'}\n${fence}`,
+    redacted: clean.count
+  };
+}
+
+function logsHeading({ command, lines, url }: ProcessLines): string {
+  const where = url ? `, running at ${url}` : '';
+  return `Last ${lines.length} ${lines.length === 1 ? 'line' : 'lines'} of \`${command}\`${where}:`;
+}
+
+/**
+ * **Send logs** on a LOGS card: the process's last lines, redacted, then `FORMAT_FOOTER`.
+ */
+export function buildLogsMessage(logs: ProcessLines): { text: string; redacted: number } {
+  const last = { ...logs, lines: logs.lines.slice(-LOGS_LINES) };
+  const block = processBlock(logsHeading(last), last.lines, CHAT_OUTPUT_CHARS);
+  return { text: withFooter(block.text), redacted: block.redacted };
+}
+
+/** What happened to one `@@START` or `@@STOP`. */
+export type FollowUpProcess =
+  | { command: string; started: true; restarted?: boolean; url: string | null }
+  | { command: string; stopped: boolean }
+  /** It ended right after starting: the reason is in its lines. */
+  | { command: string; exited: string; lines: readonly string[] }
+  | { command: string; refused: string };
+
 /** One command the loop dealt with: its result, or why it didn't run. */
 export type FollowUpRun =
   | {
@@ -303,12 +371,22 @@ export type FollowUpRun =
   | { command: string; skipped: true };
 
 export interface FollowUpInput {
+  /** A format reminder that goes first (the files the reply asked for come after it). */
+  reminder?: string;
   applied: readonly string[];
   /** Edits left on their cards, with a few words on why. */
   skipped: readonly RefusedFile[];
   files: readonly ContextFile[];
   refused: readonly RefusedFile[];
   runs: readonly FollowUpRun[];
+  /** `@@START` and `@@STOP`, in order. */
+  processes?: readonly FollowUpProcess[];
+  /** `@@LOGS`: each process's recent lines. */
+  logs?: readonly ProcessLines[];
+  /** Errors background processes printed after this step's edits. */
+  errors?: readonly ProcessLines[];
+  /** Images attached to this message (`@@READ` on an image), by path. */
+  attached?: readonly string[];
   /** The reply was cut off: ask the chat to carry on (`continuationText`). */
   continuation?: Interruption;
 }
@@ -323,6 +401,7 @@ function followUpText(
 ): { text: string; redacted: number } {
   const parts: string[] = [];
   let redacted = 0;
+  if (input.reminder) parts.push(input.reminder);
   const summary: string[] = [];
   if (input.applied.length > 0) summary.push(`Applied: ${input.applied.join(', ')}.`);
   if (input.skipped.length > 0) {
@@ -339,6 +418,31 @@ function followUpText(
       `Bridge left out the files you asked for (${paths}) to keep this message small. Ask for fewer at a time with @@READ.`
     );
   }
+  for (const process of input.processes ?? []) {
+    if ('started' in process) {
+      const verb = process.restarted ? 'Restarted' : 'Started';
+      parts.push(
+        `${verb} \`${process.command}\` in the background${process.url ? `, running at ${process.url}` : ''}.`
+      );
+    } else if ('stopped' in process) {
+      parts.push(
+        process.stopped
+          ? `Stopped \`${process.command}\`.`
+          : `\`${process.command}\` wasn't running.`
+      );
+    } else if ('exited' in process) {
+      const block = processBlock(
+        `\`${process.command}\` ${process.exited} right after starting:`,
+        process.lines,
+        outputChars
+      );
+      parts.push(block.text);
+      redacted += block.redacted;
+    } else {
+      parts.push(`Bridge didn't start \`${process.command}\`: ${process.refused}`);
+    }
+  }
+  if (input.attached && input.attached.length > 0) parts.push(attachedLine(input.attached));
   for (const run of input.runs) {
     if ('refused' in run) {
       parts.push(`Bridge didn't run \`${run.command}\`: ${run.refused}`);
@@ -351,6 +455,21 @@ function followUpText(
     const output = formatRunResult(run.result, outputChars);
     parts.push(output.text);
     redacted += output.redacted;
+  }
+  for (const logs of input.logs ?? []) {
+    const last = { ...logs, lines: logs.lines.slice(-LOGS_LINES) };
+    const block = processBlock(logsHeading(last), last.lines, outputChars);
+    parts.push(block.text);
+    redacted += block.redacted;
+  }
+  for (const errors of input.errors ?? []) {
+    const block = processBlock(
+      `\`${errors.command}\` printed errors after these edits:`,
+      errors.lines,
+      outputChars
+    );
+    parts.push(block.text);
+    redacted += block.redacted;
   }
   if (input.continuation) parts.push(continuationText(input.continuation));
   return { text: parts.join('\n\n'), redacted };

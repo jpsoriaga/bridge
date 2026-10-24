@@ -4,11 +4,16 @@ import * as fs from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import ignore, { type Ignore } from 'ignore';
 import {
+  binaryProblem,
   LIST_MAX_ENTRIES,
   looksBinary,
   matchTrailingNewline,
   MAX_BACKUP_BYTES,
+  MAX_BINARY_BYTES,
   MAX_FILE_BYTES,
+  MIME_TYPES,
+  sniffType,
+  type ReadBinaryResult,
   TREE_MAX_DEPTH,
   TREE_MAX_ENTRIES,
   type DeleteParams,
@@ -253,14 +258,116 @@ const exists = (abs: string) =>
   );
 
 /** A write as the sandbox sees it. `trigger` only labels the op; the server checks it. */
-export type WriteInput = Omit<WriteParams, 'trigger'> & Partial<Pick<WriteParams, 'trigger'>>;
+export type WriteInput = Omit<WriteParams, 'trigger' | 'autoApproved'> &
+  Partial<Pick<WriteParams, 'trigger'>> & { autoApproved?: boolean };
 
 /** Labels every op record carries. */
-function labels(params: { source?: 'chat'; trigger?: 'click' | 'auto'; loopId?: string }) {
+function labels(params: {
+  source?: 'chat';
+  trigger?: 'click' | 'auto';
+  loopId?: string;
+  autoApproved?: boolean;
+}) {
   return {
     ...(params.source && { source: params.source }),
     ...(params.trigger === 'auto' && { trigger: 'auto' as const }),
-    ...(params.loopId && { loopId: params.loopId })
+    ...(params.loopId && { loopId: params.loopId }),
+    ...(params.autoApproved && params.trigger === 'auto' && { autoApproved: true as const })
+  };
+}
+
+/**
+ * A binary write: an image the chat made, or a download. The same sandbox, denylist,
+ * backup and undo as a text write; the bytes must be the type the path names
+ * (`binaryProblem`), at most MAX_BINARY_BYTES. Replacing a file needs the hash `stat` gave.
+ */
+export interface BinaryWrite {
+  path: string;
+  data: Buffer;
+  baseHash?: string;
+  source?: 'chat';
+  trigger?: 'click' | 'auto';
+  loopId?: string;
+  /** For the activity row: `download` when it came from a URL. */
+  origin?: 'download';
+  autoApproved?: boolean;
+}
+
+export async function writeBinary(
+  sandbox: Sandbox,
+  history: History,
+  params: BinaryWrite,
+  writeFs: WriteFs = realFs
+): Promise<WriteResult> {
+  if (params.data.length > MAX_BINARY_BYTES) throw new FileOpError('too-large');
+  const problem = binaryProblem(params.path, params.data);
+  if (problem) throw new FileOpError(problem.code);
+  const target = await resolveOrThrow(sandbox, params.path);
+  if (target.kind === 'dir') throw new FileOpError('not-a-file');
+  const record = {
+    ...labels(params),
+    binary: true as const,
+    ...(params.origin && { origin: params.origin })
+  };
+
+  if (target.kind === 'file') {
+    if (params.baseHash === undefined) throw new FileOpError('exists');
+    const { data: before, stats } = await readCapped(target.abs, MAX_BACKUP_BYTES);
+    if (sha256(before) !== params.baseHash) throw new FileOpError('conflict');
+    const opId = newOpId();
+    await history.backup(opId, before, params.data);
+    await atomicWrite(
+      target.abs,
+      params.data,
+      { exclusive: false, mode: stats.mode & 0o7777, sandbox },
+      writeFs
+    );
+    const afterHash = sha256(params.data);
+    await history.commit({
+      opId,
+      time: Date.now(),
+      path: target.rel,
+      kind: 'modify',
+      beforeHash: params.baseHash,
+      afterHash,
+      ...record
+    });
+    return { opId, kind: 'modify', hash: afterHash };
+  }
+
+  if (params.baseHash !== undefined) throw new FileOpError('conflict');
+  await fs.mkdir(dirname(target.abs), { recursive: true });
+  const opId = newOpId();
+  await history.backup(opId, null, params.data);
+  await atomicWrite(target.abs, params.data, { exclusive: true, sandbox }, writeFs);
+  const afterHash = sha256(params.data);
+  await history.commit({
+    opId,
+    time: Date.now(),
+    path: target.rel,
+    kind: 'create',
+    beforeHash: null,
+    afterHash,
+    ...record
+  });
+  return { opId, kind: 'create', hash: afterHash };
+}
+
+/**
+ * Any regular file up to MAX_BINARY_BYTES, as bytes, for attaching an image to the chat.
+ * The sandbox and the denylist apply as for a text read.
+ */
+export async function readBinary(sandbox: Sandbox, path: unknown): Promise<ReadBinaryResult> {
+  const target = await resolveOrThrow(sandbox, path);
+  if (target.kind === 'missing') throw new FileOpError('not-found');
+  if (target.kind === 'dir') throw new FileOpError('not-a-file');
+  const { data } = await readCapped(target.abs, MAX_BINARY_BYTES);
+  const type = sniffType(data);
+  return {
+    data: data.toString('base64'),
+    size: data.length,
+    hash: sha256(data),
+    mime: type ? MIME_TYPES[type] : 'application/octet-stream'
   };
 }
 
@@ -346,7 +453,8 @@ async function readExpected(
 export async function deleteFile(
   sandbox: Sandbox,
   history: History,
-  params: Omit<DeleteParams, 'trigger'> & Partial<Pick<DeleteParams, 'trigger'>>,
+  params: Omit<DeleteParams, 'trigger'> &
+    Partial<Pick<DeleteParams, 'trigger'>> & { autoApproved?: boolean },
   writeFs: WriteFs = realFs
 ): Promise<DeleteResult> {
   const target = await resolveOrThrow(sandbox, params.path);
@@ -405,7 +513,8 @@ async function caseRename(from: string, to: string): Promise<void> {
 export async function renameFile(
   sandbox: Sandbox,
   history: History,
-  params: Omit<RenameParams, 'trigger'> & Partial<Pick<RenameParams, 'trigger'>>,
+  params: Omit<RenameParams, 'trigger'> &
+    Partial<Pick<RenameParams, 'trigger'>> & { autoApproved?: boolean },
   writeFs: WriteFs = realFs
 ): Promise<RenameResult> {
   const source = await resolveOrThrow(sandbox, params.from);

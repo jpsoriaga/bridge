@@ -8,7 +8,18 @@ import {
 } from './parser';
 import { buildContextMessage, buildFollowUp, buildRunMessage, FORMAT_FOOTER } from './prompts';
 
-const NONE_FIXED = { reads: [], runs: [], deletes: [], renames: [], done: false };
+const NONE_FIXED = {
+  reads: [],
+  runs: [],
+  deletes: [],
+  renames: [],
+  starts: [],
+  stops: [],
+  logs: [],
+  assets: [],
+  downloads: [],
+  done: false
+};
 
 const block = (path: string, body: string, fence = '```ts', inline = false) => {
   const marker = inline ? `\`@@FILE ${path}@@\`` : `@@FILE ${path}@@`;
@@ -132,6 +143,11 @@ describe('@@READ', () => {
       done: false,
       deletes: [],
       renames: [],
+      starts: [],
+      stops: [],
+      logs: [],
+      assets: [],
+      downloads: [],
       fixed: NONE_FIXED,
       issues: [],
       markers: [
@@ -163,6 +179,11 @@ describe('@@READ', () => {
       done: false,
       deletes: [],
       renames: [],
+      starts: [],
+      stops: [],
+      logs: [],
+      assets: [],
+      downloads: [],
       fixed: NONE_FIXED,
       issues: [],
       markers: ['@@FILE a.ts@@', '@@READ b.ts@@'],
@@ -215,6 +236,11 @@ describe('@@RUN', () => {
       done: false,
       deletes: [],
       renames: [],
+      starts: [],
+      stops: [],
+      logs: [],
+      assets: [],
+      downloads: [],
       fixed: NONE_FIXED,
       issues: [],
       markers: ['@@FILE a.ts@@', '@@READ b.ts@@', '@@RUN pnpm test@@'],
@@ -326,6 +352,11 @@ describe('@@CONTEXT', () => {
       done: false,
       deletes: [],
       renames: [],
+      starts: [],
+      stops: [],
+      logs: [],
+      assets: [],
+      downloads: [],
       fixed: NONE_FIXED,
       issues: [],
       markers: [],
@@ -489,6 +520,11 @@ describe('lenient markers (missing closing @@)', () => {
       runs: [],
       deletes: [],
       renames: [],
+      starts: [],
+      stops: [],
+      logs: [],
+      assets: [],
+      downloads: [],
       done: false,
       fixed: NONE_FIXED
     });
@@ -590,5 +626,107 @@ describe('findFormatIssues', () => {
     ]
   ])('finds nothing in %s', (_, text) => {
     expect(findFormatIssues(text)).toEqual([]);
+  });
+});
+
+describe('@@START, @@STOP and @@LOGS', () => {
+  it('reads each command as written, in order, without repeats', () => {
+    const parsed = parseChat(
+      [
+        '`@@STOP npm run dev@@`',
+        '`@@START npm run dev@@`',
+        '- `@@START pnpm --filter web dev@@`',
+        '`@@START npm run dev@@`',
+        '`@@LOGS npm run dev@@`'
+      ].join('\n')
+    );
+    expect(parsed.starts).toEqual(['npm run dev', 'pnpm --filter web dev']);
+    expect(parsed.stops).toEqual(['npm run dev']);
+    expect(parsed.logs).toEqual(['npm run dev']);
+    expect(parsed.runs).toEqual([]);
+    expect(parsed.markers).toEqual([
+      '@@STOP npm run dev@@',
+      '@@START npm run dev@@',
+      '@@START pnpm --filter web dev@@',
+      '@@START npm run dev@@',
+      '@@LOGS npm run dev@@'
+    ]);
+    expect(parsed.issues).toEqual([]);
+  });
+
+  it('reads them without the closing @@ inside inline code, and says so', () => {
+    const parsed = parseChat('`@@START npm run dev`\n`@@STOP npm run dev@`\n`@@LOGS npm run dev`');
+    expect(parsed.starts).toEqual(['npm run dev']);
+    expect(parsed.stops).toEqual(['npm run dev']);
+    expect(parsed.logs).toEqual(['npm run dev']);
+    expect(parsed.fixed).toMatchObject({
+      starts: ['npm run dev'],
+      stops: ['npm run dev'],
+      logs: ['npm run dev']
+    });
+  });
+
+  it('never reads them from prose or from inside a code block', () => {
+    const parsed = parseChat(
+      ['Run @@START npm run dev@@ when ready.', '```', '`@@START npm run dev@@`', '```'].join('\n')
+    );
+    expect(parsed.starts).toEqual([]);
+  });
+
+  it('flags typos as format issues', () => {
+    expect(parseChat('`@@STRAT npm run dev@@`').issues).toEqual([
+      { kind: 'bad-marker', text: '`@@STRAT npm run dev@@`' }
+    ]);
+    expect(parseChat('`@@LOG npm run dev@@`').issues.map((i) => i.kind)).toEqual(['bad-marker']);
+  });
+});
+
+describe('@@ASSET', () => {
+  it('lists a path for each image, in order, repeats kept', () => {
+    const parsed = parseChat(
+      '`@@ASSET public/hero.png@@`\n(image)\n`@@ASSET public/hero.png@@`\n`@@ASSET public/icon.webp`'
+    );
+    expect(parsed.assets).toEqual(['public/hero.png', 'public/hero.png', 'public/icon.webp']);
+    expect(parsed.fixed.assets).toEqual(['public/icon.webp']);
+    expect(parsed.edits).toEqual([]);
+  });
+});
+
+describe('@@DOWNLOAD', () => {
+  it('reads the URL and the path, with -> or →', () => {
+    const parsed = parseChat(
+      [
+        '`@@DOWNLOAD https://example.com/logo.svg -> public/logo.svg@@`',
+        '`@@DOWNLOAD https://cdn.example.com/f/Inter.woff2?v=4 → public/fonts/Inter.woff2@@`'
+      ].join('\n')
+    );
+    expect(parsed.downloads).toEqual([
+      { url: 'https://example.com/logo.svg', path: 'public/logo.svg' },
+      { url: 'https://cdn.example.com/f/Inter.woff2?v=4', path: 'public/fonts/Inter.woff2' }
+    ]);
+    expect(parsed.markers).toEqual([
+      '@@DOWNLOAD https://example.com/logo.svg -> public/logo.svg@@',
+      '@@DOWNLOAD https://cdn.example.com/f/Inter.woff2?v=4 -> public/fonts/Inter.woff2@@'
+    ]);
+  });
+
+  it('reads it without the closing @@ inside inline code, without repeats', () => {
+    const parsed = parseChat(
+      '`@@DOWNLOAD https://example.com/a.png -> a.png`\n`@@DOWNLOAD https://example.com/a.png -> a.png@@`'
+    );
+    expect(parsed.downloads).toEqual([{ url: 'https://example.com/a.png', path: 'a.png' }]);
+    expect(parsed.fixed.downloads).toEqual([{ url: 'https://example.com/a.png', path: 'a.png' }]);
+  });
+
+  it('keeps a plain-http or odd URL for the card to refuse; the app decides', () => {
+    expect(parseChat('`@@DOWNLOAD http://example.com/a.png -> a.png@@`').downloads).toEqual([
+      { url: 'http://example.com/a.png', path: 'a.png' }
+    ]);
+  });
+
+  it('needs both halves', () => {
+    const parsed = parseChat('`@@DOWNLOAD https://example.com/a.png@@`');
+    expect(parsed.downloads).toEqual([]);
+    expect(parsed.issues.map((i) => i.kind)).toEqual(['bad-marker']);
   });
 });

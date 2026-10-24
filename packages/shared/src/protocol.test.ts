@@ -36,6 +36,9 @@ const config: BridgeConfig = {
   pauseOnFailure: false,
   catchUpAfterSleep: true,
   running: null,
+  background: [],
+  processes: [],
+  autoApprove: { changes: false, gated: false, partial: false },
   instance: 'launch-1'
 };
 
@@ -240,10 +243,10 @@ describe('server messages', () => {
     ['a status without project', { type: 'status', payload: { version: '1' } }],
     ['a status without config', { type: 'status', payload: { version: '1', project: null } }],
     [
-      'a status with a step limit over 25',
+      'a status with a step limit over 100',
       {
         type: 'status',
-        payload: { version: '1', project: null, config: { ...config, stepLimit: 26 } }
+        payload: { version: '1', project: null, config: { ...config, stepLimit: 101 } }
       }
     ],
     [

@@ -30,7 +30,9 @@ const PAUSE_SHORT: Record<PauseReason, string> = {
   'format-issues': 'format issues',
   stalled: 'chat stuck',
   interrupted: 'reply cut off',
-  'command-interrupted': 'command interrupted'
+  'command-interrupted': 'command interrupted',
+  download: 'download needs a click',
+  stuck: 'looks stuck'
 };
 
 export const CHIP_CORNERS: readonly ChipCorner[] = [
@@ -46,7 +48,8 @@ export interface ChipState {
   loop: {
     state: LoopState;
     step: number;
-    limit: number;
+    /** Null: Unlimited. */
+    limit: number | null;
     reason?: PauseReason;
     /** After sleep: waiting for the reply it was streaming, or acting on it. */
     note?: LoopNote;
@@ -192,7 +195,13 @@ export class LoopChip {
           attrs: { role: 'status', 'data-collapsed': running ? undefined : 'true' }
         },
         handle,
-        running ? h('span', { class: 'chip-count' }, `${loop.step} / ${loop.limit}`) : null,
+        running
+          ? h(
+              'span',
+              { class: 'chip-count' },
+              loop.limit === null ? `${loop.step}` : `${loop.step} / ${loop.limit}`
+            )
+          : null,
         running ? h('span', { class: 'chip-state' }, this.label(loop)) : null,
         stop
       )

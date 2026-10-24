@@ -1,11 +1,14 @@
 import {
   buildFollowUp,
+  failureSignature,
   FORMAT_REMINDER,
+  LOOP_GUARD_REPEATS,
   LOOP_MIN_SEND_GAP_MS,
   pauseReasonText,
   STALL_MS,
   type BridgeConfig,
   type ContextFile,
+  type FollowUpProcess,
   type FollowUpRun,
   type Interruption,
   type LoopEvent,
@@ -13,15 +16,23 @@ import {
   type LoopReport,
   type LoopState,
   type PauseReason,
+  type ProcessLines,
   type RefusedFile,
   type RunResult
 } from '@bridge/shared';
-import type { InsertResult } from '../../messages';
+import type { AttachmentFile, InsertResult } from '../../messages';
 
 /** How long a sent message has to show up as a new user turn. */
 export const SEND_CONFIRM_MS = 10_000;
 /** How long the send button may take to appear after the text goes in. */
 export const SEND_BUTTON_WAIT_MS = 5_000;
+/** With images attached, the page enables send only once they've uploaded. */
+export const ATTACH_SEND_WAIT_MS = 60_000;
+/**
+ * After edits, how long dev servers get to rebuild before Full auto reads the errors they
+ * printed (hot reload usually takes well under this).
+ */
+export const PROCESS_SETTLE_MS = 3_000;
 const SEND_POLL_MS = 250;
 /** Format reminders Full auto sends in one run before it pauses with `format-issues`. */
 export const MAX_FORMAT_REMINDERS = 2;
@@ -48,6 +59,8 @@ export interface LoopPage {
   userTurns(): number;
   composerText(): string;
   insert(text: string): InsertResult;
+  /** Attaches images to the message, as the attach button would. False if it couldn't. */
+  attach(images: readonly AttachmentFile[]): boolean;
   /** Clicks the send button. False if there isn't one, or it's disabled. */
   submit(): boolean;
   /** A visible error or limit banner's text, or null. */
@@ -82,6 +95,32 @@ export interface ChangeSummary {
 export type RunOutcome =
   { ok: true; result: RunResult } | { ok: false; disconnected: boolean; message: string };
 
+/** One `@@START` or `@@STOP` in the reply, through its card. */
+export interface ProcessAction {
+  kind: 'start' | 'stop';
+  command: string;
+  /** Null if allowed; else why not. A STOP is always allowed. */
+  refusal(): string | null;
+  act(loopId: string): Promise<FollowUpProcess | { disconnected: true }>;
+}
+
+/** One `@@LOGS` in the reply. */
+export interface LogsAction {
+  command: string;
+  read(): Promise<ProcessLines | { refused: string } | { disconnected: true }>;
+}
+
+/** Where each running background process's log was, to read only what came after. */
+export type LogCursor = readonly { command: string; next: number }[];
+
+/** What a reply's `@@READ`s came to: text files, images to attach, refusals. */
+export interface ReadOutcome {
+  files: ContextFile[];
+  images?: (AttachmentFile & { path: string })[];
+  refused: RefusedFile[];
+  disconnected: boolean;
+}
+
 /** One `@@RUN` in the reply, through its card. */
 export interface RunAction {
   command: string;
@@ -108,17 +147,32 @@ export interface ReplyActions {
   formatIssues: boolean;
   /** Full auto sent the format reminder for this reply. */
   markReminded(): void;
-  /** Applies pending edits by the Auto-apply rules (skipping held ones). */
+  /**
+   * Applies pending edits by the Auto-apply rules (skipping held ones), saves the images the
+   * chat named with `@@ASSET`, and applies what "Also approve automatically" allows.
+   */
   applyEdits(loopId?: string): Promise<void>;
   /** Where the edits stand now, after Auto-apply and any clicks. */
   edits(): EditSummary;
   /** Where the reply's deletes and renames stand. */
   changes(): ChangeSummary;
+  /** Each edit as `path` + content hash, for the loop guard: the same file written the same way. */
+  fingerprints?: readonly { path: string; hash: string }[];
   reads: readonly string[];
-  readFiles(): Promise<{ files: ContextFile[]; refused: RefusedFile[]; disconnected: boolean }>;
+  readFiles(): Promise<ReadOutcome>;
   /** The READ card's files went out with the follow-up. */
   markReadsSent(): void;
   runs: readonly RunAction[];
+  /** `@@START` and `@@STOP`, in the reply's order. */
+  processes?: readonly ProcessAction[];
+  /** `@@LOGS`. */
+  logs?: readonly LogsAction[];
+  /** The reply's `@@DOWNLOAD`s: saved, and still waiting for the user's click (always). */
+  downloads?(): ChangeSummary;
+  /** Where each running background process's log is now. */
+  logCursor?(): Promise<LogCursor>;
+  /** Error lines the background processes printed since `cursor`. */
+  processErrors?(cursor: LogCursor): Promise<ProcessLines[]>;
   /**
    * The reply was cut off (an error, the network, or Bridge stopping a stuck reply): where.
    * Its unfinished block is already left out of the edits above. Null for a whole reply.
@@ -138,7 +192,7 @@ export interface LoopDeps {
   newId(): string;
 }
 
-type Phase = 'edits' | 'reads' | 'runs' | 'build' | 'send';
+type Phase = 'edits' | 'reads' | 'review' | 'processes' | 'runs' | 'logs' | 'build' | 'send';
 
 /** The step in progress: one reply's actions, and how far the loop got with them. */
 interface Step {
@@ -150,10 +204,25 @@ interface Step {
   changesReviewed: boolean;
   /** Commands that aren't allowed have paused the loop once already. */
   disallowedReviewed: boolean;
+  /** Downloads waiting for a click have paused the loop once already. */
+  downloadsReviewed: boolean;
+  /** The loop guard has looked at this step's edits. */
+  guarded: boolean;
   files: ContextFile[];
+  /** Images the chat asked for, attached to the follow-up. */
+  images: (AttachmentFile & { path: string })[];
   refused: RefusedFile[];
   runs: FollowUpRun[];
   runIndex: number;
+  processes: FollowUpProcess[];
+  processIndex: number;
+  logs: ProcessLines[];
+  /** Errors background processes printed after this step's edits. */
+  errors: ProcessLines[];
+  /** Where the background logs were before the edits. Null until read. */
+  cursor: LogCursor | null;
+  /** When the edits went in, so dev servers get a moment to rebuild. */
+  editedAt: number | null;
   message: string | null;
   /** Likely secrets the follow-up had replaced with `[redacted]`. */
   redacted: number;
@@ -197,7 +266,8 @@ const HOLD_REASON: Record<EditHold, PauseReason> = {
 export class FullAutoLoop {
   state: LoopState = 'idle';
   step = 0;
-  limit = 0;
+  /** The run's step limit, or null for Unlimited. */
+  limit: number | null = 0;
   reason: PauseReason | undefined;
   loopId = '';
   /** The conversation this run belongs to. */
@@ -233,6 +303,10 @@ export class FullAutoLoop {
   private running: string | null = null;
   /** Since when an error banner has shown over a cut-off reply. */
   private errorSince: number | null = null;
+  /** The loop guard: each command's last failure and how many times in a row it repeated. */
+  private failures = new Map<string, { signature: string; count: number }>();
+  /** The loop guard: how many replies wrote each file with the same content, this run. */
+  private writes = new Map<string, number>();
 
   constructor(private readonly deps: LoopDeps) {}
 
@@ -282,7 +356,10 @@ export class FullAutoLoop {
       this.generation += 1;
       this.loopId = this.deps.newId();
       this.step = 0;
-      this.limit = this.deps.config()?.stepLimit ?? 1;
+      const config = this.deps.config();
+      this.limit = config ? config.stepLimit : 1;
+      this.failures.clear();
+      this.writes.clear();
       // The app launch this run belongs to, so a restart mid-run is noticed.
       this.instance = this.deps.config()?.instance ?? this.instance;
       this.conversation = this.deps.page.conversationId();
@@ -318,8 +395,9 @@ export class FullAutoLoop {
 
   /**
    * The reply missed Bridge's format. Rather than act on half of it, ask the chat to redo it:
-   * one reminder per reply, `MAX_FORMAT_REMINDERS` per run. Past that the run pauses; Resume
-   * acts on whatever Bridge could read.
+   * one reminder per reply, `MAX_FORMAT_REMINDERS` per run. The files it asked for go with
+   * the reminder, so its READ card is answered either way. Past the limit the run pauses;
+   * Resume acts on whatever Bridge could read.
    */
   private onFormatIssues(actions: ReplyActions): void {
     if (this.reminders >= MAX_FORMAT_REMINDERS) {
@@ -328,8 +406,7 @@ export class FullAutoLoop {
       return;
     }
     this.reminders += 1;
-    this.current = { ...this.newStep(actions), phase: 'send', reminder: true };
-    this.current.message = FORMAT_REMINDER;
+    this.current = { ...this.newStep(actions), phase: 'reads', reminder: true };
     this.set('acting');
     void this.advance();
   }
@@ -373,10 +450,19 @@ export class FullAutoLoop {
       editsReviewed: false,
       changesReviewed: false,
       disallowedReviewed: false,
+      downloadsReviewed: false,
+      guarded: false,
       files: [],
+      images: [],
       refused: [],
       runs: [],
       runIndex: 0,
+      processes: [],
+      processIndex: 0,
+      logs: [],
+      errors: [],
+      cursor: null,
+      editedAt: null,
       message: null,
       redacted: 0,
       sentFrom: null,
@@ -421,6 +507,13 @@ export class FullAutoLoop {
     }
     // Resume after an interruption is the user asking for the continuation.
     if (this.reason === 'interrupted') this.continued = true;
+    // Resume after the loop guard: the user looked, so what repeated starts counting again.
+    if (this.reason === 'stuck' && this.detail) {
+      this.failures.delete(this.detail);
+      for (const key of [...this.writes.keys()]) {
+        if (key.startsWith(`${this.detail}\u0000`)) this.writes.delete(key);
+      }
+    }
     const rerun = this.reason === 'command-interrupted';
     this.reason = undefined;
     if (this.deferred) {
@@ -491,12 +584,19 @@ export class FullAutoLoop {
     void this.advance();
   }
 
-  /** After the step limit: allow another `stepLimit` sends, then carry on. */
+  /** After the step limit: allow another `stepLimit` sends (or no limit), then carry on. */
   continueFor(): void {
     if (this.state !== 'paused' || this.reason !== 'step-limit') return;
-    this.limit += this.deps.config()?.stepLimit ?? 1;
+    const more = this.deps.config()?.stepLimit;
+    this.limit = more === null || this.limit === null ? null : this.limit + (more ?? 1);
     this.reason = undefined;
-    this.set('acting', { kind: 'resumed', text: `Continuing, up to ${this.limit} messages.` });
+    this.set('acting', {
+      kind: 'resumed',
+      text:
+        this.limit === null
+          ? 'Continuing, with no step limit.'
+          : `Continuing, up to ${this.limit} messages.`
+    });
     void this.advance();
   }
 
@@ -662,7 +762,11 @@ export class FullAutoLoop {
     }
   }
 
-  /** Runs the current step from its phase until it sends, pauses or ends. */
+  /**
+   * Runs the current step from its phase until it sends, pauses or ends. The files the
+   * reply asked for are read before anything can pause the step, so they go out with the
+   * follow-up whatever else needs the user.
+   */
   private async work(generation: number): Promise<void> {
     const step = this.current;
     if (!step) return;
@@ -670,10 +774,16 @@ export class FullAutoLoop {
     const { actions } = step;
 
     if (step.phase === 'edits') {
+      // Where the dev servers' logs are now: errors after this point are the edits' doing.
+      if (step.cursor === null && actions.logCursor) {
+        step.cursor = await actions.logCursor();
+        if (stale()) return;
+      }
       await actions.applyEdits(this.loopId);
       if (stale()) return;
       const { applied, held } = actions.edits();
       if (applied.length > 0) {
+        step.editedAt = this.deps.now();
         this.emit({
           kind: 'applied',
           text: `Applied ${applied.length} of ${applied.length + held.length} edits.`
@@ -684,29 +794,18 @@ export class FullAutoLoop {
         return;
       }
       step.phase = 'reads';
-      const first = held[0];
-      if (first && !step.editsReviewed) {
-        step.editsReviewed = true;
-        this.pause(HOLD_REASON[first.hold]);
-        return;
-      }
-    }
-
-    if (step.phase === 'reads' && !step.changesReviewed) {
-      step.changesReviewed = true;
-      // Deletes and renames never happen on their own, in any mode.
-      if (actions.changes().pending.length > 0) {
-        this.pause('needs-click');
-        return;
+      if (!step.guarded) {
+        step.guarded = true;
+        const repeated = this.repeatedWrite(actions);
+        if (repeated) {
+          this.detail = repeated;
+          this.pause('stuck');
+          return;
+        }
       }
     }
 
     if (step.phase === 'reads') {
-      if (!step.disallowedReviewed && actions.runs.some((run) => run.refusal() !== null)) {
-        step.disallowedReviewed = true;
-        this.pause('not-allowed');
-        return;
-      }
       if (actions.reads.length > 0) {
         const read = await actions.readFiles();
         if (stale()) return;
@@ -715,7 +814,84 @@ export class FullAutoLoop {
           return;
         }
         step.files = read.files;
+        step.images = read.images ?? [];
         step.refused = read.refused;
+      }
+      // A format reminder only answers the reads; the rest waits for the redone reply.
+      step.phase = step.reminder ? 'build' : 'review';
+    }
+
+    if (step.phase === 'review') {
+      // What needs the user, once each. Resume carries on from here.
+      const held = actions.edits().held[0];
+      if (held && !step.editsReviewed) {
+        step.editsReviewed = true;
+        this.pause(HOLD_REASON[held.hold]);
+        return;
+      }
+      if (!step.changesReviewed) {
+        step.changesReviewed = true;
+        // Deletes and renames wait for a click unless "Also approve automatically" applied them.
+        if (actions.changes().pending.length > 0) {
+          this.pause('needs-click');
+          return;
+        }
+      }
+      if (!step.downloadsReviewed) {
+        step.downloadsReviewed = true;
+        // Downloads always wait for a click, whatever the settings.
+        if ((actions.downloads?.().pending.length ?? 0) > 0) {
+          this.pause('download');
+          return;
+        }
+      }
+      const starts = (actions.processes ?? []).filter((p) => p.kind === 'start');
+      if (
+        !step.disallowedReviewed &&
+        [...actions.runs, ...starts].some((action) => action.refusal() !== null)
+      ) {
+        step.disallowedReviewed = true;
+        this.pause('not-allowed');
+        return;
+      }
+      step.phase = 'processes';
+    }
+
+    if (step.phase === 'processes') {
+      const processes = actions.processes ?? [];
+      while (step.processIndex < processes.length) {
+        const process = processes[step.processIndex]!;
+        const refusal = process.refusal();
+        if (refusal !== null) {
+          step.processes.push({ command: process.command, refused: refusal });
+          step.processIndex += 1;
+          continue;
+        }
+        this.running = process.command;
+        let outcome: FollowUpProcess | { disconnected: true };
+        try {
+          outcome = await process.act(this.loopId);
+        } finally {
+          if (this.running === process.command) this.running = null;
+        }
+        if (stale()) return;
+        if ('disconnected' in outcome) {
+          this.pause('disconnected');
+          return;
+        }
+        step.processes.push(outcome);
+        step.processIndex += 1;
+        this.emit({
+          kind: 'ran',
+          text:
+            'started' in outcome
+              ? `${outcome.restarted ? 'Restarted' : 'Started'} ${process.command}${outcome.url ? ` at ${outcome.url}` : ''}.`
+              : 'stopped' in outcome
+                ? `${outcome.stopped ? 'Stopped' : 'Not running:'} ${process.command}.`
+                : 'exited' in outcome
+                  ? `${process.command} ${outcome.exited}.`
+                  : `Didn’t start ${process.command}.`
+        });
       }
       step.phase = 'runs';
     }
@@ -760,26 +936,83 @@ export class FullAutoLoop {
           kind: 'ran',
           text: `${run.command}: ${passed ? 'passed' : status === 'exited' ? `exit ${exitCode ?? '?'}` : status}`
         });
+        if (this.repeatedFailure(run.command, outcome.result, passed)) {
+          this.detail = run.command;
+          this.pause('stuck');
+          return;
+        }
         if (!passed && this.deps.config()?.pauseOnFailure) {
           this.pause('failure');
           return;
         }
       }
+      step.phase = 'logs';
+    }
+
+    if (step.phase === 'logs') {
+      step.logs = [];
+      for (const logs of actions.logs ?? []) {
+        const read = await logs.read();
+        if (stale()) return;
+        if ('disconnected' in read) {
+          this.pause('disconnected');
+          return;
+        }
+        if ('refused' in read) step.processes.push({ command: logs.command, stopped: false });
+        else step.logs.push(read);
+      }
+      // Errors the dev servers printed after the edits, once they've had a moment to rebuild.
+      if (
+        step.cursor &&
+        step.cursor.length > 0 &&
+        step.editedAt !== null &&
+        actions.processErrors
+      ) {
+        const wait = step.editedAt + PROCESS_SETTLE_MS - this.deps.now();
+        if (wait > 0) {
+          await this.deps.sleep(wait);
+          if (stale()) return;
+        }
+        step.errors = await actions.processErrors(step.cursor);
+        if (stale()) return;
+        if (step.errors.length > 0) {
+          this.emit({
+            kind: 'ran',
+            text: `Errors from ${step.errors.map((e) => e.command).join(', ')} go with the next message.`
+          });
+        }
+      }
       step.phase = 'build';
     }
 
+    if (
+      step.phase === 'build' &&
+      step.reminder &&
+      step.files.length + step.images.length + step.refused.length === 0
+    ) {
+      step.message = FORMAT_REMINDER;
+      step.phase = 'send';
+    }
+
     if (step.phase === 'build') {
-      const { applied, held } = actions.edits();
-      const changes = actions.changes();
+      const { applied, held } = step.reminder ? { applied: [], held: [] } : actions.edits();
+      const changes = step.reminder ? { applied: [], pending: [] } : actions.changes();
+      const downloads = step.reminder ? null : actions.downloads?.();
       const built = buildFollowUp({
-        applied: [...applied, ...changes.applied],
+        ...(step.reminder && { reminder: FORMAT_REMINDER }),
+        applied: [...applied, ...changes.applied, ...(downloads?.applied ?? [])],
         skipped: [
           ...held.map(({ path, reason }) => ({ path, reason })),
-          ...changes.pending.map((path) => ({ path, reason: 'not confirmed' }))
+          ...changes.pending.map((path) => ({ path, reason: 'not confirmed' })),
+          ...(downloads?.pending ?? []).map((path) => ({ path, reason: 'not downloaded' }))
         ],
         files: step.files,
         refused: step.refused,
         runs: step.runs,
+        processes: step.processes,
+        logs: step.logs,
+        errors: step.errors,
+        attached: step.images.map((image) => image.path),
         ...(step.continuation && { continuation: step.continuation })
       });
       if (!built) {
@@ -794,10 +1027,43 @@ export class FullAutoLoop {
     if (step.phase === 'send') await this.send(step, stale);
   }
 
+  /**
+   * The loop guard for edits: a file written with the same content in
+   * `LOOP_GUARD_REPEATS` replies of one run means the chat is going round in circles.
+   * Returns that file, or null.
+   */
+  private repeatedWrite(actions: ReplyActions): string | null {
+    let repeated: string | null = null;
+    for (const { path, hash } of actions.fingerprints ?? []) {
+      const key = `${path}\u0000${hash}`;
+      const count = (this.writes.get(key) ?? 0) + 1;
+      this.writes.set(key, count);
+      if (count >= LOOP_GUARD_REPEATS) repeated ??= path;
+    }
+    return repeated;
+  }
+
+  /**
+   * The loop guard for commands: the same command failing the same way (`failureSignature`)
+   * `LOOP_GUARD_REPEATS` times in a row. A pass, or a different failure, starts it over.
+   */
+  private repeatedFailure(command: string, result: RunResult, passed: boolean): boolean {
+    if (passed) {
+      this.failures.delete(command);
+      return false;
+    }
+    const exit = result.status === 'exited' ? `exit ${result.exitCode}` : result.status;
+    const signature = failureSignature(exit, result.output);
+    const last = this.failures.get(command);
+    const count = last?.signature === signature ? last.count + 1 : 1;
+    this.failures.set(command, { signature, count });
+    return count >= LOOP_GUARD_REPEATS;
+  }
+
   private async send(step: Step, stale: () => boolean): Promise<void> {
     const { page } = this.deps;
     if (step.sentFrom === null) {
-      if (this.step >= this.limit) {
+      if (this.limit !== null && this.step >= this.limit) {
         this.pause('step-limit');
         return;
       }
@@ -819,9 +1085,13 @@ export class FullAutoLoop {
           this.pause('send-failed');
           return;
         }
+        if (step.images.length > 0 && !page.attach(step.images)) {
+          this.pause('send-failed');
+          return;
+        }
       }
       step.sentFrom = before;
-      if (!(await this.pressSend(stale))) {
+      if (!(await this.pressSend(stale, step.images.length > 0))) {
         if (!stale()) this.pause('send-failed');
         return;
       }
@@ -833,7 +1103,7 @@ export class FullAutoLoop {
         this.pause('send-failed');
         return;
       }
-      if (!(await this.pressSend(stale))) {
+      if (!(await this.pressSend(stale, step.images.length > 0))) {
         if (!stale()) this.pause('send-failed');
         return;
       }
@@ -871,27 +1141,31 @@ export class FullAutoLoop {
   private confirmSent(step: Step): void {
     this.step += 1;
     if (step.reminder) step.actions.markReminded();
-    else step.actions.markReadsSent();
+    // A reminder carries the files the reply asked for too, when it asked for any.
+    if (!step.reminder || step.files.length + step.images.length + step.refused.length > 0) {
+      step.actions.markReadsSent();
+    }
     this.current = null;
     this.reason = undefined;
     this.note = undefined;
+    const sent = `Sent message ${this.step}${this.limit === null ? '' : ` of ${this.limit}`}`;
     this.set('waiting-reply', {
       kind: 'sent',
       // Redactions don't stop the send; the log says how many.
       text: step.reminder
-        ? `Sent message ${this.step} of ${this.limit}: a format reminder (${this.reminders} of ${MAX_FORMAT_REMINDERS}).`
+        ? `${sent}: a format reminder (${this.reminders} of ${MAX_FORMAT_REMINDERS}).`
         : step.redacted > 0
-          ? `Sent message ${this.step} of ${this.limit}, with ${step.redacted} likely ${step.redacted === 1 ? 'secret' : 'secrets'} redacted.`
-          : `Sent message ${this.step} of ${this.limit}.`
+          ? `${sent}, with ${step.redacted} likely ${step.redacted === 1 ? 'secret' : 'secrets'} redacted.`
+          : `${sent}.`
     });
   }
 
   /**
    * Clicks send, waiting for the button: the page shows (or enables) it only once it has
-   * rendered the text just inserted, so it may not be there yet.
+   * rendered the text just inserted (and uploaded any images), so it may not be there yet.
    */
-  private async pressSend(stale: () => boolean): Promise<boolean> {
-    const deadline = this.deps.now() + SEND_BUTTON_WAIT_MS;
+  private async pressSend(stale: () => boolean, attached = false): Promise<boolean> {
+    const deadline = this.deps.now() + (attached ? ATTACH_SEND_WAIT_MS : SEND_BUTTON_WAIT_MS);
     while (!this.deps.page.submit()) {
       if (stale() || this.deps.now() >= deadline) return false;
       await this.deps.sleep(SEND_POLL_MS);
@@ -906,7 +1180,9 @@ export class FullAutoLoop {
     if (reason === 'disconnected' && this.catchUp && this.inWakeWindow()) {
       this.resumeOnConnect = true;
     }
-    if (reason !== 'interrupted' && reason !== 'command-interrupted') this.detail = undefined;
+    if (reason !== 'interrupted' && reason !== 'command-interrupted' && reason !== 'stuck') {
+      this.detail = undefined;
+    }
     if (reason !== 'interrupted') this.pageContinue = false;
     this.set('paused', { kind: 'paused', text: pauseReasonText(reason, this.detail) });
   }
@@ -935,7 +1211,7 @@ export class FullAutoLoop {
       loopId: this.loopId,
       state: this.state,
       step: this.step,
-      limit: Math.max(1, this.limit),
+      limit: this.limit === null ? null : Math.max(1, this.limit),
       ...(this.state === 'paused' && this.reason && { reason: this.reason }),
       ...(this.state === 'paused' && this.detail && { detail: this.detail.slice(0, 300) }),
       ...(this.state === 'paused' &&

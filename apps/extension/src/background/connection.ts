@@ -36,6 +36,18 @@ export const STALE_AFTER_MS = 50_000;
 export const HANDSHAKE_TIMEOUT_MS = 5_000;
 /** A file request with no response by then fails with `timeout`. */
 export const REQUEST_TIMEOUT_MS = 15_000;
+/**
+ * Requests that take longer: a download fetches up to 20 MB from the internet, a binary
+ * write or read moves as much over the socket, and starting a background process may first
+ * stop the one already running.
+ */
+export const SLOW_REQUEST_TIMEOUT_MS: Partial<Record<FileRequestType, number>> = {
+  download: 90_000,
+  write_binary: 60_000,
+  read_binary: 60_000,
+  bg_start: 30_000,
+  bg_stop: 15_000
+};
 const HEALTH_TIMEOUT_MS = 800;
 const PAIR_TIMEOUT_MS = 5_000;
 
@@ -237,7 +249,7 @@ export class Connection {
           ok: false,
           error: { code: 'timeout', message: 'The Bridge app did not answer.' }
         });
-      }, REQUEST_TIMEOUT_MS);
+      }, SLOW_REQUEST_TIMEOUT_MS[type] ?? REQUEST_TIMEOUT_MS);
       this.pending.set(id, {
         type,
         resolve: resolve as (outcome: RequestOutcome<unknown>) => void,

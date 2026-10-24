@@ -4,8 +4,13 @@ import { LoopId } from './files';
 // The Full auto loop runs in the extension. The desktop shows its state, logs its steps in
 // Activity and can stop it. These are the words both sides use.
 
-export const DEFAULT_STEP_LIMIT = 10;
-export const MAX_STEP_LIMIT = 25;
+export const DEFAULT_STEP_LIMIT = 25;
+export const MAX_STEP_LIMIT = 100;
+/**
+ * The loop guard: the same command failing the same way, or the same file written with the
+ * same content, this many times in a run pauses it (`stuck`), with or without a step limit.
+ */
+export const LOOP_GUARD_REPEATS = 3;
 /** The loop never auto-sends sooner than this after the previous auto-send. */
 export const LOOP_MIN_SEND_GAP_MS = 3_000;
 
@@ -40,7 +45,9 @@ export const PAUSE_REASONS = [
   'format-issues',
   'stalled',
   'interrupted',
-  'command-interrupted'
+  'command-interrupted',
+  'download',
+  'stuck'
 ] as const;
 export const PauseReason = z.enum(PAUSE_REASONS);
 export type PauseReason = z.infer<typeof PauseReason>;
@@ -59,7 +66,7 @@ export const PAUSE_REASON_TEXT: Record<PauseReason, string> = {
   'step-limit': 'The loop reached its step limit.',
   'send-failed': 'Bridge pressed send, but no new message appeared.',
   'needs-click':
-    'The reply deletes or renames files. Those always need your click: review them on their cards, then Resume.',
+    'The reply deletes or renames files. Those need your click unless you allowed them in the app: review them on their cards, then Resume.',
   'app-restarted':
     'The Bridge app restarted, which turns Full auto off. Turn it on again in the app, then Resume.',
   slept: 'The computer slept in the middle of a step. Check the cards, then Resume.',
@@ -67,7 +74,9 @@ export const PAUSE_REASON_TEXT: Record<PauseReason, string> = {
     'The chat kept missing Bridge’s format after two reminders. Check the reply, then Resume.',
   stalled: 'The chat seems stuck after sleep.',
   interrupted: 'The chat’s reply was interrupted.',
-  'command-interrupted': 'A command was interrupted by sleep.'
+  'command-interrupted': 'A command was interrupted by sleep.',
+  download: 'The reply wants to download a file. Downloads always need your click.',
+  stuck: 'Looks stuck: the same failure repeated.'
 };
 
 /**
@@ -83,6 +92,7 @@ export function pauseReasonText(reason: PauseReason, detail?: string): string {
   if (reason === 'command-interrupted' && detail) {
     return `A command was interrupted by sleep: ${detail}`;
   }
+  if (reason === 'stuck' && detail) return `Looks stuck: the same failure repeated (${detail}).`;
   return PAUSE_REASON_TEXT[reason];
 }
 
@@ -123,8 +133,9 @@ export const LoopReport = z.strictObject({
   loopId: LoopId,
   state: LoopState,
   /** Messages auto-sent in this run. */
-  step: z.number().int().nonnegative().max(1000),
-  limit: z.number().int().positive().max(1000),
+  step: z.number().int().nonnegative().max(100_000),
+  /** The run's step limit, or null for Unlimited. */
+  limit: z.number().int().positive().max(100_000).nullable(),
   reason: PauseReason.optional(),
   /** What the pause is about (`pauseReasonText`): a marker, a path or a command. */
   detail: z.string().max(300).optional(),
@@ -134,3 +145,22 @@ export const LoopReport = z.strictObject({
   event: LoopEvent.optional()
 });
 export type LoopReport = z.infer<typeof LoopReport>;
+
+/** "Step 3 of 25", or "Step 3" with no limit. */
+export function stepText(step: number, limit: number | null): string {
+  return limit === null ? `Step ${step}` : `Step ${step} of ${limit}`;
+}
+
+/**
+ * A command failure, as the loop guard compares them: its exit and the end of its output,
+ * with numbers (times, durations, ports, line counts) and spacing ignored, so one test
+ * failing the same way twice reads the same even though its timings differ.
+ */
+export function failureSignature(exit: string, output: string, chars = 2_000): string {
+  const tail = output
+    .slice(-chars)
+    .replace(/\d+(?:\.\d+)?/g, '#')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return `${exit}\u0000${tail}`;
+}

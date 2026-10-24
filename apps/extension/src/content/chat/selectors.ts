@@ -108,8 +108,32 @@ export const SELECTORS = {
     '.text-token-text-error',
     '[class*="text-red"]',
     '[role="alert"]'
+  ],
+  /**
+   * An image the chat made, inside an assistant turn. Best guesses: the page labels them
+   * "Generated image"; the last fallback is any big image in the turn (`isGeneratedImage`).
+   */
+  generatedImage: [
+    'img[alt^="Generated image"]',
+    'img[alt*="generated image" i]',
+    'img[alt*="image generated" i]',
+    '[data-testid*="image-gen"] img',
+    '[data-testid*="generated-image"] img'
+  ],
+  /**
+   * The composer's file input (behind its attach button). Attaching sets its files, the way
+   * picking them in the file dialog does. A paste of the files is the fallback.
+   */
+  fileInput: [
+    'form input[type="file"][accept*="image"]',
+    'input[type="file"][accept*="image"]',
+    'form input[type="file"]',
+    'input[type="file"]'
   ]
 } as const;
+
+/** The smallest image (either side, in pixels) that counts as one the chat made. */
+export const GENERATED_IMAGE_MIN_PX = 256;
 
 /** The text of the page's Continue generating button, when no selector finds it. */
 export const CONTINUE_TEXT = /^continue generating$/i;
@@ -356,4 +380,32 @@ export function conversationIdFrom(url: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * The images the chat made in an assistant message's turn, in page order: ones the page
+ * labels as generated, else big images (never icons, avatars or Bridge's own cards).
+ */
+export function generatedImages(message: Element): HTMLImageElement[] {
+  const turn = closest(message, SELECTORS.turn) ?? message;
+  const outside = (img: Element) => !img.closest(`[${BRIDGE_HOST_ATTRIBUTE}]`);
+  const labelled = all(turn, SELECTORS.generatedImage).filter(outside);
+  if (labelled.length > 0) {
+    return [...new Set(labelled)].filter(
+      (img): img is HTMLImageElement => img instanceof HTMLImageElement
+    );
+  }
+  return [...turn.querySelectorAll('img')].filter(
+    (img) =>
+      outside(img) &&
+      !img.closest('a[href^="http"]') &&
+      Math.min(img.naturalWidth || img.width, img.naturalHeight || img.height) >=
+        GENERATED_IMAGE_MIN_PX
+  );
+}
+
+/** The composer's file input, if the page has one. */
+export function findFileInput(doc: Document = document): HTMLInputElement | null {
+  const found = first(doc, SELECTORS.fileInput);
+  return found instanceof HTMLInputElement ? found : null;
 }

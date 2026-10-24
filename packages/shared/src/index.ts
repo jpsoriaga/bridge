@@ -1,3 +1,5 @@
+export * from './assets';
+export * from './background';
 export * from './brand';
 export * from './commands';
 export * from './diagnostics';

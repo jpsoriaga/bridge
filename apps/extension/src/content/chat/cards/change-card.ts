@@ -6,6 +6,7 @@ import {
   type Mode,
   type RenameResult,
   type StatResult,
+  type Trigger,
   type UndoResult
 } from '@bridge/shared';
 import type { CardState, ChangeCardRecord, RequestOutcome } from '../../../messages';
@@ -64,6 +65,8 @@ export class ChangeCard {
   private appliedAt: number | undefined;
   private mode: Mode | null = null;
   private checking: Promise<void> = Promise.resolve();
+  /** Applied by Full auto ("Also approve automatically"), not a click. */
+  auto = false;
   /** The marker was missing its closing `@@`. Set before `init`. */
   formatFixed = false;
 
@@ -98,6 +101,7 @@ export class ChangeCard {
       this.state = record.state;
       this.opId = record.opId;
       this.appliedAt = record.appliedAt;
+      this.auto = record.auto === true;
       this.render();
       return;
     }
@@ -195,29 +199,37 @@ export class ChangeCard {
     this.onChange();
   }
 
-  /** Deletes or moves the file. Only ever on a click. */
-  async apply(): Promise<boolean> {
+  /**
+   * Deletes or moves the file: on a click, or from Full auto when "Also approve
+   * automatically → deletes and renames" is on (the app checks that setting itself).
+   */
+  async apply(options: { trigger?: Trigger; loopId?: string } = {}): Promise<boolean> {
     if (!this.applicable || !this.base) return false;
+    const trigger = options.trigger ?? 'click';
     this.busy = 'apply';
     this.error = null;
     this.render();
     const { hash } = this.base;
+    const labels = { trigger, ...(options.loopId && { loopId: options.loopId }) };
     const outcome =
       this.change.kind === 'delete'
         ? await this.ask<RequestOutcome<DeleteResult>>({
             type: 'chat-delete',
             path: this.change.path,
-            baseHash: hash
+            baseHash: hash,
+            ...labels
           })
         : await this.ask<RequestOutcome<RenameResult>>({
             type: 'chat-rename',
             from: this.change.from,
             to: this.change.to,
-            baseHash: hash
+            baseHash: hash,
+            ...labels
           });
     this.busy = null;
     if (outcome?.ok) {
       this.state = 'applied';
+      this.auto = trigger === 'auto';
       this.opId = outcome.result.opId;
       this.appliedAt = Date.now();
       this.conflict = false;
@@ -292,6 +304,7 @@ export class ChangeCard {
       state: this.state,
       updatedAt: Date.now(),
       ...(this.opId && { opId: this.opId }),
+      ...(this.auto && this.state === 'applied' && { auto: true as const }),
       ...(this.appliedAt !== undefined &&
         this.state !== 'pending' && {
           appliedAt: this.appliedAt
@@ -358,8 +371,10 @@ export class ChangeCard {
     } else if (this.conflict) {
       hint = 'The file changed on disk since this card first checked it.';
       tone = 'warning';
-    } else if (this.mode && this.mode !== 'manual') {
+    } else if (this.mode === 'auto-apply') {
       hint = `${deleting ? 'Deletes' : 'Renames'} always need your click, even in this mode. ${hint}`;
+    } else if (this.mode === 'full-auto') {
+      hint = `${deleting ? 'Deletes' : 'Renames'} need your click unless the app allows Full auto to approve them. ${hint}`;
     }
 
     const reject = h(
@@ -468,7 +483,7 @@ export class ChangeCard {
           this.title(),
           copyButton(this.path),
           h('span', { class: 'spacer' }),
-          ...resultWord(result),
+          ...resultWord(result, this.auto),
           this.appliedAt !== undefined
             ? h('span', { class: 'time' }, formatTime(this.appliedAt))
             : null,

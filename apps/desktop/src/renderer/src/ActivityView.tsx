@@ -65,7 +65,7 @@ function Row({ entry, onOpen }: { entry: ActivityEntry; onOpen: (entry: Activity
   const description = describeEntry(entry);
   const { meta } = description;
   const title = entry.kind === 'loop' ? (entry.text ?? '') : entry.path || '(no path)';
-  const openable = entry.kind !== 'loop';
+  const openable = entry.kind !== 'loop' && entry.kind !== 'process';
   const body = (
     <>
       <EntryMark description={description} />
@@ -111,6 +111,25 @@ function DiffBody({ detail }: { detail: OpDetail }) {
     return diffFile(detail.before, detail.after ?? '');
   }, [detail]);
 
+  if (detail.image) {
+    const { mime, before, after } = detail.image;
+    return (
+      <div className="thumbnails">
+        {before && (
+          <figure className="thumbnail">
+            <img src={`data:${mime};base64,${before}`} alt={`${detail.path} before`} />
+            <figcaption className="hint">Before</figcaption>
+          </figure>
+        )}
+        {after && (
+          <figure className="thumbnail">
+            <img src={`data:${mime};base64,${after}`} alt={`${detail.path} as Bridge wrote it`} />
+            <figcaption className="hint">{before ? 'After' : 'Written'}</figcaption>
+          </figure>
+        )}
+      </div>
+    );
+  }
   if (detail.unavailable) {
     return (
       <p className="empty">

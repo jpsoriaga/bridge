@@ -282,12 +282,17 @@ export class DiffCard {
    * automatic apply (`trigger: 'auto'`) never confirms anything: it leaves partial,
    * conflicting, blocked, gated and oversized files on the card for a click (`held`).
    */
-  async apply(options: { trigger?: Trigger; loopId?: string } = {}): Promise<ApplyOutcome> {
+  async apply(
+    options: { trigger?: Trigger; loopId?: string; approvePartial?: boolean } = {}
+  ): Promise<ApplyOutcome> {
     const trigger = options.trigger ?? 'click';
     if (!this.applicable || !this.diff) return 'not-applicable';
+    // Full auto with "Also approve automatically → partial-looking files" on.
+    const approved =
+      trigger === 'auto' && options.approvePartial === true && this.edit.suspectedPartial;
     if (trigger === 'auto') {
       const hold = this.autoHold();
-      if (hold) {
+      if (hold && !(hold === 'partial' && approved)) {
         this.hold = hold;
         this.render();
         return 'held';
@@ -306,7 +311,8 @@ export class DiffCard {
       content: this.edit.content,
       ...(this.base && { baseHash: this.base.hash }),
       trigger,
-      ...(options.loopId && { loopId: options.loopId })
+      ...(options.loopId && { loopId: options.loopId }),
+      ...(approved && { autoApproved: true as const })
     });
     this.busy = null;
     this.confirmingPartial = false;

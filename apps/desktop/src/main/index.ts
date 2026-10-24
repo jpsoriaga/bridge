@@ -6,6 +6,7 @@ import {
   ipcMain,
   Menu,
   nativeTheme,
+  powerMonitor,
   safeStorage,
   screen,
   session,
@@ -23,6 +24,8 @@ import {
   defaultChannel,
   E2E_PORT,
   formatArgv,
+  isLocalUrl,
+  looksLikeBackground,
   MAX_RUN_TIMEOUT_MS,
   MAX_STEP_LIMIT,
   MIN_RUN_TIMEOUT_MS,
@@ -40,6 +43,7 @@ import {
   IPC,
   type CommandPath,
   type ActivityEntry,
+  type AutoApproveSettings,
   type DesktopState,
   type MenuAction,
   type OpenFolderResult,
@@ -49,6 +53,8 @@ import {
   type SaveListResult,
   type UndoOutcome
 } from '../preload/api';
+import { BackgroundRunner } from './commands/background';
+import { BackgroundLifecycle } from './commands/lifecycle';
 import { DEFAULT_ENV_DENYLIST, isValidEnvPattern, MAX_ENV_PATTERNS } from './commands/env';
 import { isUsablePath, loginEnvOnce, withPath, type LoginEnv } from './commands/login-env';
 import { CommandRunner } from './commands/runner';
@@ -90,6 +96,8 @@ let settings: ReturnType<typeof settingsFile>;
 let modes: ModeState;
 let gated: GatedFiles;
 let runner: CommandRunner;
+let processes: BackgroundRunner;
+let lifecycle: BackgroundLifecycle;
 let commands: CommandService;
 let serverFailed = false;
 let updates: Updates;
@@ -114,6 +122,8 @@ const runLoops = new Map<string, string>();
 let loop: LoopReport | null = null;
 /** New every launch, so the extension can tell the app restarted. */
 const instance = randomUUID();
+/** Each background process's state when last seen, to log what changed. */
+const processStates = new Map<string, string>();
 /** Recent commands' full results, for Activity's detail view, while the app is open. */
 const runDetails = new Map<string, RunResult>();
 const MAX_RUN_DETAILS = 50;
@@ -132,6 +142,18 @@ function commandPath(): CommandPath {
 function allowlist(): string[] | null {
   const key = projects.projectKey;
   return key === null ? null : (settings.read().allowlists[key] ?? null);
+}
+
+/**
+ * The open project's background entries: the saved ones once its list is confirmed, or
+ * the suggestions that look like dev servers before then.
+ */
+function backgroundEntries(): string[] {
+  const key = projects.projectKey;
+  if (key === null) return [];
+  const confirmed = allowlist();
+  if (confirmed === null) return suggestions.filter(looksLikeBackground);
+  return (settings.read().backgroundAllowlists[key] ?? []).filter((e) => confirmed.includes(e));
 }
 
 /** The channel the user picked, or this build's own (beta builds check for betas). */
@@ -173,6 +195,9 @@ function bridgeConfig(): BridgeConfig {
     pauseOnFailure,
     catchUpAfterSleep,
     running: runner.current,
+    background: allowlist() === null ? [] : backgroundEntries(),
+    processes: processes.list(),
+    autoApprove: settings.read().autoApprove,
     instance
   };
 }
@@ -198,6 +223,10 @@ function desktopState(): DesktopState {
     sessionResets: modes.sessionResets,
     allowlist: confirmed,
     allowlistSuggestions: confirmed === null ? suggestions : [],
+    background: backgroundEntries(),
+    processes: processes.list(),
+    autoApprove: saved.autoApprove,
+    unlimitedNoteSeen: saved.unlimitedNoteSeen,
     allowlistNote: saved.allowlistNote,
     installNote: pendingInstallNote(),
     defaultGatedPatterns: DEFAULT_GATED_FILES,
@@ -441,6 +470,29 @@ function sessionBoundary(): void {
   broadcast();
 }
 
+/** A background process started, found its URL, or ended: the log and Activity hear of it. */
+function processesChanged(): void {
+  for (const proc of processes.list()) {
+    const state = `${proc.state}:${proc.url ?? ''}`;
+    if (processStates.get(proc.procId) === state) continue;
+    const first = !processStates.has(proc.procId);
+    processStates.set(proc.procId, state);
+    const what =
+      proc.state === 'running'
+        ? first
+          ? 'started'
+          : `ready at ${proc.url}`
+        : proc.state === 'stopped'
+          ? 'stopped'
+          : `exited${proc.exitCode !== null ? ` (exit ${proc.exitCode})` : proc.signal ? ` (${proc.signal})` : ''}`;
+    log.info(`background ${proc.command}: ${what}`);
+    if (proc.state !== 'running' || first) {
+      projects.record({ kind: 'process', path: proc.command, text: what });
+    }
+  }
+  configChanged();
+}
+
 /** Project switched or settings changed: tell the window and the extension. */
 function projectChanged(): void {
   const root = projects.root;
@@ -452,6 +504,7 @@ function projectChanged(): void {
     // A different project ends Full auto, and whatever was running there stops.
     modes.noteProject(root);
     runner.cancelAll();
+    void lifecycle.projectSwitched();
     loop = null;
     suggestions = [];
     installCommand = null;
@@ -542,6 +595,47 @@ async function setMode(mode: unknown): Promise<Mode> {
   return modes.mode;
 }
 
+/**
+ * Full auto → "Also approve automatically". Turning any of them on asks in a native dialog
+ * that says plainly what it means; the renderer can't skip it. Turning them off never asks.
+ */
+async function setAutoApprove(value: AutoApproveSettings): Promise<AutoApproveSettings> {
+  const current = settings.read().autoApprove;
+  const next = { changes: value.changes, gated: value.gated, partial: value.partial };
+  const added = (Object.keys(next) as (keyof AutoApproveSettings)[]).filter(
+    (key) => next[key] && !current[key]
+  );
+  if (added.length > 0) {
+    if (!mainWindow) return current;
+    const risks: Record<keyof AutoApproveSettings, string> = {
+      changes:
+        '• Deletes and renames: Full auto deletes and moves files the chat names, without asking.',
+      gated:
+        '• Gated files: Full auto changes package.json, lockfiles, CI workflows and git hooks, which decide what commands like npm install and npm test run.',
+      partial:
+        '• Partial-looking files: Full auto writes files that look cut short (“…rest unchanged”), which can replace a whole file with part of it.'
+    };
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      message: 'Let Full auto do these without asking?',
+      detail: [
+        ...added.map((key) => risks[key]),
+        'Each change is backed up first, so Undo in the app or on its card puts it back. Commands off the allowlist, downloads, protected files and files changed on disk still wait for you.'
+      ].join('\n\n'),
+      buttons: ['Cancel', 'Approve automatically'],
+      defaultId: 0,
+      cancelId: 0
+    });
+    if (response !== 1) return current;
+  }
+  settings.update({ autoApprove: next });
+  log.info(
+    `full auto approves automatically: ${(Object.keys(next) as (keyof AutoApproveSettings)[]).filter((k) => next[k]).join(', ') || 'nothing extra'}`
+  );
+  configChanged();
+  return next;
+}
+
 const isUniqueList = (list: string[]) => new Set(list).size === list.length;
 
 function saveList(
@@ -621,12 +715,60 @@ function registerIpc(): void {
       return { ok: false, invalid: typeof bad === 'string' ? bad : null };
     }
     const saved = settings.read();
+    const previous = saved.allowlists[key];
     // A list confirmed from the suggestions already had the install command to pick.
-    if (saved.allowlists[key] === undefined) markInstallNoteSeen(key);
-    const allowlists = { ...saved.allowlists, [key]: [...new Set(entries)] };
-    settings.update({ allowlists });
+    if (previous === undefined) markInstallNoteSeen(key);
+    const list = [...new Set(entries)];
+    // Background entries stay as they were; a new one that looks like a dev server
+    // (`npm run dev`) starts out as one. The user can change either in Settings.
+    const kept = backgroundEntries().filter((entry) => list.includes(entry));
+    const added = list.filter((entry) => !previous?.includes(entry) && looksLikeBackground(entry));
+    settings.update({
+      allowlists: { ...saved.allowlists, [key]: list },
+      backgroundAllowlists: {
+        ...saved.backgroundAllowlists,
+        [key]: [...new Set([...kept, ...added])]
+      }
+    });
     configChanged();
     return { ok: true };
+  });
+  handle(IPC.setBackgroundEntries, (entries): SaveListResult => {
+    const key = projects.projectKey;
+    const confirmed = allowlist();
+    if (key === null || confirmed === null || !Array.isArray(entries)) {
+      return { ok: false, invalid: null };
+    }
+    const bad = entries.find((entry) => typeof entry !== 'string' || !confirmed.includes(entry));
+    if (bad !== undefined) return { ok: false, invalid: typeof bad === 'string' ? bad : null };
+    const saved = settings.read();
+    settings.update({
+      backgroundAllowlists: {
+        ...saved.backgroundAllowlists,
+        [key]: [...new Set(entries as string[])]
+      }
+    });
+    configChanged();
+    return { ok: true };
+  });
+  handle(IPC.setAutoApprove, (value) => setAutoApprove(value as AutoApproveSettings));
+  handle(IPC.dismissUnlimitedNote, () => {
+    settings.update({ unlimitedNoteSeen: true });
+    broadcast();
+  });
+  handle(IPC.stopProcess, async (procId) => {
+    if (typeof procId !== 'string') return false;
+    return processes.stop({ procId });
+  });
+  handle(IPC.getProcessLogs, (procId) =>
+    typeof procId === 'string' ? processes.logs({ procId }, { tail: 2_000 }) : null
+  );
+  handle(IPC.openProcessUrl, async (procId) => {
+    const url = typeof procId === 'string' ? processes.find({ procId })?.url : null;
+    // Only ever a URL on this computer that the process itself printed.
+    if (!url || !isLocalUrl(url)) return false;
+    await shell.openExternal(url);
+    return true;
   });
   handle(IPC.setGatedPatterns, (patterns) =>
     saveList(patterns, isValidDenyPattern, MAX_DENY_PATTERNS, (list) => {
@@ -652,9 +794,10 @@ function registerIpc(): void {
       !Number.isInteger(next.installTimeoutMs) ||
       next.installTimeoutMs! < MIN_RUN_TIMEOUT_MS ||
       next.installTimeoutMs! > MAX_RUN_TIMEOUT_MS ||
-      !Number.isInteger(next.stepLimit) ||
-      next.stepLimit! < 1 ||
-      next.stepLimit! > MAX_STEP_LIMIT ||
+      (next.stepLimit !== null &&
+        (!Number.isInteger(next.stepLimit) ||
+          next.stepLimit! < 1 ||
+          next.stepLimit! > MAX_STEP_LIMIT)) ||
       typeof next.pauseOnFailure !== 'boolean' ||
       typeof next.catchUpAfterSleep !== 'boolean'
     ) {
@@ -663,7 +806,7 @@ function registerIpc(): void {
     settings.update({
       runTimeoutMs: next.timeoutMs!,
       installTimeoutMs: next.installTimeoutMs!,
-      stepLimit: next.stepLimit!,
+      stepLimit: next.stepLimit ?? null,
       pauseOnFailure: next.pauseOnFailure,
       catchUpAfterSleep: next.catchUpAfterSleep
     });
@@ -846,6 +989,10 @@ async function startServer(): Promise<void> {
       configChanged();
     }
   });
+  processes = new BackgroundRunner(() => processesChanged());
+  lifecycle = new BackgroundLifecycle(processes, (why) =>
+    log.info(`background processes stopped: ${why}`)
+  );
   projects = new ProjectService({
     settings,
     backupsDir: join(userData, 'backups'),
@@ -859,9 +1006,11 @@ async function startServer(): Promise<void> {
   });
   commands = new CommandService({
     runner,
+    processes,
     root: () => projects.root,
     mode: () => modes.mode,
     allowlist: () => allowlist() ?? [],
+    background: backgroundEntries,
     envPatterns: () => settings.read().envPatterns,
     timeoutMs: () => settings.read().runTimeoutMs,
     installTimeoutMs: () => settings.read().installTimeoutMs,
@@ -888,15 +1037,27 @@ async function startServer(): Promise<void> {
     files: guardedFiles(
       projects,
       () => modes.mode,
-      () => gated
+      () => gated,
+      () => settings.read().autoApprove
     ),
     commands: async (request) => {
-      if (request.type === 'run_cancel') return commands.cancel(request.payload.runId);
-      const outcome = await commands.run(request.payload);
-      if (outcome.ok && request.payload.loopId) {
-        runLoops.set(outcome.result.runId, request.payload.loopId);
+      switch (request.type) {
+        case 'run_cancel':
+          return commands.cancel(request.payload.runId);
+        case 'bg_start':
+          return commands.start(request.payload);
+        case 'bg_stop':
+          return commands.stop(request.payload);
+        case 'bg_logs':
+          return commands.logs(request.payload);
+        case 'run': {
+          const outcome = await commands.run(request.payload);
+          if (outcome.ok && request.payload.loopId) {
+            runLoops.set(outcome.result.runId, request.payload.loopId);
+          }
+          return outcome;
+        }
       }
-      return outcome;
     },
     project: () => projects.project,
     config: bridgeConfig,
@@ -916,6 +1077,7 @@ async function startServer(): Promise<void> {
     onSessionEnd: () => {
       log.info('chat session ended');
       sessionBoundary();
+      void lifecycle.sessionEnded();
     },
     onSessionStart: () => {
       log.info('chat session started');
@@ -1048,16 +1210,27 @@ void app.whenReady().then(async () => {
   createWindow();
   // Only if the user asked for it (Settings → About). Notify only.
   if (settings.read().checkUpdatesOnStart) void updates.check();
+  // A long sleep ends the dev servers: nobody's been using them, and they hold ports.
+  powerMonitor.on('suspend', () => lifecycle.suspended());
+  powerMonitor.on('resume', () => void lifecycle.resumed());
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
   clearTimeout(expiryTimer);
   // A running command is in its own process group; take it down with the app.
   runner?.cancelAll();
+  // Dev servers too, and wait until they're gone (a few seconds at most), so none outlives
+  // the app.
+  const stopping = lifecycle?.beforeQuit();
+  if (stopping) {
+    event.preventDefault();
+    void stopping.finally(() => app.quit());
+    return;
+  }
   void projects?.close();
   void server?.close();
 });

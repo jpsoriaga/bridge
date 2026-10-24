@@ -1,7 +1,13 @@
 import { useState, type KeyboardEvent, type ReactNode } from 'react';
 import { UPDATE_CHANNELS, type UpdateChannel } from '@bridge/shared';
 import type { DesktopState, Theme, UpdateCheck } from '../../preload/api';
-import { AllowlistEditor, FullAutoFields, PathOverride, TimeoutField } from './Commands';
+import {
+  AllowlistEditor,
+  AutoApproveFields,
+  FullAutoFields,
+  PathOverride,
+  TimeoutField
+} from './Commands';
 import { STATUS_LABELS, UpdateNotice } from './Header';
 import { PatternList } from './PatternList';
 
@@ -450,7 +456,12 @@ export function SettingsView({ state }: { state: DesktopState }) {
         <PathOverride key={state.commandPath.override} commandPath={state.commandPath} />
       </Section>
       <Section id="full-auto" title="Full auto">
-        <FullAutoFields key={state.runSettings.stepLimit} settings={state.runSettings} />
+        <FullAutoFields
+          key={String(state.runSettings.stepLimit)}
+          settings={state.runSettings}
+          noteSeen={state.unlimitedNoteSeen}
+        />
+        <AutoApproveFields value={state.autoApprove} />
       </Section>
       <BackupSettings key={state.backupRetentionDays} state={state} />
       <AppearanceSettings state={state} />

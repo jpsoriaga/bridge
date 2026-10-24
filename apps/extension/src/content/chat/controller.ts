@@ -1,12 +1,17 @@
 import {
+  errorLines,
+  formatArgv,
   interruptionOf,
   parseChat,
+  type BackgroundLogs,
   type BridgeConfig,
   type ChatParse,
   type Interruption,
+  type ProcessLines,
   type RunResult
 } from '@bridge/shared';
 import type {
+  BinaryCardRecord,
   CardRecord,
   ChatSyncReply,
   DiffCardRecord,
@@ -14,18 +19,22 @@ import type {
   PendingRequest,
   ReadCardRecord,
   SessionState,
+  RequestOutcome,
   TabLocation,
   WorkerRequest
 } from '../../messages';
 import { messageToText } from './adapter';
+import { AssetCard } from './cards/asset-card';
 import { ChangeCard, type FileChange } from './cards/change-card';
 import { DiffCard, type Ask } from './cards/diff-card';
+import { DownloadCard } from './cards/download-card';
 import { FormatCard } from './cards/format-card';
 import { loadFonts } from './cards/host';
 import { InterruptCard } from './cards/interrupt-card';
 import { LoopChip } from './cards/loop-chip';
 import { MessageBar } from './cards/message-bar';
 import { PageNotice } from './cards/page-notice';
+import { ProcessCard, type ProcessKind } from './cards/process-card';
 import { ReadCard } from './cards/read-card';
 import { RunCard } from './cards/run-card';
 import { blockKey, contentHash } from './keys';
@@ -34,6 +43,7 @@ import {
   type ChangeSummary,
   type EditHold,
   type EditSummary,
+  type LogCursor,
   type ReplyActions
 } from './loop';
 import { livePage, newestReply } from './page';
@@ -49,6 +59,7 @@ import {
   conversationMissing,
   findContinueButton,
   findConversation,
+  generatedImages,
   isMessageComplete,
   messageBody,
   messageIdOf,
@@ -86,6 +97,14 @@ interface MessageView {
   runs: RunCard[];
   /** DELETE then RENAME cards, in the reply's order. */
   changes: ChangeCard[];
+  /** START, STOP and LOGS cards, in the reply's order. */
+  processes: ProcessCard[];
+  /** DOWNLOAD cards. Always a click. */
+  downloads: DownloadCard[];
+  /** Save to project, one under each image the chat made in this reply. */
+  assets: AssetCard[];
+  /** How many images the chat made in this reply, when the cards were built. */
+  images: number;
   bar: MessageBar | null;
   /** What in the reply missed Bridge's format, with **Send format reminder**. */
   format: FormatCard | null;
@@ -102,15 +121,30 @@ type RunEvent = { type: 'output'; chunk: string } | { type: 'exit'; result: RunR
 
 /**
  * Applies a reply's edits by the Auto-apply rules: in order, leaving partial, conflicting,
- * blocked, gated and oversized files on their cards for a click. A path the reply edits
- * more than once gets only its last version. Deletes and renames are never in here: they
- * always need a click.
+ * blocked, gated and oversized files on their cards for a click (a partial one is applied
+ * when Full auto's "Also approve automatically" allows it). A path the reply edits more
+ * than once gets only its last version. Deletes and renames are never in here.
  */
-export async function autoApply(cards: readonly DiffCard[], loopId?: string): Promise<void> {
+export async function autoApply(
+  cards: readonly DiffCard[],
+  loopId?: string,
+  options: { approvePartial?: boolean } = {}
+): Promise<void> {
   for (const card of cards) {
     await card.ready();
     if (card.state !== 'pending' || !card.applicable || card.duplicate === 'earlier') continue;
-    await card.apply({ trigger: 'auto', ...(loopId && { loopId }) });
+    await card.apply({
+      trigger: 'auto',
+      ...(loopId && { loopId }),
+      ...(options.approvePartial && { approvePartial: true })
+    });
+  }
+}
+
+/** Saves the images a reply named with `@@ASSET`, for Auto-apply and Full auto. */
+export async function autoSave(cards: readonly AssetCard[], loopId?: string): Promise<void> {
+  for (const card of cards) {
+    if (card.automatic) await card.save({ trigger: 'auto', ...(loopId && { loopId }) });
   }
 }
 
@@ -136,10 +170,19 @@ export function changeSummary(cards: readonly ChangeCard[]): ChangeSummary {
   };
 }
 
-/** Where a reply's edits stand: applied, or left on their card and why. */
-export function editSummary(cards: readonly DiffCard[]): EditSummary {
+/** Where a reply's edits stand: applied, or left on their card and why. Images too. */
+export function editSummary(
+  cards: readonly DiffCard[],
+  assets: readonly AssetCard[] = []
+): EditSummary {
   const applied: string[] = [];
   const held: EditSummary['held'] = [];
+  for (const asset of assets) {
+    if (asset.state === 'applied') applied.push(asset.summary);
+    else if (asset.state === 'pending' && asset.suggested !== null && asset.path.trim()) {
+      held.push({ path: asset.summary, hold: 'blocked', reason: 'not saved' });
+    }
+  }
   for (const card of cards) {
     if (card.state === 'applied') applied.push(card.edit.path);
     else if (card.state === 'rejected') {
@@ -186,6 +229,13 @@ export class ChatController {
   /** Replies Bridge stopped because they were stuck after sleep: they count as cut off. */
   private readonly stopped = new Set<string>();
   private lastPoll = Date.now();
+  /** Replies that finished while the app was out of reach: acted on once it's back. */
+  private readonly unacted = new Set<MessageView>();
+  /**
+   * `@@ASSET` paths from the last reply that had no image of its own: the chat often makes
+   * the image in the reply after the one that names it.
+   */
+  private orphanAssets: { conversationId: string; paths: string[] } | null = null;
   private missingStrikes = 0;
   private pollTimer: ReturnType<typeof setInterval> | undefined;
   /** The extension was reloaded or updated under this page: everything here is dead. */
@@ -282,13 +332,17 @@ export class ChatController {
     }
   }
 
-  /** "Show" in the side panel: scroll a pending READ or RUN card into view. */
+  /** "Show" in the side panel: scroll a pending READ, RUN, START or DOWNLOAD card into view. */
   reveal(id: string): void {
     for (const view of this.views.values()) {
       if (view.read?.key === id) view.read.reveal();
       view.runs.forEach((run, i) => {
         if (runRequestId(view, i) === id) run.reveal();
       });
+      view.processes.forEach((card, i) => {
+        if (`start:${view.id}:${i}` === id) card.reveal();
+      });
+      for (const card of view.downloads) if (card.key === id) card.reveal();
     }
   }
 
@@ -300,10 +354,20 @@ export class ChatController {
       for (const card of view.cards) card.setMode(config?.mode ?? null);
       for (const card of view.changes) card.setMode(config?.mode ?? null);
       for (const run of view.runs) run.setConfig(config);
+      for (const card of view.processes) card.setConfig(config);
+      for (const card of view.downloads) card.setMode(config?.mode ?? null);
+      for (const card of view.assets) card.setMode(config?.mode ?? null);
     }
     this.loop.onConfig(config);
     this.renderChip();
     this.reportRequests();
+    // Replies that finished while the app was away get their turn now.
+    if (config) {
+      for (const view of [...this.unacted]) {
+        this.unacted.delete(view);
+        if (this.views.get(view.id) === view) void this.act(view);
+      }
+    }
   }
 
   /** Output or the exit of a command a RUN card here started. */
@@ -393,6 +457,12 @@ export class ChatController {
           edits: parsed.edits.map((e) => e.path),
           reads: parsed.reads,
           runs: parsed.runs,
+          starts: parsed.starts,
+          stops: parsed.stops,
+          logs: parsed.logs,
+          assets: parsed.assets,
+          downloads: parsed.downloads.map((d) => d.path),
+          images: last ? generatedImages(last).length : 0,
           done: parsed.done,
           issues: parsed.issues.map((issue) => issue.kind)
         }
@@ -468,7 +538,10 @@ export class ChatController {
         ? {
             state,
             step,
-            limit: Math.max(limit, this.config?.stepLimit ?? 1),
+            limit:
+              limit === null || this.config?.stepLimit === null
+                ? null
+                : Math.max(limit, this.config?.stepLimit ?? 1),
             ...(reason && { reason }),
             ...(note && { note })
           }
@@ -499,6 +572,24 @@ export class ChatController {
             allowed: run.refusal() === null
           });
         });
+        view.processes.forEach((card, i) => {
+          if (!card.waiting) return;
+          requests.push({
+            id: `start:${view.id}:${i}`,
+            kind: 'start',
+            text: card.command.slice(0, 2_000),
+            allowed: card.refusal() === null
+          });
+        });
+        for (const card of view.downloads) {
+          if (!card.waiting) continue;
+          requests.push({
+            id: card.key,
+            kind: 'download',
+            text: `${card.download.url} → ${card.path}`.slice(0, 2_000),
+            allowed: true
+          });
+        }
       }
     }
     const json = JSON.stringify(requests.slice(-100));
@@ -632,10 +723,17 @@ export class ChatController {
       const id = messageIdOf(element, index);
       const interrupted = status === 'interrupted' || this.stopped.has(id);
       const { text, codeBlocks } = messageToText(element);
+      const images = generatedImages(element);
       const existing = this.views.get(id);
       // Same text: the same cards, even in a new element. Long conversations unmount old
-      // messages and mount them again as they scroll back in; the cards move with them.
-      if (existing && existing.text === text && (existing.interruption !== null) === interrupted) {
+      // messages and mount them again as they scroll back in; the cards move with them. An
+      // image that finished generating since counts as a change.
+      if (
+        existing &&
+        existing.text === text &&
+        existing.images === images.length &&
+        (existing.interruption !== null) === interrupted
+      ) {
         this.mount(existing, element, codeBlocks);
         continue;
       }
@@ -643,12 +741,13 @@ export class ChatController {
       // New, or its text changed (regenerated or edited): rebuild its cards. Cards come
       // back from their stored state, so a rebuilt view shows what was applied.
       if (existing) this.remove(existing);
-      const view = await this.build(conversationId, id, element, text, interrupted);
+      const view = await this.build(conversationId, id, element, text, interrupted, images);
       if (this.conversationId !== conversationId || this.invalid) return;
+      if (existing) this.unacted.delete(existing);
       this.views.set(id, view);
       this.mount(view, element, codeBlocks);
       // Only a reply that wasn't on the page when it loaded is acted on, and only once.
-      const actedKey = `${id}:${text.length}${interrupted ? ':cut' : ''}`;
+      const actedKey = `${id}:${text.length}:${images.length}${interrupted ? ':cut' : ''}`;
       if (!this.history.has(id) && !this.acted.has(actedKey)) {
         this.acted.add(actedKey);
         void this.act(view);
@@ -657,13 +756,24 @@ export class ChatController {
     this.reportRequests();
   }
 
-  /** What the app's mode does with a new reply. */
+  /**
+   * What the app's mode does with a new reply. One that finishes while the app is out of
+   * reach (a reconnect, after sleep) waits for it to be back instead of being dropped:
+   * without the mode Bridge can't tell Full auto from Manual, and dropping it left the
+   * files the reply asked for waiting on a click.
+   */
   private async act(view: MessageView): Promise<void> {
     if (this.session !== 'active') return;
     await view.ready;
-    switch (this.config?.mode) {
+    if (this.views.get(view.id) !== view) return;
+    if (!this.config) {
+      this.unacted.add(view);
+      return;
+    }
+    switch (this.config.mode) {
       case 'auto-apply':
         await autoApply(view.cards);
+        await autoSave(view.assets);
         break;
       case 'full-auto':
         this.loop.onReply(this.actionsOf(view));
@@ -673,30 +783,112 @@ export class ChatController {
     }
   }
 
+  /** The newest view for a message: a rebuilt one replaces the one a step started with. */
+  private latest(view: MessageView): MessageView {
+    return this.views.get(view.id) ?? view;
+  }
+
+  /** Where each running background process's log is now. */
+  private async logCursor(): Promise<LogCursor> {
+    const running = (this.config?.processes ?? []).filter((p) => p.state === 'running');
+    const cursor: { command: string; next: number }[] = [];
+    for (const proc of running) {
+      const argv = this.argvOf(proc.command);
+      if (!argv) continue;
+      const logs = await this.ask<RequestOutcome<BackgroundLogs>>({
+        type: 'chat-bg-logs',
+        argv,
+        tail: 0
+      });
+      if (logs?.ok) cursor.push({ command: proc.command, next: logs.result.next });
+    }
+    return cursor;
+  }
+
+  /** Error lines each process printed since `cursor`. */
+  private async processErrors(cursor: LogCursor): Promise<ProcessLines[]> {
+    const found: ProcessLines[] = [];
+    for (const { command, next } of cursor) {
+      const argv = this.argvOf(command);
+      if (!argv) continue;
+      const logs = await this.ask<RequestOutcome<BackgroundLogs>>({
+        type: 'chat-bg-logs',
+        argv,
+        since: next
+      });
+      const lines = logs?.ok ? errorLines(logs.result.lines) : [];
+      const url = this.config?.processes.find((p) => p.command === command)?.url ?? null;
+      if (lines.length > 0) found.push({ command, lines, url });
+    }
+    return found;
+  }
+
+  /** A process's argv, from the card that started it (the app reports the command only). */
+  private argvOf(command: string): string[] | null {
+    for (const view of this.views.values()) {
+      for (const card of view.processes) {
+        if (card.parsed.ok && formatArgv(card.parsed.argv) === command) return card.parsed.argv;
+      }
+    }
+    // Its command as the app formats it: plain words split on spaces.
+    const words = command.split(' ').filter(Boolean);
+    return words.length > 0 && !/["'\\]/.test(command) ? words : null;
+  }
+
   private actionsOf(view: MessageView): ReplyActions {
     const { parse } = view;
     // A file the cut fell in isn't part of the step: the continuation asks for it again.
     const cards = view.cards.filter((card) => card !== view.cutOff);
+    const approve = () =>
+      this.config?.mode === 'full-auto'
+        ? this.config.autoApprove
+        : { changes: false, gated: false, partial: false };
+    const lifecycle = view.processes.filter((card) => card.kind !== 'logs');
     return {
-      hasActions: cards.length + parse.reads.length + view.runs.length + view.changes.length > 0,
+      hasActions:
+        cards.length +
+          parse.reads.length +
+          view.runs.length +
+          view.changes.length +
+          view.processes.length +
+          view.downloads.length +
+          view.assets.filter((card) => card.automatic).length >
+        0,
       done: parse.done,
       // A cut-off reply's broken tail isn't the chat ignoring the format.
       formatIssues: parse.issues.length > 0 && view.interruption === null,
       markReminded: () => view.format?.markAutoSent(),
       applyEdits: async (loopId) => {
-        await autoApply(cards, loopId);
+        await autoApply(cards, loopId, { approvePartial: approve().partial });
+        await autoSave(view.assets, loopId);
         await Promise.allSettled(view.changes.map((card) => card.ready()));
+        if (approve().changes) {
+          // "Also approve automatically → deletes and renames": the app checks it too.
+          for (const card of view.changes) {
+            if (card.applicable) await card.apply({ trigger: 'auto', ...(loopId && { loopId }) });
+          }
+        }
+        await Promise.allSettled(view.downloads.map((card) => card.ready()));
       },
-      edits: () => editSummary(cards),
+      edits: () => editSummary(cards, view.assets),
       changes: () => changeSummary(view.changes),
+      fingerprints: cards
+        .filter((card) => card.duplicate !== 'earlier')
+        .map((card) => ({
+          path: card.edit.path,
+          hash: card.key.slice(card.key.lastIndexOf(':') + 1)
+        })),
       reads: parse.reads,
       readFiles: async () => {
-        if (!view.read) return { files: [], refused: [], disconnected: false };
-        await view.read.ready();
-        return view.read.contents();
+        // The newest version of this reply's READ card: a rebuilt reply has a new one.
+        const read = this.latest(view).read;
+        if (!read) return { files: [], refused: [], disconnected: false };
+        await read.ready();
+        return read.contents();
       },
       markReadsSent: () => {
-        view.read?.markSent();
+        const latest = this.latest(view);
+        for (const card of new Set([view.read, latest.read])) card?.markSent();
         view.interrupt?.markAutoSent();
       },
       runs: view.runs.map((card) => ({
@@ -705,6 +897,24 @@ export class ChatController {
         run: (loopId) => card.run({ trigger: 'auto', loopId }),
         busy: () => card.running
       })),
+      processes: lifecycle.map((card) => ({
+        kind: card.kind as Exclude<ProcessKind, 'logs'>,
+        command: card.command,
+        refusal: () => (card.kind === 'start' ? card.refusal() : null),
+        act: (loopId) =>
+          card.kind === 'start'
+            ? card.start({ trigger: 'auto', loopId })
+            : card.stop({ trigger: 'auto' })
+      })),
+      logs: view.processes
+        .filter((card) => card.kind === 'logs')
+        .map((card) => ({ command: card.command, read: () => card.readLogs() })),
+      downloads: () => ({
+        applied: view.downloads.filter((c) => c.state === 'applied').map((c) => c.summary),
+        pending: view.downloads.filter((c) => c.waiting).map((c) => c.path)
+      }),
+      logCursor: () => this.logCursor(),
+      processErrors: (cursor) => this.processErrors(cursor),
       interruption: view.interruption && {
         ...view.interruption,
         pageContinue: view.element === newestReply() && findContinueButton() !== null
@@ -717,10 +927,19 @@ export class ChatController {
     messageId: string,
     element: Element,
     text: string,
-    interrupted = false
+    interrupted = false,
+    images: HTMLImageElement[] = []
   ): Promise<MessageView> {
     const parse = parseChat(text);
-    const { reads, runs, deletes, renames, fixed, issues } = parse;
+    const { reads, runs, deletes, renames, fixed, issues, starts, stops, logs, downloads } = parse;
+    // Each image takes the next `@@ASSET` path. Paths with no image wait for the next reply.
+    let assetPaths = parse.assets;
+    if (images.length === 0) {
+      this.orphanAssets = assetPaths.length > 0 ? { conversationId, paths: assetPaths } : null;
+    } else if (assetPaths.length === 0 && this.orphanAssets?.conversationId === conversationId) {
+      assetPaths = this.orphanAssets.paths;
+      this.orphanAssets = null;
+    }
     // A reply that was cut off: where. A DONE got through, so nothing that matters was lost.
     const interruption = interrupted && !parse.done ? interruptionOf(parse) : null;
     // The page draws a cut-off code block as a whole one, so its file is marked partial:
@@ -739,6 +958,10 @@ export class ChatController {
       read: null,
       runs: [],
       changes: [],
+      processes: [],
+      downloads: [],
+      assets: [],
+      images: images.length,
       bar: null,
       format: issues.length > 0 && interruption === null ? new FormatCard(issues) : null,
       interruption,
@@ -757,8 +980,33 @@ export class ChatController {
       ...deletes.map((path) => ({ kind: 'delete' as const, path })),
       ...renames.map((rename) => ({ kind: 'rename' as const, ...rename }))
     ];
+    const processCards: { kind: ProcessKind; command: string; fixed: boolean }[] = [
+      ...stops.map((command) => ({
+        kind: 'stop' as const,
+        command,
+        fixed: fixed.stops.includes(command)
+      })),
+      ...starts.map((command) => ({
+        kind: 'start' as const,
+        command,
+        fixed: fixed.starts.includes(command)
+      })),
+      ...logs.map((command) => ({
+        kind: 'logs' as const,
+        command,
+        fixed: fixed.logs.includes(command)
+      }))
+    ];
     if (
-      edits.length + reads.length + runs.length + changes.length + issues.length > 0 ||
+      edits.length +
+        reads.length +
+        runs.length +
+        changes.length +
+        issues.length +
+        processCards.length +
+        downloads.length +
+        images.length >
+        0 ||
       interruption
     ) {
       loadFonts();
@@ -780,7 +1028,28 @@ export class ChatController {
           : blockKey(conversationId, messageId, `r${i}`, await contentHash(change.from, change.to))
       )
     );
-    const wanted = [...keys, ...(readKey ? [readKey] : []), ...changeKeys];
+    const downloadKeys = await Promise.all(
+      downloads.map(async (download, i) =>
+        blockKey(conversationId, messageId, `w${i}`, await contentHash(download.url, download.path))
+      )
+    );
+    const assetKeys = await Promise.all(
+      images.map(async (_, i) =>
+        blockKey(
+          conversationId,
+          messageId,
+          `a${i}`,
+          await contentHash(assetPaths[i] ?? '', String(i))
+        )
+      )
+    );
+    const wanted = [
+      ...keys,
+      ...(readKey ? [readKey] : []),
+      ...changeKeys,
+      ...downloadKeys,
+      ...assetKeys
+    ];
     const records =
       wanted.length > 0
         ? ((await this.ask<Record<string, CardRecord>>({ type: 'card-get', keys: wanted })) ?? {})
@@ -848,6 +1117,41 @@ export class ChatController {
       card.formatFixed = fixed.runs.includes(card.command);
       card.setConfig(this.config);
     }
+
+    view.processes = processCards.map(({ kind, command, fixed: formatFixed }) => {
+      const card = new ProcessCard(kind, command, this.ask);
+      card.formatFixed = formatFixed;
+      card.setConfig(this.config);
+      return card;
+    });
+
+    const binaryRecord = (key: string | undefined) => {
+      const record = key ? records[key] : undefined;
+      return record && 'card' in record && (record.card === 'asset' || record.card === 'download')
+        ? (record satisfies BinaryCardRecord)
+        : undefined;
+    };
+    view.downloads = downloads.map((download, i) => {
+      const card = new DownloadCard(downloadKeys[i] ?? '', download, this.ask, changed);
+      card.formatFixed = fixed.downloads.some(
+        (d) => d.url === download.url && d.path === download.path
+      );
+      card.setMode(this.config?.mode ?? null);
+      loading.push(card.init(binaryRecord(downloadKeys[i])));
+      return card;
+    });
+    view.assets = images.map((image, i) => {
+      const card = new AssetCard(
+        assetKeys[i] ?? '',
+        image,
+        assetPaths[i] ?? null,
+        this.ask,
+        changed
+      );
+      card.setMode(this.config?.mode ?? null);
+      card.init(binaryRecord(assetKeys[i]));
+      return card;
+    });
     view.ready = Promise.allSettled(loading);
     return view;
   }
@@ -870,11 +1174,22 @@ export class ChatController {
       last = card.host;
     }
     if (view.bar) placeAfter(view.bar.host, last);
-    // DELETE, RENAME, READ, RUN and format cards go at the end, in that order.
+    // Save to project goes right after its image; the page may have drawn it anew.
+    const images = generatedImages(element);
+    view.assets.forEach((card, i) => {
+      const image = images[i];
+      if (!image) return;
+      card.image = image;
+      const anchor = image.closest('figure') ?? image;
+      if (anchor.nextElementSibling !== card.host) anchor.after(card.host);
+    });
+    // DELETE, RENAME, DOWNLOAD, READ, RUN, process and format cards go at the end, in that order.
     const tail = [
       ...view.changes.map((c) => c.host),
+      ...view.downloads.map((c) => c.host),
       view.read?.host,
       ...view.runs.map((r) => r.host),
+      ...view.processes.map((c) => c.host),
       view.format?.host,
       view.interrupt?.host
     ].filter((host): host is HTMLElement => host !== undefined);
@@ -890,6 +1205,9 @@ export class ChatController {
     for (const card of view.changes) card.setDisabled(disabled);
     view.read?.setDisabled(disabled);
     for (const run of view.runs) run.setDisabled(disabled);
+    for (const card of view.processes) card.setDisabled(disabled);
+    for (const card of view.downloads) card.setDisabled(disabled);
+    for (const card of view.assets) card.setDisabled(disabled);
     view.format?.setDisabled(disabled);
     view.interrupt?.setDisabled(disabled);
     view.bar?.render();
@@ -900,6 +1218,9 @@ export class ChatController {
     for (const card of view.changes) card.host.remove();
     view.read?.host.remove();
     for (const run of view.runs) run.host.remove();
+    for (const card of view.processes) card.host.remove();
+    for (const card of view.downloads) card.host.remove();
+    for (const card of view.assets) card.host.remove();
     view.format?.host.remove();
     view.interrupt?.host.remove();
     view.bar?.host.remove();

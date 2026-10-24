@@ -427,6 +427,48 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [x] Dry run on GitHub green with the notes and INSTALL.md (run 39980326869; `check` passed against the real build files, INSTALL.md in SHA256SUMS.txt, README.txt in the zip)
 - [ ] How to install pasted into the `v1.2.0-beta.3` release notes by hand
 
+## 1.3.0-beta.1: Dev servers, assets, a hands-off Full auto
+
+### Full auto approvals
+
+- [x] Found why requested files waited for a click: a reply that finished while the config was null was dropped by `ChatController.act`; also pauses before reading, reminder-only format replies, and rebuilt READ cards (PLAN.md "1.3.0 decisions")
+- [x] Replies without a config wait for it (`unacted`); files and images are read before any pause; a format reminder carries the files; the newest READ card is marked sent; protected files reported as refused without pausing (tests: controller, loop)
+- [x] Settings → Full auto → Also approve automatically: deletes and renames, gated files, partial-looking files; off by default; native dialog with the risk on turning one on; risk text while on (tests: renderer)
+- [x] Enforced by the app (`writeRefusal`, `changeRefusal`, `guardedFiles`); never automatic: off-allowlist commands, downloads, denylisted paths, conflicts (tests: server-level `assets.test.ts`, loop)
+- [x] Activity labels automatic approvals "auto-approved"; the extension's claim kept only while its setting is on (tests)
+
+### Background processes
+
+- [x] Allowlist kinds: `backgroundAllowlists`, the Background checkbox, dev/start/serve/preview/watch suggested as background (`looksLikeBackground`); `background-only` / `not-background` (tests)
+- [x] `@@START`, `@@STOP`, `@@LOGS` in the parser (lenient forms, format issues) and the session prompt (tests)
+- [x] `BackgroundRunner`: no timeout, 3 at most, restart instead of a duplicate, process trees killed, ready URL, 2,000 redacted lines (tests with real processes and helpers)
+- [x] Same rules as `@@RUN` (`CommandService.check`/`locate`): allowlist, denied options, mode, filtered env, project root, `shell: false` (tests)
+- [x] Process cards (Start / Restart / Stop / Send logs), the app's Session page and the side panel (URL, uptime, Stop, View logs) (tests)
+- [x] Full auto: starts and stops in order, waits for the URL, sends logs, and errors printed after edits (tests)
+- [x] Stopped on session end, project switch, quit (waits) and sleep over 30 minutes (`BackgroundLifecycle`; tests with process trees)
+
+### Assets
+
+- [x] `upload` + `write_binary`: chunks in memory only, size and hash checked, dropped when refused; sandbox, denylist, gated files, backups, undo, 20 MB, type from the bytes (tests)
+- [x] Generated images: Save to project card prefilled from `@@ASSET`, read from the page with no new permission, re-encoded to the path's type, auto-saved in Auto-apply and Full auto (tests; e2e)
+- [x] `@@DOWNLOAD`: click only in every mode, https only and on every redirect, no local names or addresses (on the connection's own lookup), 20 MB, sniffed types, SVG scan (tests; e2e)
+- [x] `read_binary` and attachments: Send files → Attach, READ cards attach images, Full auto attaches and waits for the upload (tests; e2e with a file input)
+- [x] Thumbnails: Save card, downloaded images, and the app's Activity detail
+
+### Step limit
+
+- [x] Default 25 (1–100), Unlimited with a one-time note, saved 10 read as 25 once (tests)
+- [x] Loop guard: same failure 3 times in a row, same file and content 3 times, with or without a limit (tests; e2e)
+
+### Checks and docs
+
+- [x] Protocol v8; format, lint, typecheck, tests with coverage, build
+- [x] `e2e/assets.cjs` (dev server, logs, restart, Save to project, Attach, downloads, Full auto with requested files, dev server errors, an auto-approved delete, Unlimited, the loop guard, a download pause, End session stopping the tree); the other e2e scripts still pass
+- [x] Session prompt, PLAN.md, SECURITY.md, PRIVACY.md, README.md, BETA.md, DESIGN.md, CHANGELOG, e2e README, CI
+- [x] Version 1.3.0-beta.1
+- [ ] Release dry run on GitHub
+- [ ] Manual run on the real chatgpt.com (e2e README "1.3.0 on the real chatgpt.com"): generated image selectors, the file input, dev server errors
+
 ## Landing page (`apps/site`)
 
 - [x] `@bridge/site`: Vite 7, React 18, TypeScript, Tailwind v4 (`@tailwindcss/vite`) with the tokens mapped into its theme; self-hosted Geist; private, outside `version:set`, the release workflow and the root build

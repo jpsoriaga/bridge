@@ -344,7 +344,7 @@ const CONV = 'e2e00000-0000-4000-8000-000000000001';
   }
   step('step 1 sent the failing output: ' + sendOne.text.split('\n')[0]);
   // The chip shows the step counter on the page.
-  await waitFor('chip', async () => (await cardText(cdp, 'loop-chip', 0)).includes('1 / 10'));
+  await waitFor('chip', async () => (await cardText(cdp, 'loop-chip', 0)).includes('1 / 25'));
   step('page chip: ' + (await cardText(cdp, 'loop-chip', 0)));
 
   // The next reply comes back at once; the loop still waits 3s before its next send.

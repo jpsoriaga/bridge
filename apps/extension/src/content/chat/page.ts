@@ -1,4 +1,5 @@
-import { insertIntoComposer } from './composer';
+import { attachmentFiles } from './cards/read-card';
+import { attachToComposer, insertIntoComposer } from './composer';
 import type { LoopPage } from './loop';
 import {
   assistantMessages,
@@ -40,6 +41,7 @@ export const livePage: LoopPage = {
     return composer instanceof HTMLTextAreaElement ? composer.value : (composer.textContent ?? '');
   },
   insert: (text) => insertIntoComposer(text),
+  attach: (images) => attachToComposer(attachmentFiles(images)).ok,
   submit: () => press(findSendButton()),
   error: () => pageError(),
   replyStatus: () => {

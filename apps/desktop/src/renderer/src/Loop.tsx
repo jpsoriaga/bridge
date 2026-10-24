@@ -3,6 +3,7 @@ import {
   LOOP_NOTE_TEXT,
   LOOP_STATE_LABELS,
   pauseReasonText,
+  stepText,
   type LoopReport
 } from '@bridge/shared';
 import type { ActivityEntry, DesktopState } from '../../preload/api';
@@ -22,7 +23,7 @@ export function LoopStatus({ state }: { state: DesktopState }) {
         <span className="dot" data-tone={tone} />
         {!loop || loop.state === 'idle'
           ? 'Full auto is on. It starts when a reply asks for edits, files or commands.'
-          : `${loop.note && loop.state !== 'paused' ? LOOP_NOTE_TEXT[loop.note] : LOOP_STATE_LABELS[loop.state]} · step ${loop.step} of ${loop.limit}`}
+          : `${loop.note && loop.state !== 'paused' ? LOOP_NOTE_TEXT[loop.note] : LOOP_STATE_LABELS[loop.state]} · ${stepText(loop.step, loop.limit).toLowerCase()}`}
       </p>
       {loop?.state === 'paused' && loop.reason && (
         <p className="hint" data-tone="warning">
@@ -52,9 +53,7 @@ export function LoopStrip({ loop }: { loop: LoopReport | null }) {
         {loop!.note && !paused ? LOOP_NOTE_TEXT[loop!.note] : LOOP_STATE_LABELS[loop!.state]}
         {paused && loop!.reason ? ` · ${pauseReasonText(loop!.reason, loop!.detail)}` : ''}
       </span>
-      <span className="step-count">
-        Step {loop!.step} of {loop!.limit}
-      </span>
+      <span className="step-count">{stepText(loop!.step, loop!.limit)}</span>
       <button
         type="button"
         className="btn btn-danger"

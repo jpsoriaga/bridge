@@ -38,6 +38,20 @@ export const ERROR_TEXT: Record<FileErrorCode | 'cancelled', string> = {
   'project-binary': 'Bridge doesn’t run programs from inside the project unless allowlisted.',
   busy: 'Another command is still running. Wait for it, or cancel it.',
   'unknown-run': 'That command has already finished.',
+  'background-only':
+    'That command keeps running, so it’s started with @@START, not @@RUN. See Settings → Commands.',
+  'not-background':
+    'That command isn’t marked “Runs in the background” in Settings → Commands, so @@START refused it.',
+  'too-many': 'Three background processes are running already. Stop one first.',
+  'unknown-process': 'That background process isn’t running.',
+  upload: 'The file didn’t arrive whole from the extension. Nothing was written.',
+  'not-https': 'Bridge downloads only https:// links.',
+  'private-address':
+    'That link points at this computer or the local network, so Bridge didn’t download it.',
+  'download-failed': 'The download didn’t finish. Nothing was written.',
+  'unsupported-type':
+    'That file isn’t a type Bridge saves, or isn’t the type its name says (a .png that’s really a web page, say).',
+  'unsafe-svg': 'That SVG has scripts or event handlers in it, so Bridge didn’t save it.',
   cancelled: 'Cancelled. Nothing changed.'
 };
 
@@ -82,7 +96,7 @@ export function kindsOf(entry: ActivityEntry): ActivityKind[] {
   if (entry.kind === 'create' || entry.kind === 'modify') kinds.push('write');
   if (entry.kind === 'delete') kinds.push('delete');
   if (entry.kind === 'rename') kinds.push('rename');
-  if (entry.kind === 'run' || entry.op === 'run') kinds.push('run');
+  if (entry.kind === 'run' || entry.kind === 'process' || entry.op === 'run') kinds.push('run');
   if (entry.kind === 'rejected' || entry.kind === 'failed') kinds.push('blocked');
   if (entry.trigger === 'auto') kinds.push('auto');
   return kinds;
@@ -111,9 +125,17 @@ export interface EntryDescription {
 
 export function describeEntry(entry: ActivityEntry): EntryDescription {
   const reason = entry.code ? FILE_ERROR_LABELS[entry.code] : '';
-  const via = entry.trigger === 'auto' ? ' · auto' : entry.source === 'chat' ? ' · via chat' : '';
+  const via =
+    entry.trigger === 'auto'
+      ? entry.autoApproved
+        ? ' · auto-approved'
+        : ' · auto'
+      : entry.source === 'chat'
+        ? ' · via chat'
+        : '';
+  const what = entry.origin === 'download' ? ' · downloaded' : entry.binary ? ' · binary' : '';
   const done = (kind: ResultKind, verb: string, detail = ''): EntryDescription => {
-    const rest = `${detail}${via}${entry.undone ? ' · undone' : ''}`;
+    const rest = `${detail}${what}${via}${entry.undone ? ' · undone' : ''}`;
     return {
       meta: `${verb}${rest}`,
       result: { kind, verb, rest, tone: entry.undone ? undefined : RESULT_TONES[kind] }
@@ -143,7 +165,9 @@ export function describeEntry(entry: ActivityEntry): EntryDescription {
               ? 'Delete failed'
               : entry.op === 'rename'
                 ? 'Rename failed'
-                : 'Write failed';
+                : entry.op === 'download'
+                  ? 'Download failed'
+                  : 'Write failed';
       return { meta: `${what} · ${reason}`, tone: 'danger' };
     }
     case 'run': {
@@ -164,6 +188,13 @@ export function describeEntry(entry: ActivityEntry): EntryDescription {
       return {
         meta: `${label}${seconds}${via}`,
         tone: run.status === 'cancelled' ? undefined : 'danger'
+      };
+    }
+    case 'process': {
+      const text = entry.text ?? '';
+      return {
+        meta: `Background · ${text}`,
+        tone: text === 'started' ? 'success' : text.startsWith('exited') ? 'warning' : undefined
       };
     }
     case 'loop':

@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import {
   IPC,
   type ActivityEntry,
+  type AutoApproveSettings,
   type BridgeApi,
   type DesktopState,
   type MenuAction,
@@ -13,7 +14,7 @@ import {
   type UndoOutcome,
   type UpdateCheck
 } from './api';
-import type { Mode } from '@bridge/shared';
+import type { BackgroundLogs, Mode } from '@bridge/shared';
 
 declare const __BRIDGE_VERSION__: string;
 
@@ -50,6 +51,15 @@ const api: BridgeApi = {
   setMode: (mode) => ipcRenderer.invoke(IPC.setMode, mode) as Promise<Mode>,
   setAllowlist: (entries) =>
     ipcRenderer.invoke(IPC.setAllowlist, entries) as Promise<SaveListResult>,
+  setBackgroundEntries: (entries) =>
+    ipcRenderer.invoke(IPC.setBackgroundEntries, entries) as Promise<SaveListResult>,
+  setAutoApprove: (settings) =>
+    ipcRenderer.invoke(IPC.setAutoApprove, settings) as Promise<AutoApproveSettings>,
+  dismissUnlimitedNote: () => ipcRenderer.invoke(IPC.dismissUnlimitedNote) as Promise<void>,
+  stopProcess: (procId) => ipcRenderer.invoke(IPC.stopProcess, procId) as Promise<boolean>,
+  getProcessLogs: (procId) =>
+    ipcRenderer.invoke(IPC.getProcessLogs, procId) as Promise<BackgroundLogs | null>,
+  openProcessUrl: (procId) => ipcRenderer.invoke(IPC.openProcessUrl, procId) as Promise<boolean>,
   setGatedPatterns: (patterns) =>
     ipcRenderer.invoke(IPC.setGatedPatterns, patterns) as Promise<SaveListResult>,
   setEnvPatterns: (patterns) =>

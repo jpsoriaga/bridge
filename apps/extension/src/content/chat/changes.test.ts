@@ -109,7 +109,12 @@ describe('ChangeCard: delete', () => {
     expect(card.badges).toEqual(['delete']);
     expect(card.applicable).toBe(true);
     expect(await card.apply()).toBe(true);
-    expect(worker.calls).toContainEqual({ type: 'chat-delete', path: 'old.ts', baseHash: HASH_A });
+    expect(worker.calls).toContainEqual({
+      type: 'chat-delete',
+      path: 'old.ts',
+      baseHash: HASH_A,
+      trigger: 'click'
+    });
     expect(card.state).toBe('applied');
     const saved = worker.calls.filter((c) => c.type === 'card-set');
     expect(saved.at(-1)).toMatchObject({
@@ -145,7 +150,12 @@ describe('ChangeCard: delete', () => {
     expect(card.badges).toEqual(['delete', 'conflict']);
     // It deletes what's there now, with the new hash.
     await card.apply();
-    expect(worker.calls).toContainEqual({ type: 'chat-delete', path: 'old.ts', baseHash: HASH_B });
+    expect(worker.calls).toContainEqual({
+      type: 'chat-delete',
+      path: 'old.ts',
+      baseHash: HASH_B,
+      trigger: 'click'
+    });
   });
 });
 
@@ -160,7 +170,8 @@ describe('ChangeCard: rename', () => {
       type: 'chat-rename',
       from: 'a.ts',
       to: 'lib/b.ts',
-      baseHash: HASH_A
+      baseHash: HASH_A,
+      trigger: 'click'
     });
   });
 

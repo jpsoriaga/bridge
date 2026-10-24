@@ -71,3 +71,70 @@ describe('update channel', () => {
     expect(settings.read().updateChannel).toBeUndefined();
   });
 });
+
+describe('Full auto settings (1.3.0)', () => {
+  let t: ReturnType<typeof tempProject>;
+  let path: string;
+  beforeEach(() => {
+    t = tempProject('bridge-settings-');
+    path = join(t.base, 'settings.json');
+  });
+  afterEach(() => t.cleanup());
+
+  it('starts at a step limit of 25, with nothing extra approved', () => {
+    const read = settingsFile(path).read();
+    expect(read.stepLimit).toBe(25);
+    expect(read.autoApprove).toEqual({ changes: false, gated: false, partial: false });
+    expect(read.unlimitedNoteSeen).toBe(false);
+  });
+
+  it('moves the old default of 10 to 25 once, and keeps a limit the user chose', () => {
+    writeFileSync(path, JSON.stringify({ stepLimit: 10 }));
+    const settings = settingsFile(path);
+    expect(settings.read().stepLimit).toBe(25);
+    settings.update({});
+    // Saved as 2: a 10 chosen from now on stays 10.
+    settings.update({ stepLimit: 10 });
+    expect(settings.read().stepLimit).toBe(10);
+    writeFileSync(path, JSON.stringify({ stepLimit: 7 }));
+    expect(settingsFile(path).read().stepLimit).toBe(7);
+  });
+
+  it('keeps Unlimited as null, and clamps anything else into 1–100', () => {
+    writeFileSync(path, JSON.stringify({ stepLimit: null, stepLimitFormat: 2 }));
+    expect(settingsFile(path).read().stepLimit).toBeNull();
+    writeFileSync(path, JSON.stringify({ stepLimit: 500, stepLimitFormat: 2 }));
+    expect(settingsFile(path).read().stepLimit).toBe(100);
+    writeFileSync(path, JSON.stringify({ stepLimit: 'lots', stepLimitFormat: 2 }));
+    expect(settingsFile(path).read().stepLimit).toBe(25);
+  });
+
+  it('keeps background entries only when they’re on that project’s allowlist', () => {
+    writeFileSync(
+      path,
+      JSON.stringify({
+        allowlistFormat: 2,
+        allowlists: { '0123456789abcdef': ['npm run dev', 'npm test'] },
+        backgroundAllowlists: {
+          '0123456789abcdef': ['npm run dev', 'npm run watch'],
+          ffffffffffffffff: ['npm start']
+        }
+      })
+    );
+    expect(settingsFile(path).read().backgroundAllowlists).toEqual({
+      '0123456789abcdef': ['npm run dev']
+    });
+  });
+
+  it('reads only true as on for each auto-approve setting', () => {
+    writeFileSync(
+      path,
+      JSON.stringify({ autoApprove: { changes: true, gated: 'yes', partial: 1 } })
+    );
+    expect(settingsFile(path).read().autoApprove).toEqual({
+      changes: true,
+      gated: false,
+      partial: false
+    });
+  });
+});

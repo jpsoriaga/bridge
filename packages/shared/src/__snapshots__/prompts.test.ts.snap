@@ -13,9 +13,9 @@ RULES
 2. See a file: \`@@READ path@@\` on its own line. Never guess what's in a file.
 3. Run a command: \`@@RUN npm test@@\`. Only these are allowed: \`pnpm test\`, \`pnpm lint *\`, \`pnpm typecheck\`, \`git status\`, \`git diff\` (\`*\`: you may add arguments there)
 4. Delete: \`@@DELETE path@@\`. Rename: \`@@RENAME old/path -> new/path@@\`
-5. When the task is finished: \`@@DONE@@\`
-6. Every marker starts AND ends with @@ and is wrapped in single backticks.
-7. Paths are relative to the project root. One code block per file.
+5. Binary files (images, fonts) can never be written as text. To save an image you generate, put \`@@ASSET public/hero.png@@\` on the line before it. To fetch one: \`@@DOWNLOAD https://example.com/logo.svg -> public/logo.svg@@\` (I approve each). \`@@READ\` on an image attaches it.
+6. When the task is finished: \`@@DONE@@\`
+7. Every marker starts AND ends with @@ and is wrapped in single backticks. Paths are relative to the project root. One code block per file.
 8. Files I send as \`@@CONTEXT path@@\` are for reference only. Don't edit them unless I ask.
 
 Before every reply, check that each marker matches these formats exactly.

@@ -53,6 +53,11 @@ export interface Settings {
    */
   allowlists: Record<string, string[]>;
   /**
+   * The entries of each project's allowlist that are background processes (dev servers),
+   * started with `@@START` and kept running. Always a subset of that project's allowlist.
+   */
+  backgroundAllowlists: Record<string, string[]>;
+  /**
    * Allowlist entries are exact unless they end in ` *` (since Phase 7). Lists saved before
    * that allowed extra arguments everywhere, so reading one adds ` *` to every entry once
    * and sets `allowlistNote` until the user has seen it in Settings.
@@ -71,7 +76,17 @@ export interface Settings {
    * `<manager> install`?" note: lists confirmed before 1.1.0 get it once.
    */
   installNoteSeen: string[];
-  stepLimit: number;
+  /** Full auto's step limit, or null for Unlimited. */
+  stepLimit: number | null;
+  /**
+   * 2 since 1.3.0, when the default went from 10 to 25. A file without it that says 10 had
+   * the old default saved (every save writes every setting), so it reads as 25 once.
+   */
+  stepLimitFormat: 2;
+  /** The one-time note about Unlimited (Free/Go plans, the loop guard) was read. */
+  unlimitedNoteSeen: boolean;
+  /** Full auto → "Also approve automatically". All off by default. */
+  autoApprove: { changes: boolean; gated: boolean; partial: boolean };
   pauseOnFailure: boolean;
   /** Full auto syncs with the chat after the computer sleeps, instead of pausing. */
   catchUpAfterSleep: boolean;
@@ -171,6 +186,19 @@ export function settingsFile(path: string) {
         allowlists[id] = next;
       }
     }
+    const backgroundAllowlists: Record<string, string[]> = {};
+    if (typeof data.backgroundAllowlists === 'object' && data.backgroundAllowlists !== null) {
+      for (const [id, list] of Object.entries(data.backgroundAllowlists)) {
+        const allowed = allowlists[id];
+        if (!allowed || !isValidAllowlist(list)) continue;
+        backgroundAllowlists[id] = list.filter((entry) => allowed.includes(entry));
+      }
+    }
+    const approve = (data.autoApprove ?? {}) as Partial<Settings['autoApprove']>;
+    const savedStepLimit =
+      data.stepLimit === null
+        ? null
+        : clampInt(data.stepLimit, 1, MAX_STEP_LIMIT, DEFAULT_STEP_LIMIT);
     const settings: Settings = {
       recentProjects: Array.isArray(data.recentProjects)
         ? data.recentProjects.filter(isAbsolutePath).slice(0, 5)
@@ -199,7 +227,16 @@ export function settingsFile(path: string) {
             .filter((id): id is string => typeof id === 'string' && /^[0-9a-f]{16}$/.test(id))
             .slice(-1000)
         : [],
-      stepLimit: clampInt(data.stepLimit, 1, MAX_STEP_LIMIT, DEFAULT_STEP_LIMIT),
+      stepLimit:
+        data.stepLimitFormat !== 2 && savedStepLimit === 10 ? DEFAULT_STEP_LIMIT : savedStepLimit,
+      stepLimitFormat: 2,
+      unlimitedNoteSeen: data.unlimitedNoteSeen === true,
+      backgroundAllowlists,
+      autoApprove: {
+        changes: approve.changes === true,
+        gated: approve.gated === true,
+        partial: approve.partial === true
+      },
       pauseOnFailure: data.pauseOnFailure === true,
       catchUpAfterSleep: data.catchUpAfterSleep !== false,
       pathOverride: isUsablePath(data.pathOverride) ? data.pathOverride : '',

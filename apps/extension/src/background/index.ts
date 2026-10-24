@@ -5,13 +5,20 @@ import {
   candidatePorts,
   FILE_ERROR_LABELS,
   formatContextBlock,
+  isAttachablePath,
+  isLocalUrl,
   summarizeTree,
   type FileErrorCode,
-  type LoopReport
+  type LoopReport,
+  type WriteResult
 } from '@bridge/shared';
+import { base64ToBytes, sha256Hex, uploadChunks } from '../binary';
 import {
   ChipCorner,
   PanelHello,
+  type AttachFilesResult,
+  type AttachmentFile,
+  type AttachResult,
   SIDE_PANEL_PORT,
   TabLocation,
   TabMessage,
@@ -278,7 +285,8 @@ async function sessionPrompt(): Promise<
       projectName: project.name,
       tree: entries,
       truncated,
-      allowlist: connection.config?.allowlist ?? []
+      allowlist: connection.config?.allowlist ?? [],
+      background: connection.config?.background ?? []
     }),
     total,
     shown
@@ -363,6 +371,61 @@ async function sendFiles(paths: string[], windowId: number): Promise<SendFilesRe
   return { ok: true, chars: inserted.chars, sent, refused, redacted };
 }
 
+/**
+ * A binary write: the bytes go to the app in chunks (`upload`), then `write_binary` checks
+ * the whole against its size and hash and writes it through the sandbox.
+ */
+async function writeBinary(
+  request: WorkerRequestOf<'chat-write-binary'>
+): Promise<RequestOutcome<WriteResult>> {
+  const bytes = base64ToBytes(request.data);
+  const uploadId = crypto.randomUUID();
+  for (const chunk of uploadChunks(request.data, bytes.length)) {
+    const sent = await connection.request('upload', { uploadId, ...chunk });
+    if (!sent.ok) return sent;
+  }
+  return connection.request('write_binary', {
+    path: request.path,
+    uploadId,
+    size: bytes.length,
+    sha256: await sha256Hex(bytes),
+    ...(request.baseHash !== undefined && { baseHash: request.baseHash }),
+    source: 'chat',
+    trigger: request.trigger,
+    ...(request.loopId !== undefined && { loopId: request.loopId })
+  });
+}
+
+/** Send files → Attach: each image, as bytes, into the message box as an attachment. */
+async function attachFiles(paths: string[], windowId: number): Promise<AttachFilesResult> {
+  const tab = await chatTab(windowId);
+  if (!tab.ok) return tab;
+  if (!(await sessions.isActive(tab.tabId))) return { ok: false, error: 'no-session' };
+  const files: AttachmentFile[] = [];
+  const attached: string[] = [];
+  const refused: Extract<AttachFilesResult, { ok: true }>['refused'] = [];
+  for (const path of paths) {
+    if (!isAttachablePath(path)) {
+      refused.push({ path, code: 'not-an-image' });
+      continue;
+    }
+    const read = await connection.request('read_binary', { path });
+    if (read.ok) {
+      files.push({ name: path.split('/').pop()!, mime: read.result.mime, data: read.result.data });
+      attached.push(path);
+    } else if (read.error.code === 'not-connected' || read.error.code === 'timeout') {
+      return { ok: false, error: 'not-connected' };
+    } else if (read.error.code !== 'bad-response' && read.error.code !== 'no-session') {
+      refused.push({ path, code: read.error.code });
+    }
+  }
+  if (files.length === 0) return { ok: true, attached, refused };
+  const result = (await tellTab(tab.tabId, { type: 'attach-files', files })) as
+    AttachResult | undefined;
+  if (!result?.ok) return { ok: false, error: 'not-attached' };
+  return { ok: true, attached, refused };
+}
+
 /** File and command requests from a card in the chat. Refused unless that tab's session is active. */
 async function chatFile(
   tabId: number,
@@ -375,6 +438,12 @@ async function chatFile(
     | 'chat-undo'
     | 'chat-run'
     | 'chat-run-cancel'
+    | 'chat-write-binary'
+    | 'chat-read-binary'
+    | 'chat-download'
+    | 'chat-bg-start'
+    | 'chat-bg-stop'
+    | 'chat-bg-logs'
   >
 ): Promise<RequestOutcome<unknown>> {
   if (!(await sessions.isActive(tabId))) {
@@ -394,7 +463,8 @@ async function chatFile(
         ...(request.baseHash !== undefined && { baseHash: request.baseHash }),
         source: 'chat',
         trigger: request.trigger,
-        ...(request.loopId !== undefined && { loopId: request.loopId })
+        ...(request.loopId !== undefined && { loopId: request.loopId }),
+        ...(request.autoApproved && { autoApproved: true as const })
       });
       if (outcome.ok) {
         await sessions.noteChanged(tabId, {
@@ -407,12 +477,14 @@ async function chatFile(
       return outcome;
     }
     case 'chat-delete': {
-      // Always a click: the app refuses an automatic delete in every mode.
+      // A click, or Full auto when "Also approve automatically" allows it; the app refuses
+      // an automatic delete otherwise.
       const outcome = await connection.request('delete', {
         path: request.path,
         baseHash: request.baseHash,
         source: 'chat',
-        trigger: 'click'
+        trigger: request.trigger ?? 'click',
+        ...(request.loopId !== undefined && { loopId: request.loopId })
       });
       if (outcome.ok) await sessions.noteChanged(tabId, { kind: 'delete', path: request.path });
       if (outcome.ok) void syncWatch();
@@ -424,7 +496,8 @@ async function chatFile(
         to: request.to,
         baseHash: request.baseHash,
         source: 'chat',
-        trigger: 'click'
+        trigger: request.trigger ?? 'click',
+        ...(request.loopId !== undefined && { loopId: request.loopId })
       });
       if (outcome.ok) {
         await sessions.noteChanged(tabId, { kind: 'rename', from: request.from, to: request.to });
@@ -445,6 +518,33 @@ async function chatFile(
     }
     case 'chat-run-cancel':
       return connection.request('run_cancel', { runId: request.runId });
+    case 'chat-write-binary':
+      return writeBinary(request);
+    case 'chat-read-binary':
+      return connection.request('read_binary', { path: request.path });
+    case 'chat-download':
+      // Always a click: the app refuses an automatic download in every mode, and nothing
+      // in the extension sends one.
+      return connection.request('download', {
+        url: request.url,
+        path: request.path,
+        ...(request.baseHash !== undefined && { baseHash: request.baseHash }),
+        trigger: 'click'
+      });
+    case 'chat-bg-start':
+      return connection.request('bg_start', {
+        argv: request.argv,
+        trigger: request.trigger,
+        ...(request.loopId !== undefined && { loopId: request.loopId })
+      });
+    case 'chat-bg-stop':
+      return connection.request('bg_stop', { argv: request.argv, trigger: request.trigger });
+    case 'chat-bg-logs':
+      return connection.request('bg_logs', {
+        argv: request.argv,
+        ...(request.since !== undefined && { since: request.since }),
+        ...(request.tail !== undefined && { tail: request.tail })
+      });
   }
 }
 
@@ -468,6 +568,12 @@ async function handleChat(
     | 'chat-run'
     | 'chat-run-cancel'
     | 'chat-loop'
+    | 'chat-write-binary'
+    | 'chat-read-binary'
+    | 'chat-download'
+    | 'chat-bg-start'
+    | 'chat-bg-stop'
+    | 'chat-bg-logs'
   >
 ): Promise<unknown> {
   switch (request.type) {
@@ -494,6 +600,12 @@ async function handleChat(
     case 'chat-undo':
     case 'chat-run':
     case 'chat-run-cancel':
+    case 'chat-write-binary':
+    case 'chat-read-binary':
+    case 'chat-download':
+    case 'chat-bg-start':
+    case 'chat-bg-stop':
+    case 'chat-bg-logs':
       return chatFile(tabId, request);
     case 'chat-gone':
       // The conversation was deleted or never existed. Its session ends with it.
@@ -657,6 +769,19 @@ async function handlePanel(
       if (running) await connection.request('run_cancel', { runId: running.runId });
       return null;
     }
+    case 'process-stop':
+      return connection.request('bg_stop', { procId: request.procId, trigger: 'click' });
+    case 'process-logs':
+      return connection.request('bg_logs', { procId: request.procId, tail: 300 });
+    case 'process-open': {
+      // Only a URL the app says that process printed, and only one on this computer.
+      const url = connection.config?.processes.find((p) => p.procId === request.procId)?.url;
+      if (!url || !isLocalUrl(url)) return false;
+      await chrome.tabs.create({ url });
+      return true;
+    }
+    case 'attach-files':
+      return attachFiles(request.paths, request.windowId);
     case 'dev-file': {
       // The side panel's test field only exists in dev builds, and so does this path.
       if (!import.meta.env.DEV) return undefined;

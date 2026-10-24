@@ -25,13 +25,21 @@ export const IPC_ARGS: Readonly<Record<IpcChannel, z.ZodType<unknown[]>>> = {
   setDenyPatterns: z.tuple([list]),
   setMode: z.tuple([z.enum(MODES)]),
   setAllowlist: z.tuple([list]),
+  setBackgroundEntries: z.tuple([list]),
+  setAutoApprove: z.tuple([
+    z.strictObject({ changes: z.boolean(), gated: z.boolean(), partial: z.boolean() })
+  ]),
+  dismissUnlimitedNote: none,
+  stopProcess: z.tuple([text(128)]),
+  getProcessLogs: z.tuple([text(128)]),
+  openProcessUrl: z.tuple([text(128)]),
   setGatedPatterns: z.tuple([list]),
   setEnvPatterns: z.tuple([list]),
   setRunSettings: z.tuple([
     z.strictObject({
       timeoutMs: z.number(),
       installTimeoutMs: z.number(),
-      stepLimit: z.number(),
+      stepLimit: z.number().nullable(),
       pauseOnFailure: z.boolean(),
       catchUpAfterSleep: z.boolean()
     })

@@ -3,27 +3,51 @@ import {
   COMPOSER_WARN_CHARS,
   FILE_ERROR_LABELS,
   formatContextBlock,
+  isAttachablePath,
   type ContextFile,
   type FileErrorCode,
+  type ReadBinaryResult,
   type ReadResult,
   type RefusedFile
 } from '@bridge/shared';
-import type { ReadCardRecord, RequestOutcome, SentFile } from '../../../messages';
-import { insertIntoComposer } from '../composer';
+import { base64ToBytes } from '../../../binary';
+import type { AttachmentFile, ReadCardRecord, RequestOutcome, SentFile } from '../../../messages';
+import { attachToComposer, insertIntoComposer } from '../composer';
 import { failureText, type Ask } from './diff-card';
-import { formatCount, formatFixedBadge, h, icon, redactionNote, renderCard } from './dom';
+import {
+  formatCount,
+  formatFixedBadge,
+  formatSize,
+  h,
+  icon,
+  redactionNote,
+  renderCard
+} from './dom';
 import { createHost } from './host';
 
 type Entry =
   | { path: string; status: 'loading' }
   | { path: string; status: 'ok'; content: string; hash: string }
+  /** A project image: it goes with the message as an attachment, not as text. */
+  | { path: string; status: 'image'; mime: string; data: string; size: number }
   | { path: string; status: 'refused'; reason: string };
+
+/** An image the READ card attaches, for Full auto. */
+export type ImageAttachment = AttachmentFile & { path: string };
+
+/** Turns attachments into the files the page's composer takes. */
+export function attachmentFiles(images: readonly AttachmentFile[]): File[] {
+  return images.map(
+    ({ name, mime, data }) => new File([base64ToBytes(data)], name, { type: mime })
+  );
+}
 
 /**
  * The card under a reply that asked for files with `@@READ`. It reads each file to show
  * what would be sent and how big it is. **Send these files** puts them in the composer in
- * `@@CONTEXT` format; the user still presses send. Whether it was sent is saved by block
- * key, like a diff card's state, so a reload shows "Send again".
+ * `@@CONTEXT` format, and attaches images as real attachments so the chat can see them;
+ * the user still presses send. Whether it was sent is saved by block key, like a diff
+ * card's state, so a reload shows "Send again".
  */
 export class ReadCard {
   readonly host: HTMLElement;
@@ -63,17 +87,34 @@ export class ReadCard {
     return this.reading;
   }
 
-  /** What Full auto sends: the files, the refusals, and whether the app was unreachable. */
-  contents(): { files: ContextFile[]; refused: RefusedFile[]; disconnected: boolean } {
+  /**
+   * What Full auto sends: the files, the images to attach, the refusals, and whether the
+   * app was unreachable.
+   */
+  contents(): {
+    files: ContextFile[];
+    images: ImageAttachment[];
+    refused: RefusedFile[];
+    disconnected: boolean;
+  } {
     return {
       files: this.entries.flatMap((e) =>
         e.status === 'ok' ? [{ path: e.path, content: e.content }] : []
       ),
+      images: this.images(),
       refused: this.entries.flatMap((e) =>
         e.status === 'refused' ? [{ path: e.path, reason: e.reason }] : []
       ),
       disconnected: this.unreachable
     };
+  }
+
+  private images(): ImageAttachment[] {
+    return this.entries.flatMap((e) =>
+      e.status === 'image'
+        ? [{ path: e.path, name: e.path.split('/').pop() ?? e.path, mime: e.mime, data: e.data }]
+        : []
+    );
   }
 
   /** Full auto sent these files in its follow-up. */
@@ -109,6 +150,11 @@ export class ReadCard {
     this.unreachable = false;
     this.render();
     for (const [i, path] of this.paths.entries()) {
+      if (isAttachablePath(path)) {
+        await this.readImage(i, path);
+        this.render();
+        continue;
+      }
       const outcome = await this.ask<RequestOutcome<ReadResult>>({ type: 'chat-read', path });
       if (outcome?.ok) {
         this.entries[i] = {
@@ -138,6 +184,34 @@ export class ReadCard {
     }
   }
 
+  /** An image, as bytes to attach. The sandbox and the denylist apply as for text. */
+  private async readImage(i: number, path: string): Promise<void> {
+    const outcome = await this.ask<RequestOutcome<ReadBinaryResult>>({
+      type: 'chat-read-binary',
+      path
+    });
+    if (outcome?.ok) {
+      const { mime, data, size } = outcome.result;
+      this.entries[i] = { path, status: 'image', mime, data, size };
+    } else if (
+      outcome &&
+      outcome.error.code !== 'not-connected' &&
+      outcome.error.code !== 'timeout' &&
+      outcome.error.code !== 'bad-response' &&
+      outcome.error.code !== 'no-session'
+    ) {
+      this.entries[i] = {
+        path,
+        status: 'refused',
+        reason: FILE_ERROR_LABELS[outcome.error.code as FileErrorCode]
+      };
+    } else {
+      this.error = failureText(outcome?.error);
+      this.unreachable = true;
+      this.entries[i] = { path, status: 'refused', reason: 'not read' };
+    }
+  }
+
   setDisabled(disabled: boolean): void {
     if (this.disabled === disabled) return;
     this.disabled = disabled;
@@ -152,11 +226,27 @@ export class ReadCard {
     const refused = this.entries.flatMap((e) =>
       e.status === 'refused' ? [{ path: e.path, reason: e.reason }] : []
     );
-    return buildContextMessage(files, refused);
+    return buildContextMessage(
+      files,
+      refused,
+      this.images().map((image) => image.path)
+    );
   }
 
   private send(): void {
     const { text } = this.message();
+    const images = this.images();
+    if (images.length > 0) {
+      const attached = attachToComposer(attachmentFiles(images));
+      if (!attached.ok) {
+        this.error =
+          attached.error === 'no-composer'
+            ? 'Bridge can’t find the message box on this page.'
+            : 'Bridge couldn’t attach the images. Attach them with the page’s own button instead.';
+        this.render();
+        return;
+      }
+    }
     const result = insertIntoComposer(text);
     if (!result.ok) {
       this.error =
@@ -184,7 +274,7 @@ export class ReadCard {
 
   private render(): void {
     const loading = this.entries.some((e) => e.status === 'loading');
-    const okCount = this.entries.filter((e) => e.status === 'ok').length;
+    const okCount = this.entries.filter((e) => e.status === 'ok' || e.status === 'image').length;
     const built = loading ? { text: '', redacted: 0 } : this.message();
     const chars = built.text.length;
 
@@ -198,11 +288,13 @@ export class ReadCard {
           ? h('span', { class: 'meta' }, 'Reading…')
           : entry.status === 'ok'
             ? h('span', { class: 'meta' }, `${formatCount(entry.content.length)} chars`)
-            : h(
-                'span',
-                { class: 'badge', attrs: { 'data-tone': 'danger' } },
-                `blocked · ${entry.reason}`
-              )
+            : entry.status === 'image'
+              ? h('span', { class: 'meta' }, `image · ${formatSize(entry.size)} · attached`)
+              : h(
+                  'span',
+                  { class: 'badge', attrs: { 'data-tone': 'danger' } },
+                  `blocked · ${entry.reason}`
+                )
       )
     );
 

@@ -3,13 +3,19 @@ import {
   COMPOSER_WARN_CHARS,
   FILE_ERROR_LABELS,
   FILE_ERROR_MESSAGES,
+  isAttachablePath,
   type FileErrorCode,
   type ListResult,
   type ProjectInfo,
   type TreeEntry,
   type TreeResult
 } from '@bridge/shared';
-import { MAX_FILES_PER_SEND, type RequestOutcome, type SendFilesResult } from '../messages';
+import {
+  MAX_FILES_PER_SEND,
+  type AttachFilesResult,
+  type RequestOutcome,
+  type SendFilesResult
+} from '../messages';
 import { formatCount, panelWindowId, redactedText, request, sessionErrorText } from './request';
 
 /** Marker, fence and blank lines around each file in `@@CONTEXT` format. */
@@ -210,6 +216,39 @@ export function SendFiles({ project, version }: { project: ProjectInfo; version:
       .finally(() => setPicking(null));
   };
 
+  /** Attach: the image goes into the message as a real attachment, so the chat can see it. */
+  const attach = (path: string) => {
+    setBusy(true);
+    setResult(null);
+    void panelWindowId()
+      .then((windowId) =>
+        request<AttachFilesResult>({ type: 'attach-files', paths: [path], windowId })
+      )
+      .then((outcome) => {
+        if (!outcome.ok) {
+          setResult({
+            text:
+              outcome.error === 'not-attached'
+                ? 'Bridge couldn’t attach it. Attach it with the page’s own button instead.'
+                : sessionErrorText(outcome.error),
+            tone: 'danger'
+          });
+          return;
+        }
+        const refused = outcome.refused[0];
+        setResult(
+          refused
+            ? {
+                text: `Not attached: ${refused.path} (${refused.code === 'not-an-image' ? 'not an image' : FILE_ERROR_LABELS[refused.code]}).`,
+                tone: 'danger'
+              }
+            : { text: `Attached ${path} to the message. Review it and press send.` }
+        );
+      })
+      .catch(() => setResult({ text: sessionErrorText('failed'), tone: 'danger' }))
+      .finally(() => setBusy(false));
+  };
+
   const send = () => {
     setBusy(true);
     setResult(null);
@@ -327,6 +366,17 @@ export function SendFiles({ project, version }: { project: ProjectInfo; version:
                       </span>
                     )}
                     {!isDir && <span className="tree-size">{formatCount(entry.size)}</span>}
+                    {!isDir && isAttachablePath(entry.path) && (
+                      <button
+                        type="button"
+                        className="link-button"
+                        aria-label={`Attach ${entry.path}`}
+                        disabled={busy}
+                        onClick={() => attach(entry.path)}
+                      >
+                        Attach
+                      </button>
+                    )}
                   </li>
                 );
               })}

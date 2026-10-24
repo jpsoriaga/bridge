@@ -1,5 +1,6 @@
 import ignore, { type Ignore } from 'ignore';
 import type {
+  BridgeConfig,
   DeleteParams,
   FileErrorCode,
   FileOutcome,
@@ -8,6 +9,10 @@ import type {
   RenameParams,
   WriteParams
 } from '@bridge/shared';
+
+/** Full auto → "Also approve automatically". All off unless the user turns them on. */
+export type AutoApprove = BridgeConfig['autoApprove'];
+export const NO_AUTO_APPROVE: AutoApprove = { changes: false, gated: false, partial: false };
 
 /**
  * Files that change what a command does, or what runs around one: installs, scripts,
@@ -131,56 +136,87 @@ export class ModeState {
 /**
  * Why the server refuses a write before it reaches the sandbox, or null. A click is always
  * allowed (the sandbox still applies). An automatic write needs Auto-apply or Full auto,
- * and never touches a gated file.
+ * and never touches a gated file, unless Full auto's "Also approve automatically" allows
+ * gated files.
  */
 export function writeRefusal(
   params: Pick<WriteParams, 'path' | 'trigger'>,
   mode: Mode,
-  gated: GatedFiles
+  gated: GatedFiles,
+  approve: AutoApprove = NO_AUTO_APPROVE
 ): FileErrorCode | null {
   if (params.trigger !== 'auto') return null;
   if (mode === 'manual') return 'mode';
-  if (gated.matches(params.path)) return 'gated';
+  if (gated.matches(params.path) && !(mode === 'full-auto' && approve.gated)) return 'gated';
   return null;
 }
 
 /**
  * Why the server refuses a delete or rename before it reaches the sandbox, or null. Both
- * always need a click, in every mode: `gated` if either path is gated, else `mode`.
+ * need a click (`gated` if either path is gated, else `mode`), unless Full auto's "Also
+ * approve automatically" allows deletes and renames (and gated files, for a gated path).
  */
 export function changeRefusal(
   params: Pick<DeleteParams, 'path' | 'trigger'> | Pick<RenameParams, 'from' | 'to' | 'trigger'>,
-  gated: GatedFiles
+  gated: GatedFiles,
+  mode: Mode = 'manual',
+  approve: AutoApprove = NO_AUTO_APPROVE
 ): FileErrorCode | null {
   if (params.trigger !== 'auto') return null;
   const paths = 'path' in params ? [params.path] : [params.from, params.to];
-  return paths.some((path) => gated.matches(path)) ? 'gated' : 'mode';
+  const isGated = paths.some((path) => gated.matches(path));
+  if (mode === 'full-auto' && approve.changes && (!isGated || approve.gated)) return null;
+  return isGated ? 'gated' : 'mode';
 }
 
 export interface GuardedProject {
-  handle(request: FileRequest): Promise<FileOutcome<unknown>>;
+  /** `autoApproved`: Full auto did it only because "Also approve automatically" allows it. */
+  handle(request: FileRequest, labels?: { autoApproved?: boolean }): Promise<FileOutcome<unknown>>;
   /** Logs the refusal and returns it. */
   refuse(op: FileRequest['type'], path: unknown, code: FileErrorCode): FileOutcome<never>;
+  /** Forgets the chunks of a binary write that was refused before it got to them. */
+  dropUpload?(uploadId: string): void;
 }
 
 /**
  * File requests as the server answers them: `writeRefusal` (or `changeRefusal` for deletes
- * and renames) first, then the sandbox.
+ * and renames) first, then the sandbox. A download is never automatic, in any mode. What
+ * Full auto did only because "Also approve automatically" allows it is labelled
+ * `autoApproved` for Activity.
  */
 export function guardedFiles(
   project: GuardedProject,
   mode: () => Mode,
-  gated: () => GatedFiles
+  gated: () => GatedFiles,
+  approve: () => AutoApprove = () => NO_AUTO_APPROVE
 ): (request: FileRequest) => Promise<FileOutcome<unknown>> {
   return async (request) => {
-    if (request.type === 'write') {
-      const refusal = writeRefusal(request.payload, mode(), gated());
-      if (refusal) return project.refuse('write', request.payload.path, refusal);
+    const now = { mode: mode(), gated: gated(), approve: approve() };
+    if (request.type === 'write' || request.type === 'write_binary') {
+      const { payload } = request;
+      const refusal = writeRefusal(payload, now.mode, now.gated, now.approve);
+      if (refusal) {
+        if (request.type === 'write_binary') project.dropUpload?.(request.payload.uploadId);
+        return project.refuse(request.type, payload.path, refusal);
+      }
+      const auto = payload.trigger === 'auto';
+      // Gated passed only because the setting allows it; "partial" is the extension's word,
+      // kept only while the setting it relies on is on.
+      const approved =
+        auto &&
+        ((now.gated.matches(payload.path) && now.approve.gated) ||
+          (payload.autoApproved === true && now.mode === 'full-auto' && now.approve.partial));
+      return project.handle(request, { autoApproved: approved });
     }
     if (request.type === 'delete' || request.type === 'rename') {
-      const refusal = changeRefusal(request.payload, gated());
+      const refusal = changeRefusal(request.payload, now.gated, now.mode, now.approve);
       const path = request.type === 'delete' ? request.payload.path : request.payload.from;
       if (refusal) return project.refuse(request.type, path, refusal);
+      // Automatic at all means the setting allowed it.
+      return project.handle(request, { autoApproved: request.payload.trigger === 'auto' });
+    }
+    if (request.type === 'download' && request.payload.trigger === 'auto') {
+      return project.refuse('download', request.payload.path, 'mode');
     }
     return project.handle(request);
   };

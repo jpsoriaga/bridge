@@ -1,9 +1,15 @@
 import { z } from 'zod';
 import {
+  BackgroundLogsParams,
+  BackgroundProcess,
+  BackgroundStartParams,
+  BackgroundStopParams,
   DeleteParams,
+  DownloadParams,
   FileError,
   ListParams,
   ProjectInfo,
+  ReadBinaryParams,
   ReadParams,
   RenameParams,
   RunCancelParams,
@@ -12,14 +18,16 @@ import {
   StatParams,
   TreeParams,
   UndoParams,
+  UploadParams,
   WatchParams,
+  WriteBinaryParams,
   WriteParams
 } from './files';
 import { LoopReport, MAX_STEP_LIMIT } from './loop';
 import { MODES } from './types';
 
 /** Bumped when a message shape changes incompatibly. Both sides reject other versions. */
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 8;
 
 export { candidatePorts, DEFAULT_PORT, E2E_PORT, PORT_RANGE } from './ports';
 
@@ -224,14 +232,37 @@ export const BridgeConfig = z.strictObject({
   mode: ModeSchema,
   /** Commands as written in the app, e.g. `pnpm test`. Each is an argv prefix. */
   allowlist: z.array(z.string().max(MAX_ALLOWLIST_ENTRY_CHARS)).max(MAX_ALLOWLIST_ENTRIES),
-  /** Full auto: most messages Bridge sends on its own in one run before it pauses. */
-  stepLimit: z.number().int().min(1).max(MAX_STEP_LIMIT),
+  /**
+   * Full auto: most messages Bridge sends on its own in one run before it pauses. Null:
+   * Unlimited (the loop guard still pauses a run that repeats the same failure).
+   */
+  stepLimit: z.number().int().min(1).max(MAX_STEP_LIMIT).nullable(),
   /** Full auto: pause on a non-zero exit instead of sending the output to the chat. */
   pauseOnFailure: z.boolean(),
   /** Full auto: after the computer sleeps, wait for the chat and carry on instead of pausing. */
   catchUpAfterSleep: z.boolean(),
   /** The command running now, if any. */
   running: z.strictObject({ runId: RunId, argv: z.array(z.string()) }).nullable(),
+  /**
+   * Allowlist entries that are background processes (dev servers): `@@START` only. The rest
+   * of the allowlist runs to completion with `@@RUN`.
+   */
+  background: z.array(z.string().max(MAX_ALLOWLIST_ENTRY_CHARS)).max(MAX_ALLOWLIST_ENTRIES),
+  /** Background processes started this session, running or recently ended. */
+  processes: z.array(BackgroundProcess).max(10),
+  /**
+   * Full auto → "Also approve automatically": what Full auto may do without a click that
+   * otherwise waits for one. Commands off the allowlist, downloads, protected files and
+   * conflicts always wait, whatever this says.
+   */
+  autoApprove: z.strictObject({
+    /** Deletes and renames. */
+    changes: z.boolean(),
+    /** Gated files: package.json, lockfiles, CI, hooks. */
+    gated: z.boolean(),
+    /** Files that look partial ("…rest unchanged"). */
+    partial: z.boolean()
+  }),
   /**
    * Random per app launch. A new one after a reconnect means the app restarted: Full auto
    * was reset, so a loop that was running pauses.
@@ -260,6 +291,10 @@ export const DeleteRequest = message('delete', DeleteParams);
 export const RenameRequest = message('rename', RenameParams);
 export const UndoRequest = message('undo', UndoParams);
 export const WatchRequest = message('watch', WatchParams);
+export const UploadRequest = message('upload', UploadParams);
+export const WriteBinaryRequest = message('write_binary', WriteBinaryParams);
+export const ReadBinaryRequest = message('read_binary', ReadBinaryParams);
+export const DownloadRequest = message('download', DownloadParams);
 export const FileRequest = z.discriminatedUnion('type', [
   TreeRequest,
   ListRequest,
@@ -269,7 +304,11 @@ export const FileRequest = z.discriminatedUnion('type', [
   DeleteRequest,
   RenameRequest,
   UndoRequest,
-  WatchRequest
+  WatchRequest,
+  UploadRequest,
+  WriteBinaryRequest,
+  ReadBinaryRequest,
+  DownloadRequest
 ]);
 export type FileRequest = z.infer<typeof FileRequest>;
 
@@ -277,7 +316,16 @@ export type FileRequest = z.infer<typeof FileRequest>;
 // `run_output` chunks and one `run_exit`.
 export const RunRequest = message('run', RunParams);
 export const RunCancelRequest = message('run_cancel', RunCancelParams);
-export const CommandRequest = z.discriminatedUnion('type', [RunRequest, RunCancelRequest]);
+export const BackgroundStartRequest = message('bg_start', BackgroundStartParams);
+export const BackgroundStopRequest = message('bg_stop', BackgroundStopParams);
+export const BackgroundLogsRequest = message('bg_logs', BackgroundLogsParams);
+export const CommandRequest = z.discriminatedUnion('type', [
+  RunRequest,
+  RunCancelRequest,
+  BackgroundStartRequest,
+  BackgroundStopRequest,
+  BackgroundLogsRequest
+]);
 export type CommandRequest = z.infer<typeof CommandRequest>;
 
 export const RUN_OUTPUT_CHUNK_CHARS = 16 * 1024;
@@ -354,8 +402,15 @@ export const ClientMessage = z.discriminatedUnion('type', [
   RenameRequest,
   UndoRequest,
   WatchRequest,
+  UploadRequest,
+  WriteBinaryRequest,
+  ReadBinaryRequest,
+  DownloadRequest,
   RunRequest,
   RunCancelRequest,
+  BackgroundStartRequest,
+  BackgroundStopRequest,
+  BackgroundLogsRequest,
   LoopReportMessage,
   SessionEndMessage,
   SessionStartMessage

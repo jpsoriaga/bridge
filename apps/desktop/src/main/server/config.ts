@@ -88,6 +88,13 @@ export const OP_RATE_LIMITS: Readonly<
       | 'watch'
       | 'run'
       | 'run_cancel'
+      | 'upload'
+      | 'write_binary'
+      | 'read_binary'
+      | 'download'
+      | 'bg_start'
+      | 'bg_stop'
+      | 'bg_logs'
     >,
     number
   >
@@ -102,7 +109,15 @@ export const OP_RATE_LIMITS: Readonly<
   undo: 10,
   watch: 5,
   run: 5,
-  run_cancel: 10
+  run_cancel: 10,
+  // A 20 MB write is 20 chunks of 1 MB.
+  upload: 30,
+  write_binary: 10,
+  read_binary: 10,
+  download: 2,
+  bg_start: 5,
+  bg_stop: 10,
+  bg_logs: 20
 };
 
 export const PAIRING_CODE_TTL_MS = 2 * 60_000;

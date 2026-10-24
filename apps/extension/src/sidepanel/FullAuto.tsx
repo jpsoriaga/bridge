@@ -5,6 +5,7 @@ import {
   MODE_DESCRIPTIONS,
   MODE_LABELS,
   pauseReasonText,
+  stepText,
   type BridgeConfig,
   type LoopReport,
   type RunResult
@@ -94,7 +95,9 @@ export function LoopSection({
             : loop?.note && state !== 'paused'
               ? LOOP_NOTE_TEXT[loop.note]
               : LOOP_STATE_LABELS[state]}
-          {loop && state !== 'idle' && ` · ${loop.step} / ${loop.limit}`}
+          {loop &&
+            state !== 'idle' &&
+            ` · ${loop.limit === null ? `step ${loop.step}` : `${loop.step} / ${loop.limit}`}`}
         </span>
       </p>
       {state === 'paused' && loop?.reason && (
@@ -118,7 +121,7 @@ export function LoopSection({
 }
 
 /** How to carry on from a pause: the reason decides which buttons, one of them primary. */
-function PauseActions({ loop, stepLimit }: { loop: LoopReport | null; stepLimit?: number }) {
+function PauseActions({ loop, stepLimit }: { loop: LoopReport | null; stepLimit?: number | null }) {
   const button = (action: LoopAction, label: string, primary = false) => (
     <button
       key={action}
@@ -132,7 +135,15 @@ function PauseActions({ loop, stepLimit }: { loop: LoopReport | null; stepLimit?
   const buttons = (() => {
     switch (loop?.reason) {
       case 'step-limit':
-        return [button('continue', `Continue for ${stepLimit ?? loop.limit} more`, true)];
+        return [
+          button(
+            'continue',
+            stepLimit === null
+              ? 'Continue with no limit'
+              : `Continue for ${stepLimit ?? loop.limit} more`,
+            true
+          )
+        ];
       case 'stalled':
         return [button('stop-continue', 'Stop & continue', true)];
       case 'interrupted':
@@ -227,9 +238,7 @@ export function LoopFooter({ loop }: { loop: LoopReport | null }) {
   if (!loop || loop.state === 'idle' || loop.state === 'stopped') return null;
   return (
     <footer className="panel-footer">
-      <span className="step-count">
-        Step {loop.step} of {loop.limit}
-      </span>
+      <span className="step-count">{stepText(loop.step, loop.limit)}</span>
       <button type="button" className="btn btn-danger" onClick={() => loopRequest('stop')}>
         Stop
       </button>
