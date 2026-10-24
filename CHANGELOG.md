@@ -19,16 +19,29 @@ Dev servers that keep running, images and other binary files, and a Full auto th
 - **Unlimited step limit.** Settings → Full auto → **Unlimited**, with a one-time note: on the Free and Go plans every step uses a message.
 - **Loop guard.** With or without a limit, Full auto pauses with "Looks stuck: the same failure repeated" when the same command fails the same way three times in a row, or the same file is written with the same content three times.
 - **Also approve automatically** (Settings → Full auto, each off by default): deletes and renames, gated files (`package.json`, lockfiles, configs) and partial-looking files. Turning one on asks you to confirm what it lets Full auto do. Everything approved this way is backed up and marked "auto-approved" in Activity. Commands off the allowlist, downloads, protected files and files changed on disk always wait for you.
+- **Project conventions in the session prompt.** Bridge looks at the project's files and `package.json` and tells the chat how it's built: the framework and language, where things live (components, pages, static files…), how files are named and how it's styled, so the chat follows them. A new or empty project gets the standard layout for its framework instead. A new rule asks the chat to follow the project's structure and not reorganise files unless you ask.
+- **UI guidance.** For projects with a UI (React, Vue, Svelte, Next, Vite, Astro, or HTML and CSS), the session prompt asks the chat for polished, accessible design: reuse what's there, one spacing scale and a clear type hierarchy, a small palette, WCAG AA contrast and focus states, responsive layouts, every state designed, real copy, nothing that looks generic. A project with its own design rules (`DESIGN.md`, `design-system.md`, `STYLEGUIDE.md`, a tokens file or a Tailwind config) is told to read and follow those instead. Settings → Project → **UI guidance**: Auto (the default), Always or Off.
+- **The chat hears when you change the allowed commands.** Change the list in the middle of a session and the next message Bridge puts in the chat starts with a short note listing what's allowed now and which are background commands.
+- **Add your dev server as a background command.** Projects set up before this version get a one-time note in Settings → Commands, "Add `npm run dev` as a background command?", with **Add** and **Dismiss**.
+- **Download from URL.** When the chat makes an image the page won't let Bridge read (it's served from another site), the Save to project card offers **Download from URL**, which has the app fetch it from its https address, only when you click, with the same checks as `@@DOWNLOAD`.
 - **Install steps on every release page.** Release notes now open with **How to install**: which file to download for each computer, how to open the unsigned app, how to add the extension and pair, and which files to ignore. Each release also has a `Bridge-<version>-INSTALL.md` with troubleshooting and uninstall steps, and the extension zip has a `README.txt` with the Load unpacked steps.
 
 ### Changed
 
+- **Images in Send files are attached.** Ticking an image attaches it to the message instead of pasting it as text. The character budget counts text files only and shows images separately ("2 files · 1 image"), and the button says what it will do ("Insert 2 files and attach 1 image").
+- **Large images are made to fit.** Before an image is attached (Send files, `@@READ`, Full auto), anything over 2048 pixels on its longest side is scaled down and recompressed to under 5 MB: PNG when it has transparency, JPEG otherwise. The file in your project is never changed. Only an image that still can't be made small enough is refused, and the card or panel says why.
+- **Card buttons are all the same height.** Every button on the chat's cards (Apply and Reject, Run and Cancel, Start and Stop, Save, Download…) now has one size, so pairs line up.
+- **`@@RUN` on a dev server starts it.** When the chat writes `@@RUN npm run dev@@` for a command marked Background, Bridge treats it as `@@START` (the card says `format fixed`), and Full auto just starts it.
+- **Full auto starts the dev server at the end.** A `@@START` in a reply that also says `@@DONE@@` is acted on before the run ends.
 - **Step limit 25 by default**, from 1 to 100 (was 10, up to 25). A limit of 10 saved by an earlier version, which was the old default, moves to 25.
 - **Session prompt** teaches the new markers: dev servers (only when the project has a background command), `@@ASSET`, `@@DOWNLOAD`, and that binary files can't be written as text.
 - **Protocol 8.** New messages for binary files, downloads and background processes.
 
 ### Fixed
 
+- **Start session after New chat.** After clicking New chat on the chat page, Start session could insert nothing, again and again, until the page was reloaded: the page can keep the previous chat's message box on the page, hidden, and Bridge pasted into that one. Bridge now only uses the message box, send and stop buttons you can see.
+- **Images counted as characters.** Ticking an image in Send files no longer counts its size as characters and then refuses it as too large.
+- **Install notes** no longer use the Apple logo character, which doesn't show outside Apple devices: they say "Apple menu (top-left corner of the screen)".
 - **Files the chat asked for no longer wait for a click in Full auto.** A reply that finished while the app was briefly out of reach (reconnecting, or after sleep) was skipped, leaving its READ card on **Send these files**. It's now acted on once the app is back. Requested files are also read before anything else can pause the step, so they go out with the next message; protected ones are reported as refused. A format reminder now carries the files the reply asked for, and a reply whose text changed after it finished no longer leaves a second READ card waiting.
 
 ### Removed

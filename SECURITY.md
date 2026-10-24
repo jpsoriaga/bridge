@@ -71,6 +71,7 @@ Before command output or file contents go into the chat: `sk-…`, GitHub (`ghp_
 - `@@DOWNLOAD https://… -> path` downloads only when you click **Download** on its card, in every mode: the extension never asks for an automatic one and the app refuses one, whatever "Also approve automatically" says. Full auto pauses until you click.
 - The **app** fetches it (the extension's permissions don't change): https only, every redirect too (at most 5); no user name or password in the URL; never this computer or the local network, by name (`localhost`, `*.local`, single-word names) or by address (loopback, private and link-local ranges, carrier-grade NAT, multicast, unique-local IPv6, IPv4 inside IPv6), checked on the address the connection itself resolves, so DNS rebinding can't get round it; 20 MB at most, stopped as soon as it's over; 60 seconds. It sends no cookies or referrer.
 - The path is checked by the sandbox before any request, and the bytes by the type and SVG checks above before anything is written.
+- **Download from URL** on a Save to project card (an image the chat made that the page won't let the extension read) is the same request: the image's own https address, sent by the worker as a click like any DOWNLOAD card, with every check above. It appears only after a save failed for that reason, and nothing automatic uses it.
 
 ### Desktop app (Electron)
 

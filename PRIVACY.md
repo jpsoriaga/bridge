@@ -1,6 +1,6 @@
 # Privacy policy
 
-_Effective 24 October 2026 (downloads and images added in 1.3.0; first published 19 October 2026). Applies to the Bridge desktop app and the Bridge Chrome extension, version 1.0.0 and later._
+_Effective 25 October 2026 (downloads, images and attachments added in 1.3.0; first published 19 October 2026). Applies to the Bridge desktop app and the Bridge Chrome extension, version 1.0.0 and later._
 
 Bridge is a personal open-source tool by Jaypee Soriaga. It has no servers, no accounts and no analytics. Everything it does happens on your computer.
 
@@ -55,6 +55,12 @@ Settings → About has **Check for updates**. When you click it, or at launch if
 ## Downloads
 
 When the chat suggests a file to download (`@@DOWNLOAD https://… -> path`), Bridge shows a card and does nothing until you click **Download**, in every mode. Then the app requests that https address, and only that one (and the addresses it redirects to), with no cookies and no referrer. The request carries what any web request does (your IP address and a user agent saying "Bridge") and nothing about you, your projects or your chats. The server you download from sees that request under its own terms. The file is saved in your project like any other change Bridge makes, with a backup.
+
+The same applies to **Download from URL** on a Save to project card, offered when the chat made an image the chat page won't let Bridge read: the app requests that image's https address only when you click.
+
+## Images you attach and the session prompt
+
+Images Bridge attaches to a message (Send files, `@@READ`, Full auto) that are over 2048 pixels or 5 MB are scaled down and recompressed in your browser first; the file in your project isn't changed. **Start session** reads your project's `package.json` to name its framework and tools in the instructions; only those names go into the message, never the file.
 
 ## Permissions the extension asks for
 

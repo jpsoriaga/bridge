@@ -469,6 +469,23 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [x] Release dry run on GitHub green (run 40084559309; `release` skipped, `dry-run` passed); CI green on all three systems
 - [ ] Manual run on the real chatgpt.com (e2e README "1.3.0 on the real chatgpt.com"): generated image selectors, the file input, dev server errors
 
+## 1.3.0-beta.1: Fixes from the live test
+
+- [x] Start session after New chat: found the cause (lookups took the first composer in the DOM, hidden or not; a hidden old composer took the paste); `firstShown` for the composer, send, stop and conversation, the file input in the visible form; `popstate` followed (tests; `e2e/sessions.cjs` replaces the composer and goes to `/` 3 times with End session between, failing without the fix)
+- [x] Images in Send files: attached, not text; the meter counts text only ("2 files · 1 image"); "Insert 2 files and attach 1 image"; `prepareAttachment` for Send files, Attach, READ cards and Full auto (2048px, 5 MB, PNG with transparency, else JPEG; refused with a reason only if it can't fit; the file on disk unchanged) (tests; e2e with a 15.6 MB 3000×1500 transparent PNG)
+- [x] Card buttons: one `cardButton` / `.card-btn` for every card action, fixed size in every variant and state (tests: the CSS contract; every e2e card measured at 32px in Chrome)
+- [x] Session prompt: rule 9, PROJECT CONVENTIONS from the tree and `package.json` (or the standard layout for a new project) (tests: Vite React TS, Next.js, Express, empty folder)
+- [x] UI guidance: UI QUALITY block for frontend projects, the project's own design rules first, under 900 characters; Settings → Project → UI guidance (Auto, Always, Off), in `config` (tests: frontend vs backend, DESIGN.md, Off, size)
+- [x] `@@RUN` of a background entry → START card with `format fixed`; Full auto starts it (tests)
+- [x] Allowed commands changed mid-session: a note on the next inserted message (tests)
+- [x] One-time "Add `npm run dev` as a background command?" note in Settings → Commands (tests)
+- [x] `@@START` in a `@@DONE` reply runs in Full auto (tests)
+- [x] Save to project: **Download from URL** for an https image the page won't hand over, click only (tests)
+- [x] Install notes: no Apple logo glyph
+- [x] Format, lint, typecheck, tests with coverage, build, every e2e script; PLAN.md, DESIGN.md, CHANGELOG, README, SECURITY.md, PRIVACY.md, e2e README
+- [ ] Release dry run on GitHub green
+- [ ] Manual run on the real chatgpt.com (e2e README "1.3.0 fixes on the real chatgpt.com")
+
 ## Landing page (`apps/site`)
 
 - [x] `@bridge/site`: Vite 7, React 18, TypeScript, Tailwind v4 (`@tailwindcss/vite`) with the tokens mapped into its theme; self-hosted Geist; private, outside `version:set`, the release workflow and the root build
