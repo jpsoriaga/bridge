@@ -525,4 +525,4 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [x] `clickInCard` waits up to 10s for the button to be there and enabled, and says which it wasn't
 - [x] Hard timeout per e2e script (`HARD_TIMEOUT_S` in `e2e/lib.cjs`, `E2E_TIMEOUT` overrides): kills the app's process group and Chrome (by its profile folder), fails with the script's name; each script prints its start, end and duration; e2e job `timeout-minutes: 35` (26 min of script timeouts plus install and build)
 - [x] Format, lint, typecheck, tests with coverage, build, every e2e script in CI's list locally (`phase6.cjs` 5 times in a row); the timeout checked with `E2E_TIMEOUT=6`, nothing left running
-- [ ] CI green on GitHub
+- [x] CI green on all three systems (run 40339526381); on Linux the card said Renamed 3ms after the disk, and no script took over 32s
