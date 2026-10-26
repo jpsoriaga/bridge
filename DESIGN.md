@@ -427,7 +427,7 @@ Use outline icons 16px with a 1.5px stroke (Lucide style). Icons inherit `curren
 
 ## Landing page
 
-`apps/site` (https://bridge.jpsoriaga.me) uses the same tokens, mapped into Tailwind v4's theme in `apps/site/src/styles/index.css` (`bg-bg-muted`, `text-fg-subtle`, `border-border-strong`…; Tailwind's palette is removed, so nothing else is available). Its buttons, badges, dots, segmented control and diff rows copy the rules above. What it adds, for a marketing page only:
+`apps/site` (https://trybridge-landingpage.vercel.app) uses the same tokens, mapped into Tailwind v4's theme in `apps/site/src/styles/index.css` (`bg-bg-muted`, `text-fg-subtle`, `border-border-strong`…; Tailwind's palette is removed, so nothing else is available). Its buttons, badges, dots, segmented control and diff rows copy the rules above. What it adds, for a marketing page only:
 
 - **Type**: display sizes above the app scale: the hero title (`text-display`, 56–96px, 700, `-0.04em`), section titles (`text-title`, 32–48px, 600, `-0.03em`), the Why quote (`text-quote`, 24–36px, 500) and lead text (`text-lead`, 17–20px). Body copy is 16px/1.6. Headings stand alone: no label or eyebrow above them.
 - **Layout**: one 1120px column (`container-page`), 16px gutters on phones and 32px from 640px. The hero demo and the Download panel break out to 1280px (`container-wide`). The footer ends at its bottom bar (the disclaimer and the credit), with 40–56px below it. Sections are separated by space alone (80–128px), much more than the space inside them, and vary in shape: steps as a numbered row, modes as three cards, safety and the FAQ with the heading in a left column, Why as a quote, Download as a muted panel.

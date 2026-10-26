@@ -1,7 +1,7 @@
 // Where the site lives and where it links. SITE_URL is the one place the domain goes: the
 // canonical URL, Open Graph tags, robots.txt and sitemap.xml are all built from it
 // (vite.config.ts). README.md "Switching to a new domain" has the other steps.
-export const SITE_URL = 'https://bridge.jpsoriaga.me';
+export const SITE_URL = 'https://trybridge-landingpage.vercel.app';
 
 export const REPO = 'jpsoriaga/bridge';
 export const GITHUB_URL = `https://github.com/${REPO}`;

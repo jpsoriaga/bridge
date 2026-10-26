@@ -3,4 +3,4 @@
 # apps/site/src/config/funding.ts (SUPPORT_LINKS), which the landing page reads.
 # github: [your-github-username]
 # ko_fi: your-ko-fi-username
-# custom: ['https://bridge.jpsoriaga.me/#support']
+# custom: ['https://trybridge-landingpage.vercel.app/#support']

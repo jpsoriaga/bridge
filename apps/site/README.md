@@ -1,6 +1,6 @@
 # Bridge landing page
 
-The one-page site at **https://bridge.jpsoriaga.me**: what Bridge is, how to set it up, the
+The one-page site at **https://trybridge-landingpage.vercel.app**: what Bridge is, how to set it up, the
 downloads, the FAQ and the Support section. React + TypeScript + Tailwind CSS v4 on Vite, built
 to static files and hosted on Vercel. It has no server, no analytics and no cookies; the only
 request it makes is to the GitHub Releases API, for the download links.
@@ -78,27 +78,19 @@ changed `apps/site/`, `packages/shared/assets/`, `packages/shared/src/tokens.css
 only the site's own files and `api.github.com`, `nosniff`, a referrer policy, a permissions
 policy) and long caching for the hashed files in `/assets/`.
 
-## Point bridge.jpsoriaga.me at it
+## The address
 
-1. In Vercel: Project → **Settings → Domains → Add**, enter `bridge.jpsoriaga.me`.
-2. At the DNS provider for `jpsoriaga.me`, add the record Vercel shows. For a subdomain it's:
-
-   | Type  | Name     | Value                  |
-   | ----- | -------- | ---------------------- |
-   | CNAME | `bridge` | `cname.vercel-dns.com` |
-
-   (Vercel may show a project-specific value instead, like `abc123.vercel-dns-017.com`; use
-   what the dashboard says. If the domain's DNS is already on Vercel, it adds the record itself.)
-
-3. Wait for the domain to show **Valid Configuration**. Vercel issues the HTTPS certificate on
-   its own.
+The site lives at Vercel's own address for the project, `trybridge-landingpage.vercel.app`, so
+there's no DNS to set up. In Vercel: Project → **Settings → Domains** should list it (it comes
+from the project name, `trybridge-landingpage`; rename the project there if it doesn't). Vercel
+handles the HTTPS certificate.
 
 ## Switch to a new domain later
 
 1. Change `SITE_URL` in `src/config/site.ts`. The canonical URL, the Open Graph and Twitter
    tags, `robots.txt` and `sitemap.xml` all follow it.
-2. Update the domain in the funding goal's text (`src/config/funding.ts`, "bridge.jpsoriaga.me
-   until then") and mark the domain item as funded.
+2. If it's a domain bought through the Support section, mark the domain item in
+   `src/config/funding.ts` as funded.
 3. Update the two links in the root `README.md` (the site link at the top and the Support
    line), and `custom:` in `.github/FUNDING.yml` if you use it.
 4. In Vercel, add the new domain under **Settings → Domains**. Set the old one to redirect

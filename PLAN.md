@@ -432,7 +432,7 @@ Open points:
 
 ## Landing page decisions
 
-The one-page site at https://bridge.jpsoriaga.me, for programmers on the chat's Free and Go plans. Code: `apps/site` ([its README](apps/site/README.md)).
+The one-page site at https://trybridge-landingpage.vercel.app, for programmers on the chat's Free and Go plans. Code: `apps/site` ([its README](apps/site/README.md)).
 
 - **Separate package.** `@bridge/site` is a private workspace package outside the release: not in `version:set`/`version:check` (which list their files), not in the root `pnpm build` (now filtered to the desktop and the extension), not in the release workflow, and outside the root Vitest run and coverage. It imports only `tokens.css` and the logo geometry from `@bridge/shared` (through a Vite alias to `brand.ts`, so zod and the parser stay out of the bundle).
 - **Stack.** Vite 7, React 18, Tailwind CSS v4 through `@tailwindcss/vite`, the tokens mapped with `@theme inline`. Fonts are self-hosted from `@fontsource-variable` (no font CDN). Static build, no server.

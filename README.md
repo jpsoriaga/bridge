@@ -2,7 +2,7 @@
 
 <img src="packages/shared/assets/logo.svg" width="48" alt="" />
 
-**[bridge.jpsoriaga.me](https://bridge.jpsoriaga.me)**: what Bridge is, in one page, with the downloads for your system.
+**[trybridge-landingpage.vercel.app](https://trybridge-landingpage.vercel.app)**: what Bridge is, in one page, with the downloads for your system.
 
 > **Testing a beta?** Start with **[BETA.md](BETA.md)**: install steps for macOS, Windows and Linux, a 15-minute test checklist, and how to report problems.
 
@@ -18,7 +18,7 @@ Everything runs on your computer. The Bridge desktop app does the reading and wr
 
 I built Bridge because I couldn't afford the paid AI coding tools. I had the ChatGPT web chat, so I pasted files in one by one and copied the answers back by hand. Bridge does that part for you, and shows each change before it lands. It's for programmers in that same boat.
 
-If Bridge helps you, you can help it reach the Chrome Web Store: see [Support Bridge](https://bridge.jpsoriaga.me/#support) on the site.
+If Bridge helps you, you can help it reach the Chrome Web Store: see [Support Bridge](https://trybridge-landingpage.vercel.app/#support) on the site.
 
 ## How it works
 
