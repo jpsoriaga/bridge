@@ -12,12 +12,15 @@ const MARKER =
 const DONE = /^@@DONE\s*@@$/;
 /** `@@DELETE path@@`: remove a file. No fence follows. */
 const DELETE = /^@@DELETE\s+((?!@@)[^\s`](?:(?!@@)[^`])*?)\s*@@$/;
-/** `@@RENAME old/path -> new/path@@` (or `→`): move a file. No fence follows. */
+/**
+ * `@@RENAME old/path -> new/path@@` (or `→`): move a file. No fence follows. Like every
+ * marker's value, neither path may hold `@@`, so `@@RENAME a -> @@FILE b@@` is no rename.
+ */
 const RENAME =
-  /^@@RENAME\s+((?!@@)[^\s`](?:(?!@@|->|→)[^`])*?)\s*(?:->|→)\s*([^\s`](?:(?!@@)[^`])*?)\s*@@$/;
+  /^@@RENAME\s+((?!@@)[^\s`](?:(?!@@|->|→)[^`])*?)\s*(?:->|→)\s*((?!@@)[^\s`](?:(?!@@)[^`])*?)\s*@@$/;
 /** `@@DOWNLOAD https://… -> public/logo.svg@@` (or `→`): fetch a file into the project. */
 const DOWNLOAD =
-  /^@@DOWNLOAD\s+((?!@@)[^\s`](?:(?!@@|->|→)[^`\s])*?)\s*(?:->|→)\s*([^\s`](?:(?!@@)[^`])*?)\s*@@$/;
+  /^@@DOWNLOAD\s+((?!@@)[^\s`](?:(?!@@|->|→)[^`\s])*?)\s*(?:->|→)\s*((?!@@)[^\s`](?:(?!@@)[^`])*?)\s*@@$/;
 /**
  * The same markers with the closing `@@` missing (or half there), as the chat sometimes
  * writes them: `` `@@RUN npm test` ``. Only tried inside an inline-code span that holds
@@ -28,9 +31,9 @@ const LOOSE_MARKER =
 const LOOSE_DONE = /^@@DONE\s*@?$/;
 const LOOSE_DELETE = /^@@DELETE\s+((?!@@|@$)[^\s`](?:(?!@@)[^`])*?)\s*@?$/;
 const LOOSE_RENAME =
-  /^@@RENAME\s+((?!@@|@$)[^\s`](?:(?!@@|->|→)[^`])*?)\s*(?:->|→)\s*((?!@$)[^\s`](?:(?!@@)[^`])*?)\s*@?$/;
+  /^@@RENAME\s+((?!@@|@$)[^\s`](?:(?!@@|->|→)[^`])*?)\s*(?:->|→)\s*((?!@@|@$)[^\s`](?:(?!@@)[^`])*?)\s*@?$/;
 const LOOSE_DOWNLOAD =
-  /^@@DOWNLOAD\s+((?!@@|@$)[^\s`](?:(?!@@|->|→)[^`\s])*?)\s*(?:->|→)\s*((?!@$)[^\s`](?:(?!@@)[^`])*?)\s*@?$/;
+  /^@@DOWNLOAD\s+((?!@@|@$)[^\s`](?:(?!@@|->|→)[^`\s])*?)\s*(?:->|→)\s*((?!@@|@$)[^\s`](?:(?!@@)[^`])*?)\s*@?$/;
 const FENCE_OPEN = /^(`{3,}|~{3,})[^`]*$/;
 const BULLET = /^(?:[-*+]|\d{1,3}[.)])\s+/;
 /** A line made only of `@@READ path@@` markers, for when line breaks were lost. */

@@ -283,6 +283,47 @@ describe('blank marker values', () => {
   });
 });
 
+describe('a marker inside a marker value', () => {
+  it.each([
+    '@@RENAME ! -> @@FILE @@',
+    '@@RENAME a.ts -> @@FILE b.ts@@',
+    '@@RENAME a.ts → @@DELETE b.ts@@',
+    '`@@RENAME a.ts -> @@FILE b.ts`',
+    '@@DELETE @@FILE x@@',
+    '`@@DELETE @@FILE x`',
+    '@@READ a -> @@RUN b@@',
+    '@@READ @@READ a@@',
+    '@@RUN @@DELETE x@@',
+    '`@@RUN @@DONE`',
+    '@@START @@STOP npm run dev@@',
+    '@@LOGS @@RUN x@@',
+    '@@ASSET @@FILE a.png@@',
+    '@@DOWNLOAD https://x.dev/a.png -> @@FILE a.png@@',
+    '`@@DOWNLOAD https://x.dev/a.png -> @@ASSET a.png`',
+    '@@DOWNLOAD @@FILE https://x.dev/a.png -> a.png@@',
+    '@@FILE @@RUN x@@\n```\nx\n```'
+  ])('reads nothing from %j', (text) => {
+    const parsed = parseChat(text);
+    expect(parsed.edits).toEqual([]);
+    expect(parsed.reads).toEqual([]);
+    expect(parsed.runs).toEqual([]);
+    expect(parsed.deletes).toEqual([]);
+    expect(parsed.renames).toEqual([]);
+    expect(parsed.starts).toEqual([]);
+    expect(parsed.stops).toEqual([]);
+    expect(parsed.logs).toEqual([]);
+    expect(parsed.assets).toEqual([]);
+    expect(parsed.downloads).toEqual([]);
+    expect(parsed.markers).toEqual([]);
+  });
+
+  it('still reads a value with a single @ in it', () => {
+    const parsed = parseChat('@@RENAME src/a.ts -> src/@scope/b.ts@@\n@@DELETE @types/x.d.ts@@');
+    expect(parsed.renames).toEqual([{ from: 'src/a.ts', to: 'src/@scope/b.ts' }]);
+    expect(parsed.deletes).toEqual(['@types/x.d.ts']);
+  });
+});
+
 describe('cut-off replies', () => {
   const two = `${block('src/one.ts', 'one')}\n\nAnd the second:\n\n${block('src/two.ts', 'tw')}`;
 

@@ -66,28 +66,82 @@ function wellFormed(value: string): boolean {
   );
 }
 
+/** Every path, command and URL a parse returns. */
+function markerValues(text: string): string[] {
+  const parsed = parseChat(text);
+  return [
+    ...parsed.edits.map((e) => e.path),
+    ...parsed.reads,
+    ...parsed.runs,
+    ...parsed.deletes,
+    ...parsed.renames.flatMap((r) => [r.from, r.to]),
+    ...parsed.starts,
+    ...parsed.stops,
+    ...parsed.logs,
+    ...parsed.assets,
+    ...parsed.downloads.flatMap((d) => [d.url, d.path])
+  ];
+}
+
+const parsesToMarkerText = (text: fc.Arbitrary<string>) =>
+  fc.property(text, (text) => {
+    const parsed = parseChat(text);
+    for (const value of markerValues(text)) {
+      expect(wellFormed(value), JSON.stringify(value)).toBe(true);
+    }
+    for (const edit of parsed.edits) {
+      expect(edit.content.endsWith('\n') || edit.content === '').toBe(true);
+      expect(edit.fence).toBeGreaterThanOrEqual(0);
+    }
+    expect(new Set(parsed.reads).size).toBe(parsed.reads.length);
+  });
+
+const anyChatText = fc.oneof(chatText, fc.string(), fc.string({ unit: 'grapheme' }));
+
+/** Like `chatText`, with every other marker and the ways a value can run into one. */
+const moreChatText = fc
+  .array(
+    fc.oneof(
+      fc.string({ maxLength: 4 }),
+      fc.constantFrom(
+        '@@START ',
+        '@@STOP ',
+        '@@LOGS ',
+        '@@ASSET ',
+        '@@DOWNLOAD ',
+        '@@RENAME ',
+        '@@DELETE ',
+        '@@FILE ',
+        '@@READ ',
+        '@@RUN ',
+        'https://x.dev/a.png',
+        ' -> ',
+        '→',
+        '@@',
+        '@',
+        '`',
+        ' '
+      )
+    ),
+    { maxLength: 12 }
+  )
+  .map((parts) => parts.join(''));
+
 describe('parseChat (property)', () => {
   it('never throws, and every path and command it returns is one marker’s text', () => {
-    fc.assert(
-      fc.property(fc.oneof(chatText, fc.string(), fc.string({ unit: 'grapheme' })), (text) => {
-        const parsed = parseChat(text);
-        for (const value of [
-          ...parsed.edits.map((e) => e.path),
-          ...parsed.reads,
-          ...parsed.runs,
-          ...parsed.deletes,
-          ...parsed.renames.flatMap((r) => [r.from, r.to])
-        ]) {
-          expect(wellFormed(value), JSON.stringify(value)).toBe(true);
-        }
-        for (const edit of parsed.edits) {
-          expect(edit.content.endsWith('\n') || edit.content === '').toBe(true);
-          expect(edit.fence).toBeGreaterThanOrEqual(0);
-        }
-        expect(new Set(parsed.reads).size).toBe(parsed.reads.length);
-      }),
-      { numRuns: 3000 }
-    );
+    fc.assert(parsesToMarkerText(anyChatText), {
+      numRuns: 3000,
+      examples: [['@@RENAME ! -> @@FILE @@']]
+    });
+  });
+
+  // CI on windows-latest found `@@RENAME ! -> @@FILE @@` reading "@@FILE" as the new path.
+  it('regression: seed 722399897', () => {
+    fc.assert(parsesToMarkerText(anyChatText), { seed: 722399897, numRuns: 3000 });
+  });
+
+  it('never lets a value run into another marker, for every marker', () => {
+    fc.assert(parsesToMarkerText(moreChatText), { numRuns: 5000 });
   });
 
   it('finds a well-formed FILE block wherever it sits', () => {

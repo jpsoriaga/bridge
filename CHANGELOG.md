@@ -4,6 +4,10 @@ All notable changes to Bridge are listed here. The format follows [Keep a Change
 
 ## [Unreleased]
 
+### Fixed
+
+- **A marker inside another marker.** `@@RENAME a.ts -> @@FILE b.ts@@` was read as a rename to `@@FILE b.ts`, and `@@DOWNLOAD` had the same gap in its save path. No path, command or URL Bridge reads from a marker can hold `@@` any more, so a line like that is reported as a format problem instead of acted on.
+
 ## [1.3.0-beta.1] - 2026-10-24
 
 Dev servers that keep running, images and other binary files, and a Full auto that needs fewer clicks. The app and the extension must both be 1.3.0-beta.1: if one is older, both say which to update. Pairings carry over.
