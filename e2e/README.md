@@ -38,6 +38,8 @@ If your shell sets `ELECTRON_RUN_AS_NODE=1`, the scripts unset it for the app th
 
 The argument is the repo root. Each script prints one line per step and ends with `E2E OK` or exits non-zero.
 
+Each script prints its start, then its end and duration, and has a hard timeout (`HARD_TIMEOUT_S` in `lib.cjs`: 120s, or more for `chat`, `send` and `assets`; `E2E_TIMEOUT=<seconds>` overrides it). When it fires, the script kills the app and Chrome and fails with its name. Keep the e2e job's `timeout-minutes` in `ci.yml` above the sum.
+
 Ports 47921–47930 must be free while a script runs (only another e2e run uses them).
 
 ## Manual check on the real chatgpt.com

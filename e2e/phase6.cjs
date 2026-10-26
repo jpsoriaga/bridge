@@ -133,8 +133,15 @@ const CONV = 'e2e00000-0000-4000-8000-000000000006';
 
   await clickInCard(chat, cdp, 'change-card', 1, 'Rename');
   await waitFor('renamed', () => fs.readdirSync(file('src')).includes('app.tsx'));
+  // The card turns to Renamed when the app's reply reaches it, a moment after the disk. The
+  // reply comes after the whole move (on Linux a link, then removing the old name).
+  const onDisk = Date.now();
+  await waitFor('renamed row', async () =>
+    (await cardText(cdp, 'change-card', 1)).includes('Renamed')
+  );
   if (fs.readdirSync(file('src')).includes('App.tsx')) throw new Error('old name left behind');
   step('case-only rename App.tsx → app.tsx: ' + fs.readdirSync(file('src')).join(', '));
+  step(`the card says Renamed, ${Date.now() - onDisk}ms after the disk did`);
   await clickInCard(chat, cdp, 'change-card', 1, 'Undo');
   await waitFor('rename undone', () => fs.readdirSync(file('src')).includes('App.tsx'));
   step('Undo moved it back: ' + fs.readdirSync(file('src')).join(', '));

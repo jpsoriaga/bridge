@@ -518,3 +518,11 @@ Tick items as they land. One line each, concrete enough to verify. See PLAN.md f
 - [ ] Vercel project at `trybridge-landingpage.vercel.app` (by hand, `apps/site/README.md`)
 - [ ] Funding links and the GCash QR (`src/config/funding.ts`, `public/gcash-qr.png`)
 - [ ] Jaypee reviews the "Why Bridge exists" text
+
+## CI: e2e flake on the case-only rename, timeouts
+
+- [x] `phase6.cjs` failed on Linux with the RENAME card on "Renaming…": not a stuck card. The test looked for Undo 3ms after the disk changed, before the app's reply reached the card (about 5ms locally); every reply arrives or fails within 15s (`REQUEST_TIMEOUT_MS`), never leaving the card busy. The script now waits for **Renamed** before checking the old name is gone (on Linux it's a link, then a remove) and logs the gap
+- [x] `clickInCard` waits up to 10s for the button to be there and enabled, and says which it wasn't
+- [x] Hard timeout per e2e script (`HARD_TIMEOUT_S` in `e2e/lib.cjs`, `E2E_TIMEOUT` overrides): kills the app's process group and Chrome (by its profile folder), fails with the script's name; each script prints its start, end and duration; e2e job `timeout-minutes: 35` (26 min of script timeouts plus install and build)
+- [x] Format, lint, typecheck, tests with coverage, build, every e2e script in CI's list locally (`phase6.cjs` 5 times in a row); the timeout checked with `E2E_TIMEOUT=6`, nothing left running
+- [ ] CI green on GitHub

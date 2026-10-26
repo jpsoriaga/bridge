@@ -21,6 +21,55 @@ const CHROMIUM = process.env.CHROMIUM_PATH || chromium.executablePath();
 
 const tempDir = (prefix) => fs.mkdtempSync(path.join(os.tmpdir(), `bridge-e2e-${prefix}-`));
 
+// Every script runs under a hard timeout: when it fires, the app and Chrome are killed and
+// the script fails with its name, so a hang never eats the CI job's whole budget. Seconds,
+// 8× or more what a run takes; E2E_TIMEOUT (seconds) overrides it. The e2e job's
+// `timeout-minutes` in ci.yml stays above their sum plus install and build.
+const HARD_TIMEOUT_S = { 'assets.cjs': 300, 'send.cjs': 240, 'chat.cjs': 180 };
+const DEFAULT_TIMEOUT_S = 120;
+const SCRIPT = `e2e/${path.basename(require.main?.filename ?? 'unknown')}`;
+const started = Date.now();
+/** What the scripts launched: Electron child processes and Chrome profile folders. */
+const launched = { apps: new Set(), profiles: new Set() };
+
+function killLaunched() {
+  for (const child of launched.apps) {
+    try {
+      // Playwright starts it as a process group leader (not on Windows): take its helpers too.
+      if (process.platform === 'win32') child.kill('SIGKILL');
+      else process.kill(-child.pid, 'SIGKILL');
+    } catch {
+      // Already gone.
+    }
+  }
+  // A persistent context has no `browser()` to kill; its profile folder names it.
+  // On Windows, Playwright's own exit handler kills it.
+  if (process.platform !== 'win32') {
+    for (const profile of launched.profiles) {
+      try {
+        execFileSync('pkill', ['-KILL', '-f', profile], { stdio: 'ignore' });
+      } catch {
+        // None left.
+      }
+    }
+  }
+}
+
+const timeoutS =
+  Number(process.env.E2E_TIMEOUT) || (HARD_TIMEOUT_S[path.basename(SCRIPT)] ?? DEFAULT_TIMEOUT_S);
+console.log(`▶ ${SCRIPT} started ${new Date(started).toISOString()} (hard timeout ${timeoutS}s)`);
+setTimeout(() => {
+  console.error(`✗ ${SCRIPT} timed out after ${timeoutS}s; killing the app and Chrome`);
+  killLaunched();
+  process.exit(1);
+}, timeoutS * 1000).unref();
+process.on('exit', (code) => {
+  const seconds = ((Date.now() - started) / 1000).toFixed(1);
+  console.log(
+    `■ ${SCRIPT} ${code === 0 ? 'passed' : 'failed'}: started ${new Date(started).toISOString()}, ended ${new Date().toISOString()}, ${seconds}s`
+  );
+});
+
 /**
  * Builds the extension for the e2e port range into a temp folder and returns it. `dev`:
  * a development build (the side panel's file tester). Production otherwise, like the release.
@@ -67,13 +116,16 @@ async function launchApp(userData, { e2ePorts = true } = {}) {
     args: [path.join(ROOT, 'apps/desktop'), `--user-data-dir=${userData}`],
     env
   });
+  launched.apps.add(app.process());
   const win = await app.firstWindow();
   await win.waitForSelector('.status');
   return { app, win };
 }
 
 async function launchChrome(extensionDir = extension()) {
-  const ctx = await chromium.launchPersistentContext(tempDir('chrome'), {
+  const profile = tempDir('chrome');
+  launched.profiles.add(profile);
+  const ctx = await chromium.launchPersistentContext(profile, {
     executablePath: CHROMIUM,
     headless: true,
     args: [`--disable-extensions-except=${extensionDir}`, `--load-extension=${extensionDir}`]

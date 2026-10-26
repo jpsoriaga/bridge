@@ -114,12 +114,30 @@ async function badges(cdp, kind, index) {
     .map((n) => ({ text: textOf(n).trim(), tone: attr(n, 'data-tone') ?? null }));
 }
 
-/** Clicks a button inside a card (closed shadow root) with a trusted mouse click. */
+/**
+ * Clicks a button inside a card (closed shadow root) with a trusted mouse click. Waits up to
+ * 10s for it to be there and enabled: a card shows its next state only once the worker's
+ * reply arrives, which can be after the change is already on disk.
+ */
 async function clickInCard(page, cdp, kind, index, label) {
-  const host = (await hosts(cdp, kind))[index];
-  if (!host) throw new Error(`no ${kind} #${index}`);
-  const button = [...walk(host)].find((n) => n.nodeName === 'BUTTON' && textOf(n).trim() === label);
-  if (!button) throw new Error(`no "${label}" in ${kind} #${index}: ${textOf(host)}`);
+  const end = Date.now() + 10_000;
+  let button;
+  for (;;) {
+    const host = (await hosts(cdp, kind))[index];
+    const found = host
+      ? [...walk(host)].find((n) => n.nodeName === 'BUTTON' && textOf(n).trim() === label)
+      : undefined;
+    if (found && attr(found, 'disabled') === undefined) {
+      button = found;
+      break;
+    }
+    if (Date.now() >= end) {
+      const why = found ? 'disabled' : 'no';
+      const seen = host ? textOf(host).replace(/\s+/g, ' ').trim() : `(no ${kind} #${index})`;
+      throw new Error(`${why} "${label}" in ${kind} #${index} after 10s: ${seen}`);
+    }
+    await new Promise((r) => setTimeout(r, 150));
+  }
   // Centre it, so nothing fixed to the page's edges (the Bridge chip) sits on top of it.
   const { object } = await cdp.send('DOM.resolveNode', { backendNodeId: button.backendNodeId });
   await cdp.send('Runtime.callFunctionOn', {

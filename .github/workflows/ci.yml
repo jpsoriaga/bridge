@@ -83,9 +83,10 @@ jobs:
     needs: changes
     if: needs.changes.outputs.app == 'true'
     # The stand-in scripts (e2e/README.md) against the built app and extension, headless
-    # Chrome, and Electron under a virtual display.
+    # Chrome, and Electron under a virtual display. Each script has its own hard timeout
+    # (`HARD_TIMEOUT_S` in e2e/lib.cjs, 26 min in all), so a hang fails with its name first.
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
