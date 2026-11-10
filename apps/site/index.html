@@ -40,6 +40,22 @@
     />
     <meta name="twitter:image" content="%SITE_URL%/og.png" />
 
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Bridge",
+        "url": "%SITE_URL%/",
+        "description": "Bridge lets the ChatGPT web chat edit a project on your computer. Every change shows as a diff you review and apply, with undo. Free, open source, and local only.",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "macOS, Windows, Linux",
+        "image": "%SITE_URL%/og.png",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "codeRepository": "https://github.com/jpsoriaga/bridge",
+        "author": { "@type": "Person", "name": "John Patrick Soriaga", "url": "https://jpsoriaga.me/" }
+      }
+    </script>
+
     <!-- Sets data-theme before the first paint, so a saved theme doesn't flash. -->
     <script src="/theme.js"></script>
   </head>
